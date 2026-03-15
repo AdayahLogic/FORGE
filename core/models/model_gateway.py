@@ -32,4 +32,5 @@ class ModelGateway:
             "provider": provider,
             "model": model,
             "output_text": output_text,
+            "status": "ok",
         }

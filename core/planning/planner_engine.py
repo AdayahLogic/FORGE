@@ -1,14 +1,15 @@
-from core.models.model_gateway import ModelGateway
+from core.model_router import route_generate
 from core.prompts import MASTER_SYSTEM_PROMPT
 
 
 class PlannerEngine:
     """
     Converts a user request + loaded project context into a structured plan.
+    Uses the model router for provider-aware generation with safe OpenAI fallback.
     """
 
     def __init__(self):
-        self.gateway = ModelGateway()
+        pass
 
     def build_prompt(
         self,
@@ -132,9 +133,9 @@ Rules:
             loaded_context=loaded_context,
         )
 
-        result = self.gateway.generate(
+        result = route_generate(
             prompt=prompt,
-            provider="openai",
+            provider=None,
             model=model,
         )
 
@@ -153,9 +154,9 @@ Rules:
             retry_reason=retry_reason,
         )
 
-        result = self.gateway.generate(
+        result = route_generate(
             prompt=prompt,
-            provider="openai",
+            provider=None,
             model=model,
         )
 
