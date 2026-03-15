@@ -4,6 +4,26 @@ import re
 from NEXUS.studio_config import STUDIO_ROOT, LOGICAL_PROJECT_NAMES
 
 
+def _normalize_legacy_display_path(relative_path: str) -> str:
+    """
+    Rewrite legacy path segments to current names for display and saved state.
+
+    So that newly generated outputs consistently show NEXUS and projects/jarvis
+    instead of core and projects/nexus. Does not change legacy alias detection.
+    """
+    if not relative_path:
+        return relative_path
+    s = relative_path
+    # First segment: core -> NEXUS
+    if s.startswith("core\\") or s.startswith("core/"):
+        s = "NEXUS" + s[4:]
+    elif s.rstrip("/\\").lower() == "core":
+        s = "NEXUS"
+    # projects/nexus -> projects/jarvis (preserve separator)
+    s = s.replace("projects\\nexus", "projects\\jarvis").replace("projects/nexus", "projects/jarvis")
+    return s
+
+
 def to_studio_relative_path(path_value: str | None) -> str | None:
     """
     Convert an absolute path under the studio root into a relative display path.
@@ -12,6 +32,9 @@ def to_studio_relative_path(path_value: str | None) -> str | None:
     C:\\FORGE\\projects\\jarvis\\generated\\coder_output.txt
     ->
     projects\\jarvis\\generated\\coder_output.txt
+
+    Legacy segments (core, projects/nexus) are rewritten to current names
+    (NEXUS, projects/jarvis) so reports and saved state use consistent paths.
 
     If the value is missing or not inside the studio root, return it unchanged.
     """
@@ -22,7 +45,8 @@ def to_studio_relative_path(path_value: str | None) -> str | None:
         raw = Path(path_value)
         resolved = raw.resolve()
         studio_root = Path(STUDIO_ROOT).resolve()
-        return str(resolved.relative_to(studio_root))
+        relative = str(resolved.relative_to(studio_root))
+        return _normalize_legacy_display_path(relative)
     except Exception:
         return path_value
 

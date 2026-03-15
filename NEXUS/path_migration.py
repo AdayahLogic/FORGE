@@ -107,7 +107,7 @@ def build_path_migration_summary(
     if alias_count > 0:
         recommended_steps.append("Review path_migration_report for paths containing legacy names.")
         recommended_steps.append("When ready, set FORGE_ROOT env to intended root path.")
-        recommended_steps.append("Physical folder renames (e.g. AI_STUDIO->FORGE, nexus->jarvis) are deferred.")
+        recommended_steps.append("core->NEXUS and nexus->jarvis renames are complete; AI_STUDIO->FORGE remains optional.")
     else:
         recommended_steps.append("No legacy path aliases detected in inspected paths.")
 

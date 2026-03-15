@@ -10,7 +10,7 @@ def _resolve_studio_root() -> Path:
     1. FORGE_ROOT env var
     2. AI_STUDIO_ROOT env var
     3. Parent directory of this file's folder
-       (works for current layout: C:\\AI_STUDIO\\core\\studio_config.py)
+       (works for current layout: C:\\AI_STUDIO\\NEXUS\\studio_config.py)
     """
     forge_root = os.getenv("FORGE_ROOT")
     if forge_root:
