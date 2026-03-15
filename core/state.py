@@ -38,6 +38,7 @@ class StudioState(BaseModel):
     execution_bridge_report_path: Optional[str] = None
     engine_registry_report_path: Optional[str] = None
     capability_registry_report_path: Optional[str] = None
+    tool_registry_report_path: Optional[str] = None
     terminal_report_path: Optional[str] = None
     browser_research_report_path: Optional[str] = None
     full_automation_report_path: Optional[str] = None
@@ -55,6 +56,8 @@ class StudioState(BaseModel):
     execution_bridge_summary: Dict[str, Any] = {}
     engine_registry_summary: Dict[str, Any] = {}
     capability_registry_summary: Dict[str, Any] = {}
+    tool_registry_summary: Dict[str, Any] = {}
+    tool_routing_summary: Dict[str, Any] = {}
     terminal_summary: Dict[str, Any] = {}
     browser_research_summary: Dict[str, Any] = {}
     full_automation_summary: Dict[str, Any] = {}

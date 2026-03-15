@@ -71,6 +71,9 @@ def save_project_state(
     full_automation_report_path: str | None,
     full_automation_summary: dict | None,
     task_queue_snapshot: list | None = None,
+    tool_registry_report_path: str | None = None,
+    tool_registry_summary: dict | None = None,
+    tool_routing_summary: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -116,6 +119,9 @@ def save_project_state(
         "browser_research_summary": browser_research_summary,
         "full_automation_report_path": full_automation_report_path,
         "full_automation_summary": full_automation_summary,
+        "tool_registry_report_path": tool_registry_report_path,
+        "tool_registry_summary": tool_registry_summary or {},
+        "tool_routing_summary": tool_routing_summary or {},
     }
 
     payload = normalize_display_data(payload)
