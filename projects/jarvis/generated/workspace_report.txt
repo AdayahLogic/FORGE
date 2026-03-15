@@ -1,5 +1,5 @@
 Workspace Intelligence Report
-Timestamp: 2026-03-15 18:54:47
+Timestamp: 2026-03-15 19:23:04
 Project: jarvis
 
 Top-Level Directories:
@@ -45,7 +45,7 @@ The project should remain modular, safe, and expandable over time.
 
 --- generated\agent_router_report.txt ---
 Agent Router Report
-Timestamp: 2026-03-15 18:54:47
+Timestamp: 2026-03-15 19:23:04
 Project: jarvis
 
 Routing Summary:
@@ -59,6 +59,11 @@ Routing Summary:
 - mapped_runtime_agent: None
 - human_review_recommended: False
 
+Policy (runtime_node):
+- policy_status: active
+- blocked_count: 3
+- review_required_count: 2
+
 Available Runtime Agents:
 - coder
 - docs
@@ -66,13 +71,13 @@ Available Runtime Agents:
 
 --- generated\autonomous_cycle_report.txt ---
 Autonomous Cycle Report
-Timestamp: 2026-03-15 18:38:10
+Timestamp: 2026-03-15 18:54:47
 Project: jarvis
 
 Cycle Summary:
 - recommended_action: continue_development_cycle
 - proceed_with_cycle: True
-- pending_tasks_at_start: 4
+- pending_tasks_at_start: 5
 - max_cycles_allowed: 3
 - cycles_run: 3
 
@@ -81,7 +86,7 @@ Stopped at safe max cycle limit (3).
 
 --- generated\browser_research_report.txt ---
 Browser Research Report
-Timestamp: 2026-03-15 18:38:10
+Timestamp: 2026-03-15 18:54:48
 Project: jarvis
 
 Summary:
@@ -99,7 +104,7 @@ Actions:
 
 --- generated\capability_registry_report.txt ---
 Capability Registry Report
-Timestamp: 2026-03-15 18:54:47
+Timestamp: 2026-03-15 19:23:04
 Project: jarvis
 
 Registry Summary:
