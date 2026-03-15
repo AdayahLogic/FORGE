@@ -26,6 +26,7 @@ from core.diff_patch import (
 )
 from core.agent_router import build_agent_route, write_agent_router_report
 from core.execution_bridge import build_execution_bridge_packet, write_execution_bridge_report
+from core.engine_inspector import build_engine_summary, write_engine_report
 from core.terminal_controller import run_allowed_commands, write_terminal_report
 from core.browser_agent import open_safe_research_urls, write_browser_research_report
 from core.full_automation import build_full_automation_summary, write_full_automation_report
@@ -153,6 +154,29 @@ def execution_bridge_node(state: StudioState):
         state.notes = f"Execution bridge report created at: {report_path}"
     except Exception as e:
         state.notes = f"Execution bridge failed: {e}"
+
+    return state
+
+
+def engine_registry_node(state: StudioState):
+    print("[Engine Registry] Inspecting reusable engine inventory...")
+
+    if not state.project_path:
+        state.notes = "Engine registry could not run: missing project path."
+        return state
+
+    try:
+        summary = build_engine_summary(state.active_project)
+        report_path = write_engine_report(
+            project_path=state.project_path,
+            project_name=state.active_project or "unknown_project",
+            summary=summary,
+        )
+        state.engine_registry_summary = summary
+        state.engine_registry_report_path = report_path
+        state.notes = f"Engine registry report created at: {report_path}"
+    except Exception as e:
+        state.notes = f"Engine registry failed: {e}"
 
     return state
 
@@ -595,6 +619,8 @@ def save_persistent_project_state_node(state: StudioState):
             agent_routing_summary=state.agent_routing_summary,
             execution_bridge_report_path=state.execution_bridge_report_path,
             execution_bridge_summary=state.execution_bridge_summary,
+            engine_registry_report_path=state.engine_registry_report_path,
+            engine_registry_summary=state.engine_registry_summary,
             terminal_report_path=state.terminal_report_path,
             terminal_summary=state.terminal_summary,
             browser_research_report_path=state.browser_research_report_path,
@@ -620,6 +646,7 @@ def build_workflow():
     graph.add_node("task_queue", task_queue_builder)
     graph.add_node("agent_router", agent_router_node)
     graph.add_node("execution_bridge", execution_bridge_node)
+    graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("coder", coder_agent)
     graph.add_node("tester", tester_agent)
     graph.add_node("docs", docs_agent)
@@ -646,7 +673,8 @@ def build_workflow():
     graph.add_edge("architect", "task_queue")
     graph.add_edge("task_queue", "agent_router")
     graph.add_edge("agent_router", "execution_bridge")
-    graph.add_edge("execution_bridge", "coder")
+    graph.add_edge("execution_bridge", "engine_registry")
+    graph.add_edge("engine_registry", "coder")
     graph.add_edge("coder", "tester")
     graph.add_edge("tester", "docs")
     graph.add_edge("docs", "executor")
