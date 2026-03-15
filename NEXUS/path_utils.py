@@ -2,6 +2,7 @@ from pathlib import Path
 import re
 
 from NEXUS.studio_config import STUDIO_ROOT, LOGICAL_PROJECT_NAMES
+from NEXUS.project_identity_registry import get_display_name as _registry_display_name
 
 
 def _normalize_legacy_display_path(relative_path: str) -> str:
@@ -80,12 +81,15 @@ def normalize_display_data(value):
 def get_project_display_name(project_name: str | None) -> str:
     """
     Convert a logical project key like 'jarvis' into its display name.
-    Falls back safely if the key is unknown.
+    Uses project identity registry; falls back to LOGICAL_PROJECT_NAMES then title case.
     """
     if not project_name:
         return "Project"
 
     lowered = project_name.strip().lower()
+    from_registry = _registry_display_name(lowered)
+    if from_registry is not None:
+        return from_registry
     return LOGICAL_PROJECT_NAMES.get(lowered, project_name.title())
 
 

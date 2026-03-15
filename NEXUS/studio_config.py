@@ -41,42 +41,18 @@ CORE_SYSTEM_NAME = "NEXUS"
 # Optional legacy display name for transition messaging
 LEGACY_STUDIO_FOLDER_NAME = "AI_STUDIO"
 
-# Current logical product rename map
-# IMPORTANT:
-# - physical folders do NOT change yet
-# - logical names can change immediately
+# Project identity: single source of truth in NEXUS.project_identity_registry.
+# Below built from it for backward compatibility with existing imports.
+from NEXUS.project_identity_registry import PROJECT_IDENTITY_REGISTRY
+
 LOGICAL_PROJECT_NAMES = {
-    "jarvis": "Jarvis",
-    "paragon": "Paragon",
-    "vector": "Vector",
-    "epoch": "Epoch",
-    "genesis": "Genesis",
-    "game_dev": "Game Dev",
-    "rpg_project": "RPG Project",
+    k: v["display_name"] for k, v in PROJECT_IDENTITY_REGISTRY.items()
 }
 
-# Old names / aliases that should still route correctly during transition
 PROJECT_ALIASES = {
-    "jarvis": {"jarvis", "nexus"},
-    "paragon": {"paragon", "negotiateai"},
-    "vector": {"vector", "blofin-bot", "blofin", "trading bot", "trading_system", "trading systems"},
-    "epoch": {"epoch"},
-    "genesis": {"genesis"},
-    "game_dev": {"game_dev", "game dev"},
-    "rpg_project": {"rpg_project", "rpg", "rpg project"},
+    k: set(v["aliases"]) for k, v in PROJECT_IDENTITY_REGISTRY.items()
 }
 
-# Physical folder mapping
-# IMPORTANT:
-# The key is the logical project key.
-# The value is the CURRENT physical folder name on disk.
-# After migration: jarvis -> jarvis (was nexus).
 PROJECT_FOLDER_MAP = {
-    "jarvis": "jarvis",
-    "paragon": "negotiateai",
-    "vector": "vector",   # change later if/when you create or rename the folder
-    "epoch": "epoch",
-    "genesis": "genesis",
-    "game_dev": "game_dev",
-    "rpg_project": "rpg_project",
+    k: v["folder_name"] for k, v in PROJECT_IDENTITY_REGISTRY.items()
 }
