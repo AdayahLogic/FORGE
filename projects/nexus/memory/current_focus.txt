@@ -1,0 +1,3 @@
+Current focus:
+Build the Universal AI Studio orchestration layer first.
+Jarvis should eventually become one of the managed projects inside the same ecosystem.

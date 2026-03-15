@@ -1,0 +1,5 @@
+Next steps:
+1. Build memory loading
+2. Add OpenAI model integration
+3. Add task planning output
+4. Add real file and tool execution later

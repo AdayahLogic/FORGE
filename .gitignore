@@ -1,0 +1,46 @@
+.venv/
+__pycache__/
+.env
+*.pyc
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Environment variables
+.env
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Minecraft / server runtime data
+projects/rpg_project/Server/cache/
+projects/rpg_project/Server/plugins/CoreProtect/
+projects/rpg_project/Server/plugins/**/database.db
+projects/rpg_project/Server/**/*.db
+projects/rpg_project/Server/**/*.jar
+projects/rpg_project/Server/logs/
+projects/rpg_project/Server/world/
+projects/rpg_project/Server/world_nether/
+projects/rpg_project/Server/world_the_end/
+projects/rpg_project/Server/.console_history
+
+# General large/generated files
+*.db
+*.sqlite
+*.sqlite3
