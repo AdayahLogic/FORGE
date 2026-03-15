@@ -1,13 +1,14 @@
 Coder Execution Report
-Timestamp: 2026-03-15 17:24:40
+Timestamp: 2026-03-15 17:34:21
 Project: jarvis
 
 Task Queue Snapshot:
-1. Define a project-context loader that reads only Jarvis overview, memory, and task files into a normalized in-memory context object. [pending]
-2. Add a model client wrapper for OpenAI requests with config-driven model selection, timeout handling, and safe error surfacing. [pending]
-3. Implement a planner service that combines user request plus project-scoped context and returns the required structured JSON fields. [pending]
-4. Enforce workspace isolation checks so planner inputs and outputs are tagged to Jarvis and reject unresolved cross-project references. [pending]
-5. Add lightweight tests for context loading, JSON schema compliance, and model-wrapper fallback/error paths. [pending]
+1. Define a project context loader that resolves only jarvis workspace documents and returns a normalized context bundle. [pending]
+2. Create an LLM provider wrapper for OpenAI with config-driven model selection, timeouts, and safe error handling. [pending]
+3. Implement a planner service that composes the loaded project context with the active user request and requests structured JSON output. [pending]
+4. Add schema validation for planner responses to guarantee objective, assumptions, implementation_steps, risks, next_agent, and patch_request fields. [pending]
+5. Add isolation checks so context loading rejects non-jarvis paths and prevents accidental workspace crossover. [pending]
+6. Add unit tests for scoped memory loading, provider failure behavior, and valid/invalid structured planning output. [pending]
 
 Execution Notes:
 - Coder agent initialized successfully.
