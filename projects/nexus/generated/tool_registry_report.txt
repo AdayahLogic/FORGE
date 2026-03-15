@@ -1,0 +1,43 @@
+Tool Registry Report
+Timestamp: 2026-03-15 16:41:31
+Project: jarvis
+
+Registry Summary:
+- active_project: jarvis
+- active_agent: coder
+- active_tool_count: 5
+- planned_tool_count: 3
+- human_review_recommended: True
+- notes: Tool registry inspected successfully.
+
+Active Tools:
+- browser_research
+- diff_patch
+- file_modification
+- terminal
+- tool_execution
+
+Planned Tools:
+- analytics_export
+- billing_admin
+- deployment
+
+Tools Allowed for Agent:
+
+Category Counts:
+- execution: 2
+- research: 1
+- file_ops: 2
+- deployment: 1
+- admin: 1
+- analytics: 1
+
+Human Review Recommended Tools:
+- analytics_export
+- billing_admin
+- browser_research
+- deployment
+- diff_patch
+- file_modification
+- terminal
+- tool_execution
