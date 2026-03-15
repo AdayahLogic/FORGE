@@ -1,5 +1,5 @@
 Path Migration Report
-Timestamp: 2026-03-15 18:05:00
+Timestamp: 2026-03-15 18:28:53
 Project: jarvis
 
 Root Naming:
@@ -16,7 +16,7 @@ Summary:
 Recommended Next Steps:
 - Review path_migration_report for paths containing legacy names.
 - When ready, set FORGE_ROOT env to intended root path.
-- Physical folder renames (e.g. AI_STUDIO->FORGE, nexus->jarvis) are deferred.
+- core->NEXUS and nexus->jarvis renames are complete; AI_STUDIO->FORGE remains optional.
 
 Inspected Paths:
 - path: .

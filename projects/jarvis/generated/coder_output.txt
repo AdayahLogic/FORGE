@@ -1,13 +1,14 @@
 Coder Execution Report
-Timestamp: 2026-03-15 18:05:00
+Timestamp: 2026-03-15 18:28:53
 Project: jarvis
 
 Task Queue Snapshot:
-1. Define a project-context loader that resolves only Jarvis overview, memory, and task files into a normalized planning context. [pending]
-2. Add an LLM client wrapper for OpenAI requests with config-driven model selection, timeouts, and safe error handling. [pending]
-3. Create a planner pipeline that composes loaded project context with the user request and emits the required JSON fields. [pending]
-4. Enforce workspace isolation checks so no cross-project files, memory, or task queues are loaded unless explicitly requested. [pending]
-5. Add basic validation tests for context loading, JSON output shape, and fallback behavior when memory files or model calls fail. [pending]
+1. Define a project-context loader that reads jarvis overview, current focus, dev notes, and next steps into a single scoped context object. [pending]
+2. Add validation rules that reject cross-project memory access unless explicitly requested by the orchestrator layer. [pending]
+3. Create an OpenAI client adapter interface with config-driven model selection, prompt assembly, and basic error handling. [pending]
+4. Build a planner pipeline that takes the scoped context plus user request and returns JSON with objective, assumptions, implementation steps, risks, next agent, and optional patch request. [pending]
+5. Add tests or fixtures for isolated memory loading, prompt generation, and structured planner output shape. [pending]
+6. Document the execution flow so future file and tool execution can be added without breaking workspace isolation. [pending]
 
 Execution Notes:
 - Coder agent initialized successfully.
