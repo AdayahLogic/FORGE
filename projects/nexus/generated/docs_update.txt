@@ -1,5 +1,5 @@
 AI Studio Documentation Update
-Timestamp: 2026-03-15 15:46:53
+Timestamp: 2026-03-15 16:22:52
 Project: jarvis
 
 Execution Summary:
@@ -8,20 +8,19 @@ Execution Summary:
 
 Task Status:
 - completed_tasks: 1
-- pending_tasks: 5
+- pending_tasks: 4
 
 Architect Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Remaining Tasks:
-- Define a normalized in-memory context object containing project identity, current focus, dev notes, and next steps for downstream planning.
-- Add a minimal OpenAI client adapter that accepts loaded project context and user request, then returns planner-ready content without accessing other workspaces.
-- Implement planner output assembly that always emits objective, assumptions, implementation_steps, risks, next_agent, and patch_request.
-- Add validation checks to reject missing project scope, mixed-workspace context, or malformed JSON planning output.
-- Prepare a small test slice using jarvis inputs to verify project-scoped memory loading and stable structured responses before adding real tool execution.
+- Design a model client interface that wraps OpenAI request/response handling and keeps credentials, retries, and model selection outside planning logic.
+- Specify a planner output contract that returns objective, assumptions, implementation_steps, risks, next_agent, and null-safe patch_request fields as structured JSON.
+- Add orchestration flow rules that enforce workspace isolation by loading one project context per request and rejecting cross-project memory merge unless explicitly requested.
+- Prepare a small integration slice that connects context loading to planner generation through the model client, with deterministic fallback behavior if model access fails.
 
 Completed Tasks:
-- Create a project-context loader that resolves the active workspace and reads overview, memory, and task documents only from jarvis-scoped paths.
+- Define a project-context loader that resolves only Jarvis overview, memory, and task files into a normalized orchestration context object.
 
 Documentation Notes:
 - This report was generated automatically by the AI Studio docs agent.
