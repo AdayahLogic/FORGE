@@ -2,6 +2,8 @@ import subprocess
 from pathlib import Path
 from datetime import datetime
 
+from NEXUS.execution_policy import evaluate as execution_policy_evaluate
+
 
 ALLOWED_COMMANDS = [
     ["python", "--version"],
@@ -49,10 +51,20 @@ def write_terminal_report(project_path: str, project_name: str, results: list) -
 
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
+    execution_policy_decision = execution_policy_evaluate(
+        "terminal",
+        "terminal",
+        action_type="terminal_run",
+    )
     lines = [
         "Terminal Control Report",
         f"Timestamp: {timestamp}",
         f"Project: {project_name}",
+        "",
+        "Execution policy:",
+        f"- status: {execution_policy_decision.get('status')}",
+        f"- allowed: {execution_policy_decision.get('allowed')}",
+        f"- review_required: {execution_policy_decision.get('review_required')}",
         "",
         "Command Results:"
     ]

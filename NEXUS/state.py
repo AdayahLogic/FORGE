@@ -65,3 +65,4 @@ class StudioState(BaseModel):
     terminal_summary: Dict[str, Any] = {}
     browser_research_summary: Dict[str, Any] = {}
     full_automation_summary: Dict[str, Any] = {}
+    execution_policy_summary: Dict[str, Any] = {}

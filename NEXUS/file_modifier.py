@@ -6,6 +6,7 @@ from NEXUS.path_utils import (
     normalize_display_data,
     sanitize_identifier,
 )
+from NEXUS.execution_policy import evaluate as execution_policy_evaluate
 
 
 def ensure_generated_folder(project_path: str) -> Path:
@@ -64,6 +65,12 @@ def {function_name}() -> dict:
     new_text = original_text.rstrip() + "\n" + update_block.strip() + "\n"
     target_file.write_text(new_text, encoding="utf-8")
 
+    execution_policy_decision = execution_policy_evaluate(
+        "file_modification",
+        "file_modification",
+        action_type="file_append",
+        target_path=target_relative_path,
+    )
     summary = {
         "target_path": str(target_file),
         "bytes_before": len(original_text.encode("utf-8")),
@@ -72,6 +79,7 @@ def {function_name}() -> dict:
         "update_preview": update_block[:600],
         "update_function_name": function_name,
         "update_project_name": project_display_name,
+        "execution_policy_decision": execution_policy_decision,
     }
 
     return normalize_display_data(summary)
@@ -100,6 +108,15 @@ def write_file_modification_report(project_path: str, project_name: str, summary
         "Update Preview:",
         summary.get("update_preview", "[none]"),
     ]
+    ep = summary.get("execution_policy_decision") or {}
+    if ep:
+        lines.extend([
+            "",
+            "Execution policy:",
+            f"- status: {ep.get('status')}",
+            f"- allowed: {ep.get('allowed')}",
+            f"- review_required: {ep.get('review_required')}",
+        ])
 
     report_file.write_text("\n".join(lines), encoding="utf-8")
     return str(report_file)

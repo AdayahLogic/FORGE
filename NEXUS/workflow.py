@@ -180,6 +180,7 @@ def agent_router_node(state: StudioState):
             summary=summary,
         )
         state.agent_routing_summary = summary
+        state.execution_policy_summary = summary.get("runtime_node_policy_summary") or {}
         state.agent_routing_report_path = report_path
         state.notes = f"Agent router report created at: {report_path}"
     except Exception as e:
@@ -789,6 +790,7 @@ def save_persistent_project_state_node(state: StudioState):
             workspace_boundary_summary=state.workspace_boundary_summary,
             path_migration_report_path=state.path_migration_report_path,
             path_migration_summary=state.path_migration_summary,
+            execution_policy_summary=state.execution_policy_summary,
             terminal_report_path=state.terminal_report_path,
             terminal_summary=state.terminal_summary,
             browser_research_report_path=state.browser_research_report_path,

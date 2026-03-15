@@ -3,6 +3,7 @@ from datetime import datetime
 import difflib
 
 from NEXUS.path_utils import normalize_display_data, to_studio_relative_path
+from NEXUS.execution_policy import evaluate as execution_policy_evaluate
 
 
 SAFE_PATCH_EXTENSIONS = {
@@ -122,12 +123,20 @@ def apply_safe_patch(
     - unified diff preview generated
     """
     valid, reason = _validate_patch_request(patch_request)
+    target_relative_path = patch_request.get("target_relative_path") if patch_request else None
+    execution_policy_decision = execution_policy_evaluate(
+        "diff_patch",
+        "diff_patch",
+        action_type="patch",
+        target_path=target_relative_path,
+    )
     if not valid:
         return normalize_display_data({
             "status": "skipped",
             "project_name": project_name,
             "reason": reason,
             "patch_applied": False,
+            "execution_policy_decision": execution_policy_decision,
         })
 
     target_relative_path = patch_request["target_relative_path"]
@@ -147,6 +156,7 @@ def apply_safe_patch(
             "reason": "search_text not found in target file.",
             "target_path": str(target_file),
             "patch_applied": False,
+            "execution_policy_decision": execution_policy_decision,
         })
 
     if match_count > 1 and not replace_all:
@@ -157,6 +167,7 @@ def apply_safe_patch(
             "target_path": str(target_file),
             "match_count": match_count,
             "patch_applied": False,
+            "execution_policy_decision": execution_policy_decision,
         })
 
     if replace_all:
@@ -172,6 +183,7 @@ def apply_safe_patch(
             "target_path": str(target_file),
             "match_count": match_count,
             "patch_applied": False,
+            "execution_policy_decision": execution_policy_decision,
         })
 
     timestamp_slug = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -204,6 +216,7 @@ def apply_safe_patch(
         "replacement_length": len(replacement_text),
         "patch_applied": True,
         "diff_preview": diff_preview,
+        "execution_policy_decision": execution_policy_decision,
     }
 
     return normalize_display_data(summary)
@@ -235,6 +248,15 @@ def write_patch_report(project_path: str, project_name: str, summary: dict) -> s
         "Diff Preview:",
         summary.get("diff_preview", "[none]"),
     ]
+    ep = summary.get("execution_policy_decision") or {}
+    if ep:
+        lines.extend([
+            "",
+            "Execution policy:",
+            f"- status: {ep.get('status')}",
+            f"- allowed: {ep.get('allowed')}",
+            f"- review_required: {ep.get('review_required')}",
+        ])
 
     report_file.write_text("\n".join(lines), encoding="utf-8")
     return str(report_file)
