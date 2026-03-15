@@ -1,3 +1,9 @@
+"""
+Runtime agent registry for NEXUS routing and node resolution.
+
+Routing and runtime_node names stay here. For agent display names and
+identity metadata (role, status, allowed_tools), see agent_identity_registry.
+"""
 RUNTIME_AGENT_REGISTRY = {
     "planner": {
         "implemented": True,

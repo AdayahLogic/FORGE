@@ -7,6 +7,7 @@ from NEXUS.agent_registry import (
     get_runtime_routable_agents,
     resolve_agent_alias,
 )
+from NEXUS.agent_identity_registry import get_agent_display_name
 from NEXUS.path_utils import normalize_display_data
 
 
@@ -74,11 +75,14 @@ def build_agent_route(architect_plan: dict | None, active_project: str | None) -
         )
         runtime_node = "coder"
 
+    runtime_node_display_name = get_agent_display_name(runtime_node) or runtime_node
+
     summary = {
         "active_project": active_project,
         "requested_next_agent": requested_next_agent,
         "resolved_agent_name": resolved_agent,
         "runtime_node": runtime_node,
+        "runtime_node_display_name": runtime_node_display_name,
         "route_status": route_status,
         "route_reason": route_reason,
         "available_runtime_agents": routable_agents,
@@ -104,6 +108,7 @@ def write_agent_router_report(project_path: str, project_name: str, summary: dic
         f"- requested_next_agent: {summary.get('requested_next_agent')}",
         f"- resolved_agent_name: {summary.get('resolved_agent_name')}",
         f"- runtime_node: {summary.get('runtime_node')}",
+        f"- runtime_node_display_name: {summary.get('runtime_node_display_name', summary.get('runtime_node'))}",
         f"- route_status: {summary.get('route_status')}",
         f"- route_reason: {summary.get('route_reason')}",
         f"- is_future_agent: {summary.get('is_future_agent')}",
