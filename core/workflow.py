@@ -3,6 +3,7 @@ from core.state import StudioState
 from core.router import detect_project
 from core.registry import PROJECTS
 from core.memory import load_project_context
+from core.memory_engine import load_project_memory
 from core.llm import generate_architect_plan
 from core.tasks import build_task_queue
 from core.queue import InMemoryTaskQueue, Task, TaskStatus
@@ -72,7 +73,21 @@ def load_memory(state: StudioState):
         state.notes = "No project path found."
         return state
 
+    # Preserve existing behavior: load aggregated docs/memory/tasks text.
     state.loaded_context = load_project_context(state.project_path)
+
+    # In parallel, build a normalized, project-scoped memory snapshot
+    # using the new Nexus core memory engine. This is stored separately
+    # to keep existing planner and report flows intact.
+    memory_snapshot = load_project_memory(
+        project_path=state.project_path,
+        project_name=state.active_project,
+    )
+
+    # Store normalized memory in the dedicated state field only (loaded_context
+    # is Dict[str, str] and cannot hold a dict without triggering validation).
+    state.normalized_memory = memory_snapshot.dict()
+
     state.notes = "Project memory loaded."
     return state
 
@@ -686,6 +701,7 @@ def save_persistent_project_state_node(state: StudioState):
             browser_research_summary=state.browser_research_summary,
             full_automation_report_path=state.full_automation_report_path,
             full_automation_summary=state.full_automation_summary,
+            task_queue_snapshot=state.task_queue_snapshot,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"

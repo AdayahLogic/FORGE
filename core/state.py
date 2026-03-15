@@ -10,6 +10,9 @@ class StudioState(BaseModel):
     notes: Optional[str] = None
     project_path: Optional[str] = None
     loaded_context: Dict[str, str] = {}
+    # Optional normalized project memory snapshot produced by the core
+    # memory engine. Existing callers can continue to rely on loaded_context.
+    normalized_memory: Dict[str, Any] = {}
     architect_plan: Optional[Dict[str, Any]] = None
     task_queue: List[Dict[str, Any]] = []
     # Optional richer snapshot for Nexus task queue engine; mirrors task_queue
