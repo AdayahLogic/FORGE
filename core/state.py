@@ -40,6 +40,7 @@ class StudioState(BaseModel):
     capability_registry_report_path: Optional[str] = None
     tool_registry_report_path: Optional[str] = None
     workspace_boundary_report_path: Optional[str] = None
+    path_migration_report_path: Optional[str] = None
     terminal_report_path: Optional[str] = None
     browser_research_report_path: Optional[str] = None
     full_automation_report_path: Optional[str] = None
@@ -60,6 +61,7 @@ class StudioState(BaseModel):
     tool_registry_summary: Dict[str, Any] = {}
     tool_routing_summary: Dict[str, Any] = {}
     workspace_boundary_summary: Dict[str, Any] = {}
+    path_migration_summary: Dict[str, Any] = {}
     terminal_summary: Dict[str, Any] = {}
     browser_research_summary: Dict[str, Any] = {}
     full_automation_summary: Dict[str, Any] = {}
