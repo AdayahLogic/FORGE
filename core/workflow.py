@@ -31,6 +31,10 @@ from core.execution_bridge import build_execution_bridge_packet, write_execution
 from core.engine_inspector import build_engine_summary, write_engine_report
 from core.capability_inspector import build_capability_summary, write_capability_report
 from core.tool_inspector import build_tool_summary, write_tool_registry_report
+from core.workspace_guard import (
+    build_workspace_boundary_summary,
+    write_workspace_boundary_report,
+)
 from core.terminal_controller import run_allowed_commands, write_terminal_report
 from core.browser_agent import open_safe_research_urls, write_browser_research_report
 from core.full_automation import build_full_automation_summary, write_full_automation_report
@@ -276,6 +280,32 @@ def tool_registry_node(state: StudioState):
         state.notes = f"Tool registry report created at: {report_path}"
     except Exception as e:
         state.notes = f"Tool registry failed: {e}"
+
+    return state
+
+
+def workspace_boundary_node(state: StudioState):
+    print("[Workspace Boundary] Inspecting layer and path boundaries...")
+
+    if not state.project_path:
+        state.notes = "Workspace boundary could not run: missing project path."
+        return state
+
+    try:
+        summary = build_workspace_boundary_summary(
+            project_path=state.project_path,
+            active_project=state.active_project,
+        )
+        report_path = write_workspace_boundary_report(
+            project_path=state.project_path,
+            project_name=state.active_project or "unknown_project",
+            summary=summary,
+        )
+        state.workspace_boundary_summary = summary
+        state.workspace_boundary_report_path = report_path
+        state.notes = f"Workspace boundary report created at: {report_path}"
+    except Exception as e:
+        state.notes = f"Workspace boundary failed: {e}"
 
     return state
 
@@ -725,6 +755,8 @@ def save_persistent_project_state_node(state: StudioState):
             tool_registry_report_path=state.tool_registry_report_path,
             tool_registry_summary=state.tool_registry_summary,
             tool_routing_summary=state.tool_routing_summary,
+            workspace_boundary_report_path=state.workspace_boundary_report_path,
+            workspace_boundary_summary=state.workspace_boundary_summary,
             terminal_report_path=state.terminal_report_path,
             terminal_summary=state.terminal_summary,
             browser_research_report_path=state.browser_research_report_path,
@@ -754,6 +786,7 @@ def build_workflow():
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
+    graph.add_node("workspace_boundary", workspace_boundary_node)
     graph.add_node("coder", coder_agent)
     graph.add_node("tester", tester_agent)
     graph.add_node("docs", docs_agent)
@@ -783,7 +816,8 @@ def build_workflow():
     graph.add_edge("execution_bridge", "engine_registry")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
-    graph.add_edge("tool_registry", "coder")
+    graph.add_edge("tool_registry", "workspace_boundary")
+    graph.add_edge("workspace_boundary", "coder")
     graph.add_edge("coder", "tester")
     graph.add_edge("tester", "docs")
     graph.add_edge("docs", "executor")

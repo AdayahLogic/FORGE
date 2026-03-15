@@ -74,6 +74,8 @@ def save_project_state(
     tool_registry_report_path: str | None = None,
     tool_registry_summary: dict | None = None,
     tool_routing_summary: dict | None = None,
+    workspace_boundary_report_path: str | None = None,
+    workspace_boundary_summary: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -122,6 +124,8 @@ def save_project_state(
         "tool_registry_report_path": tool_registry_report_path,
         "tool_registry_summary": tool_registry_summary or {},
         "tool_routing_summary": tool_routing_summary or {},
+        "workspace_boundary_report_path": workspace_boundary_report_path,
+        "workspace_boundary_summary": workspace_boundary_summary or {},
     }
 
     payload = normalize_display_data(payload)
