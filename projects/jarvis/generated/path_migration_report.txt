@@ -1,0 +1,33 @@
+Path Migration Report
+Timestamp: 2026-03-15 18:05:00
+Project: jarvis
+
+Root Naming:
+- intended_root_name: FORGE
+- legacy_root_name: AI_STUDIO
+- root_naming_status: legacy_aliases_detected
+
+Summary:
+- alias_count: 4
+- inspected_path_count: 4
+- human_review_recommended: True
+- notes: Path migration inspection completed.
+
+Recommended Next Steps:
+- Review path_migration_report for paths containing legacy names.
+- When ready, set FORGE_ROOT env to intended root path.
+- Physical folder renames (e.g. AI_STUDIO->FORGE, nexus->jarvis) are deferred.
+
+Inspected Paths:
+- path: .
+  alias_detected: True  logical_name: FORGE  migration_status: alias_only
+  human_review_recommended: True
+- path: projects\jarvis
+  alias_detected: True  logical_name: FORGE  migration_status: alias_only
+  human_review_recommended: True
+- path: projects\jarvis\generated
+  alias_detected: True  logical_name: FORGE  migration_status: alias_only
+  human_review_recommended: True
+- path: projects\jarvis\state
+  alias_detected: True  logical_name: FORGE  migration_status: alias_only
+  human_review_recommended: True

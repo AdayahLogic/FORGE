@@ -1,0 +1,90 @@
+Capability Registry Report
+Timestamp: 2026-03-15 18:05:00
+Project: jarvis
+
+Registry Summary:
+- active_project: jarvis
+- active_capability_count: 11
+- planned_capability_count: 4
+- human_review_recommended: True
+- notes: Capability registry inspected successfully.
+
+Project Capabilities:
+- agent_handoff_routing
+- allowlisted_terminal_execution
+- bounded_autonomous_cycles
+- browser_research_launch
+- controlled_file_append_updates
+- cursor_codex_handoff_packets
+- multi_provider_model_routing
+- plan_validation
+- planner_retry_recovery
+- project_context_loading
+- safe_diff_patch_editing
+- structured_planning
+
+Active Capabilities:
+- agent_handoff_routing
+- allowlisted_terminal_execution
+- bounded_autonomous_cycles
+- browser_research_launch
+- controlled_file_append_updates
+- cursor_codex_handoff_packets
+- plan_validation
+- planner_retry_recovery
+- project_context_loading
+- safe_diff_patch_editing
+- structured_planning
+
+Planned Capabilities:
+- growth_content_generation
+- legal_doc_generation
+- multi_provider_model_routing
+- pricing_strategy_generation
+
+Reusable Active Capabilities:
+- agent_handoff_routing
+- allowlisted_terminal_execution
+- bounded_autonomous_cycles
+- browser_research_launch
+- controlled_file_append_updates
+- cursor_codex_handoff_packets
+- plan_validation
+- planner_retry_recovery
+- project_context_loading
+- safe_diff_patch_editing
+- structured_planning
+
+Layer Counts:
+- NEXUS: 12
+- studio: 3
+
+Category Counts:
+- context: 1
+- planning: 1
+- validation: 1
+- reliability: 1
+- routing: 1
+- execution: 2
+- research: 1
+- file_ops: 2
+- safety: 1
+- model_access: 1
+- business: 1
+- legal: 1
+- growth: 1
+
+Engine Usage Counts:
+- memory_loader: 1
+- planner_engine: 3
+- plan_validator: 1
+- agent_router: 1
+- execution_bridge: 1
+- terminal_control_engine: 1
+- browser_research_engine: 1
+- file_modification_engine: 1
+- diff_patch_engine: 1
+- model_gateway: 1
+- pricing_engine: 1
+- legal_engine: 1
+- growth_engine: 1

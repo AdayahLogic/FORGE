@@ -1,0 +1,43 @@
+Workspace Boundary Report
+Timestamp: 2026-03-15 18:05:00
+Project: jarvis
+
+Summary:
+- active_project: jarvis
+- inspected_path_count: 9
+- human_review_recommended: True
+- notes: Workspace boundary inspection completed.
+
+Layer Counts:
+- NEXUS: 1
+- projects: 1
+- generated: 1
+- state: 1
+- docs: 2
+- memory: 1
+- tasks: 1
+- shared: 1
+
+Inspected Paths:
+- path: NEXUS
+  layer: NEXUS  write_policy: restricted  owner_scope: nexus
+  human_review_recommended: True
+- path: projects\jarvis
+  layer: projects  write_policy: allowed  owner_scope: project
+- path: projects\jarvis\generated
+  layer: generated  write_policy: allowed  owner_scope: runtime
+- path: projects\jarvis\state
+  layer: state  write_policy: allowed  owner_scope: runtime
+- path: projects\jarvis\docs
+  layer: docs  write_policy: review_required  owner_scope: project
+  human_review_recommended: True
+- path: projects\jarvis\memory
+  layer: memory  write_policy: allowed  owner_scope: project
+- path: projects\jarvis\tasks
+  layer: tasks  write_policy: allowed  owner_scope: project
+- path: shared
+  layer: shared  write_policy: review_required  owner_scope: shared
+  human_review_recommended: True
+- path: docs
+  layer: docs  write_policy: review_required  owner_scope: nexus
+  human_review_recommended: True
