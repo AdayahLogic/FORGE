@@ -10,6 +10,10 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.tool_registry import TOOL_REGISTRY, get_tools_for_agent
+from NEXUS.agent_policy_registry import (
+    is_tool_blocked_for_agent,
+    is_tool_review_required_for_agent,
+)
 
 
 def route_tool(agent_name: str, tool_name: str) -> dict[str, Any]:
@@ -53,12 +57,28 @@ def route_tool(agent_name: str, tool_name: str) -> dict[str, Any]:
             "status": "rejected",
         }
 
+    # Policy layer: blocked tools take precedence
+    if is_tool_blocked_for_agent(agent, tool):
+        return {
+            "allowed": False,
+            "tool_name": tool_name,
+            "agent_name": agent_name,
+            "reason": "Tool blocked by agent policy.",
+            "human_review_recommended": True,
+            "status": "rejected",
+            "policy_rejected": True,
+        }
+
+    review_required = is_tool_review_required_for_agent(agent, tool)
+    human_review = meta.get("human_review_recommended", True) or review_required
+
     return {
         "allowed": True,
         "tool_name": tool_name,
         "agent_name": agent_name,
         "reason": "Tool allowed for this agent.",
-        "human_review_recommended": meta.get("human_review_recommended", True),
+        "human_review_recommended": human_review,
+        "review_required": review_required,
         "status": "allowed",
         "category": meta.get("category"),
     }

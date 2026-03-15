@@ -8,6 +8,7 @@ from NEXUS.agent_registry import (
     resolve_agent_alias,
 )
 from NEXUS.agent_identity_registry import get_agent_display_name
+from NEXUS.agent_policy_registry import get_policy_summary_for_agent
 from NEXUS.path_utils import normalize_display_data
 
 
@@ -76,6 +77,7 @@ def build_agent_route(architect_plan: dict | None, active_project: str | None) -
         runtime_node = "coder"
 
     runtime_node_display_name = get_agent_display_name(runtime_node) or runtime_node
+    runtime_node_policy_summary = get_policy_summary_for_agent(runtime_node)
 
     summary = {
         "active_project": active_project,
@@ -83,6 +85,7 @@ def build_agent_route(architect_plan: dict | None, active_project: str | None) -
         "resolved_agent_name": resolved_agent,
         "runtime_node": runtime_node,
         "runtime_node_display_name": runtime_node_display_name,
+        "runtime_node_policy_summary": runtime_node_policy_summary,
         "route_status": route_status,
         "route_reason": route_reason,
         "available_runtime_agents": routable_agents,
@@ -115,8 +118,16 @@ def write_agent_router_report(project_path: str, project_name: str, summary: dic
         f"- mapped_runtime_agent: {summary.get('mapped_runtime_agent')}",
         f"- human_review_recommended: {summary.get('human_review_recommended')}",
         "",
-        "Available Runtime Agents:",
+        "Policy (runtime_node):",
     ]
+    policy = summary.get("runtime_node_policy_summary") or {}
+    lines.append(f"- policy_status: {policy.get('policy_status')}")
+    lines.append(f"- blocked_count: {policy.get('blocked_count', 0)}")
+    lines.append(f"- review_required_count: {policy.get('review_required_count', 0)}")
+    lines.extend([
+        "",
+        "Available Runtime Agents:",
+    ])
 
     for item in summary.get("available_runtime_agents", []):
         lines.append(f"- {item}")
