@@ -1,11 +1,12 @@
 Agent Router Report
-Timestamp: 2026-03-15 18:38:09
+Timestamp: 2026-03-15 18:54:47
 Project: jarvis
 
 Routing Summary:
 - requested_next_agent: coder
 - resolved_agent_name: coder
 - runtime_node: coder
+- runtime_node_display_name: Coder
 - route_status: direct_runtime_route
 - route_reason: Resolved next_agent 'coder' to active runtime agent.
 - is_future_agent: False
