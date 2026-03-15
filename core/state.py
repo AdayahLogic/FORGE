@@ -12,6 +12,9 @@ class StudioState(BaseModel):
     loaded_context: Dict[str, str] = {}
     architect_plan: Optional[Dict[str, Any]] = None
     task_queue: List[Dict[str, Any]] = []
+    # Optional richer snapshot for Nexus task queue engine; mirrors task_queue
+    # but can evolve independently without breaking existing consumers.
+    task_queue_snapshot: List[Dict[str, Any]] = []
     current_task: int = 0
 
     coder_output_path: Optional[str] = None
@@ -31,6 +34,7 @@ class StudioState(BaseModel):
     agent_routing_report_path: Optional[str] = None
     execution_bridge_report_path: Optional[str] = None
     engine_registry_report_path: Optional[str] = None
+    capability_registry_report_path: Optional[str] = None
     terminal_report_path: Optional[str] = None
     browser_research_report_path: Optional[str] = None
     full_automation_report_path: Optional[str] = None
@@ -47,6 +51,7 @@ class StudioState(BaseModel):
     agent_routing_summary: Dict[str, Any] = {}
     execution_bridge_summary: Dict[str, Any] = {}
     engine_registry_summary: Dict[str, Any] = {}
+    capability_registry_summary: Dict[str, Any] = {}
     terminal_summary: Dict[str, Any] = {}
     browser_research_summary: Dict[str, Any] = {}
     full_automation_summary: Dict[str, Any] = {}

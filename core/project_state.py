@@ -62,12 +62,15 @@ def save_project_state(
     execution_bridge_summary: dict | None,
     engine_registry_report_path: str | None,
     engine_registry_summary: dict | None,
+    capability_registry_report_path: str | None,
+    capability_registry_summary: dict | None,
     terminal_report_path: str | None,
     terminal_summary: dict | None,
     browser_research_report_path: str | None,
     browser_research_summary: dict | None,
     full_automation_report_path: str | None,
     full_automation_summary: dict | None,
+    task_queue_snapshot: list | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -78,6 +81,8 @@ def save_project_state(
         "notes": notes,
         "architect_plan": architect_plan,
         "task_queue": task_queue,
+        # Explicit snapshot field for the Nexus task queue engine.
+        "task_queue_snapshot": task_queue_snapshot or task_queue,
         "coder_output_path": coder_output_path,
         "implementation_file_path": implementation_file_path,
         "test_report_path": test_report_path,
@@ -103,6 +108,8 @@ def save_project_state(
         "execution_bridge_summary": execution_bridge_summary,
         "engine_registry_report_path": engine_registry_report_path,
         "engine_registry_summary": engine_registry_summary,
+        "capability_registry_report_path": capability_registry_report_path,
+        "capability_registry_summary": capability_registry_summary,
         "terminal_report_path": terminal_report_path,
         "terminal_summary": terminal_summary,
         "browser_research_report_path": browser_research_report_path,

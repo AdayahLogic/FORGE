@@ -5,6 +5,7 @@ from core.registry import PROJECTS
 from core.memory import load_project_context
 from core.llm import generate_architect_plan
 from core.tasks import build_task_queue
+from core.queue import InMemoryTaskQueue, Task, TaskStatus
 from core.coder import write_coder_output, mark_first_pending_task_complete
 from core.implementer import write_controlled_implementation_file
 from core.tester import write_test_report
@@ -27,6 +28,7 @@ from core.diff_patch import (
 from core.agent_router import build_agent_route, write_agent_router_report
 from core.execution_bridge import build_execution_bridge_packet, write_execution_bridge_report
 from core.engine_inspector import build_engine_summary, write_engine_report
+from core.capability_inspector import build_capability_summary, write_capability_report
 from core.terminal_controller import run_allowed_commands, write_terminal_report
 from core.browser_agent import open_safe_research_urls, write_browser_research_report
 from core.full_automation import build_full_automation_summary, write_full_automation_report
@@ -94,10 +96,42 @@ def architect_agent(state: StudioState):
 def task_queue_builder(state: StudioState):
     print("[Task Manager] Building task queue...")
 
-    queue = build_task_queue(state.architect_plan)
-    state.task_queue = queue
+    # Preserve existing task construction semantics using the legacy builder.
+    legacy_queue = build_task_queue(state.architect_plan)
 
-    for i, task in enumerate(queue):
+    # Build a core Nexus in-memory queue in parallel, then snapshot it back
+    # into the state in a fully backward-compatible structure.
+    core_queue = InMemoryTaskQueue()
+
+    for index, legacy_task in enumerate(legacy_queue):
+        description = legacy_task.get("task", f"task-{index + 1}")
+        status_str = legacy_task.get("status", "pending")
+
+        # Map status into the TaskStatus enum, defaulting safely to PENDING.
+        try:
+            status = TaskStatus(status_str)
+        except ValueError:
+            status = TaskStatus.PENDING
+
+        core_queue.add_task(
+            Task(
+                id=f"task-{index + 1}",
+                type="implementation_step",
+                payload={"description": description},
+                priority=index,
+                status=status,
+            )
+        )
+
+    snapshot = core_queue.snapshot()
+    state.task_queue = snapshot
+
+    # If StudioState has an explicit snapshot field, populate it as well
+    # without changing any existing consumers of task_queue.
+    if hasattr(state, "task_queue_snapshot"):
+        state.task_queue_snapshot = snapshot
+
+    for i, task in enumerate(state.task_queue):
         print(f"Task {i + 1}: {task['task']} ({task['status']})")
 
     state.notes = "Task queue created."
@@ -177,6 +211,29 @@ def engine_registry_node(state: StudioState):
         state.notes = f"Engine registry report created at: {report_path}"
     except Exception as e:
         state.notes = f"Engine registry failed: {e}"
+
+    return state
+
+
+def capability_registry_node(state: StudioState):
+    print("[Capability Registry] Inspecting capability inventory...")
+
+    if not state.project_path:
+        state.notes = "Capability registry could not run: missing project path."
+        return state
+
+    try:
+        summary = build_capability_summary(state.active_project)
+        report_path = write_capability_report(
+            project_path=state.project_path,
+            project_name=state.active_project or "unknown_project",
+            summary=summary,
+        )
+        state.capability_registry_summary = summary
+        state.capability_registry_report_path = report_path
+        state.notes = f"Capability registry report created at: {report_path}"
+    except Exception as e:
+        state.notes = f"Capability registry failed: {e}"
 
     return state
 
@@ -621,6 +678,8 @@ def save_persistent_project_state_node(state: StudioState):
             execution_bridge_summary=state.execution_bridge_summary,
             engine_registry_report_path=state.engine_registry_report_path,
             engine_registry_summary=state.engine_registry_summary,
+            capability_registry_report_path=state.capability_registry_report_path,
+            capability_registry_summary=state.capability_registry_summary,
             terminal_report_path=state.terminal_report_path,
             terminal_summary=state.terminal_summary,
             browser_research_report_path=state.browser_research_report_path,
@@ -647,6 +706,7 @@ def build_workflow():
     graph.add_node("agent_router", agent_router_node)
     graph.add_node("execution_bridge", execution_bridge_node)
     graph.add_node("engine_registry", engine_registry_node)
+    graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("coder", coder_agent)
     graph.add_node("tester", tester_agent)
     graph.add_node("docs", docs_agent)
@@ -674,7 +734,8 @@ def build_workflow():
     graph.add_edge("task_queue", "agent_router")
     graph.add_edge("agent_router", "execution_bridge")
     graph.add_edge("execution_bridge", "engine_registry")
-    graph.add_edge("engine_registry", "coder")
+    graph.add_edge("engine_registry", "capability_registry")
+    graph.add_edge("capability_registry", "coder")
     graph.add_edge("coder", "tester")
     graph.add_edge("tester", "docs")
     graph.add_edge("docs", "executor")
