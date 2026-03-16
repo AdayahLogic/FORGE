@@ -1,11 +1,14 @@
 Coder Execution Report
-Timestamp: 2026-03-16 15:14:48
+Timestamp: 2026-03-16 15:26:50
 Project: jarvis
 
 Task Queue Snapshot:
-1. Review the malformed planner output. [pending]
-2. Refine the planner prompt or schema validation. [pending]
-3. Retry with a narrower implementation slice. [pending]
+1. Add a project-scoped context loader that reads only Jarvis workspace docs and assembles a normalized planning context object. [pending]
+2. Create a model client wrapper for OpenAI calls with config-based model selection, timeouts, and error handling isolated from planner logic. [pending]
+3. Implement a planner service that combines user request plus loaded Jarvis context and produces the required structured JSON fields. [pending]
+4. Enforce workspace isolation checks in the planner path so cross-project memory is never loaded unless explicitly requested. [pending]
+5. Add lightweight validation for required output keys and fallback behavior when model output is malformed or unavailable. [pending]
+6. Prepare clear handoff boundaries so later agents can add real tool execution and file operations without changing planner contracts. [pending]
 
 Execution Notes:
 - Coder agent initialized successfully.
