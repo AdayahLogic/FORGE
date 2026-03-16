@@ -91,6 +91,10 @@ def save_project_state(
     automation_status: str | None = None,
     automation_result: dict | None = None,
     agent_selection_summary: dict | None = None,
+    governance_status: str | None = None,
+    governance_result: dict | None = None,
+    project_lifecycle_status: str | None = None,
+    project_lifecycle_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -156,6 +160,10 @@ def save_project_state(
         "automation_status": automation_status,
         "automation_result": automation_result or {},
         "agent_selection_summary": agent_selection_summary or {},
+        "governance_status": governance_status,
+        "governance_result": governance_result or {},
+        "project_lifecycle_status": project_lifecycle_status,
+        "project_lifecycle_result": project_lifecycle_result or {},
     }
 
     payload = normalize_display_data(payload)

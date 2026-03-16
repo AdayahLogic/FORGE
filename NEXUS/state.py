@@ -80,3 +80,7 @@ class StudioState(BaseModel):
     runtime_execution_status: Optional[str] = None
     automation_status: Optional[str] = None
     automation_result: Dict[str, Any] = {}
+    governance_status: Optional[str] = None
+    governance_result: Dict[str, Any] = {}
+    project_lifecycle_status: Optional[str] = None
+    project_lifecycle_result: Dict[str, Any] = {}

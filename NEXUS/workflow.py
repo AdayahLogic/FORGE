@@ -48,6 +48,8 @@ from NEXUS.system_health import evaluate_health, write_system_health_report
 from NEXUS.dispatch_planner import build_dispatch_plan_safe
 from NEXUS.runtime_dispatcher import dispatch as runtime_dispatch
 from NEXUS.automation_layer import evaluate_automation_outcome_safe
+from NEXUS.governance_layer import evaluate_governance_outcome_safe
+from NEXUS.project_lifecycle import evaluate_project_lifecycle_safe
 
 
 def route_project(state: StudioState):
@@ -330,6 +332,48 @@ def automation_layer_node(state: StudioState):
     )
     state.automation_result = result
     state.automation_status = result.get("automation_status")
+    return state
+
+
+def governance_layer_node(state: StudioState):
+    """Evaluate governance outcome after dispatch and automation (no execution)."""
+    result = evaluate_governance_outcome_safe(
+        dispatch_status=state.dispatch_status,
+        runtime_execution_status=state.runtime_execution_status,
+        dispatch_result=state.dispatch_result,
+        automation_status=state.automation_status,
+        automation_result=state.automation_result,
+        agent_selection_summary=state.agent_selection_summary,
+        dispatch_plan_summary=state.dispatch_plan_summary,
+        active_project=state.active_project,
+        project_path=state.project_path,
+    )
+    state.governance_result = result
+    state.governance_status = result.get("governance_status")
+    return state
+
+
+def project_lifecycle_node(state: StudioState):
+    """Evaluate project lifecycle from orchestration state (no execution)."""
+    existing = {
+        "dispatch_plan_summary": state.dispatch_plan_summary,
+        "architect_plan": state.architect_plan,
+        "task_queue": state.task_queue,
+    }
+    result = evaluate_project_lifecycle_safe(
+        active_project=state.active_project,
+        project_path=state.project_path,
+        dispatch_status=state.dispatch_status,
+        runtime_execution_status=state.runtime_execution_status,
+        automation_status=state.automation_status,
+        governance_status=state.governance_status,
+        governance_result=state.governance_result,
+        automation_result=state.automation_result,
+        dispatch_result=state.dispatch_result,
+        existing_project_state=existing,
+    )
+    state.project_lifecycle_result = result
+    state.project_lifecycle_status = result.get("lifecycle_status")
     return state
 
 
@@ -967,6 +1011,10 @@ def save_persistent_project_state_node(state: StudioState):
             automation_status=state.automation_status,
             automation_result=state.automation_result,
             agent_selection_summary=state.agent_selection_summary,
+            governance_status=state.governance_status,
+            governance_result=state.governance_result,
+            project_lifecycle_status=state.project_lifecycle_status,
+            project_lifecycle_result=state.project_lifecycle_result,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -1018,6 +1066,8 @@ def build_workflow():
     graph.add_node("dispatch_planning", dispatch_planning_node)
     graph.add_node("runtime_dispatch", runtime_dispatch_node)
     graph.add_node("automation_layer", automation_layer_node)
+    graph.add_node("governance_layer", governance_layer_node)
+    graph.add_node("project_lifecycle", project_lifecycle_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -1053,7 +1103,9 @@ def build_workflow():
     graph.add_edge("execution_bridge", "dispatch_planning")
     graph.add_edge("dispatch_planning", "runtime_dispatch")
     graph.add_edge("runtime_dispatch", "automation_layer")
-    graph.add_edge("automation_layer", "engine_registry")
+    graph.add_edge("automation_layer", "governance_layer")
+    graph.add_edge("governance_layer", "project_lifecycle")
+    graph.add_edge("project_lifecycle", "engine_registry")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")

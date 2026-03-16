@@ -118,6 +118,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     recommended_action_by_project: dict[str, str] = {}
     agent_selection_by_project: dict[str, str] = {}
     agent_role_count: dict[str, int] = {}
+    governance_status_by_project: dict[str, str] = {}
+    governance_status_count: dict[str, int] = {}
+    risk_level_count: dict[str, int] = {}
+    project_lifecycle_by_project: dict[str, str] = {}
+    project_lifecycle_status_count: dict[str, int] = {}
+    lifecycle_stage_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -151,6 +157,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             role = agent_sel.get("agent_role")
             if role:
                 agent_role_count[role] = agent_role_count.get(role, 0) + 1
+            g_status = loaded.get("governance_status") or (loaded.get("governance_result") or {}).get("governance_status") or "none"
+            governance_status_by_project[key] = str(g_status)
+            governance_status_count[g_status] = governance_status_count.get(g_status, 0) + 1
+            g_result = loaded.get("governance_result") or {}
+            r_level = g_result.get("risk_level")
+            if r_level:
+                risk_level_count[r_level] = risk_level_count.get(r_level, 0) + 1
+            pl_status = loaded.get("project_lifecycle_status") or (loaded.get("project_lifecycle_result") or {}).get("lifecycle_status") or "none"
+            project_lifecycle_by_project[key] = str(pl_status)
+            project_lifecycle_status_count[pl_status] = project_lifecycle_status_count.get(pl_status, 0) + 1
+            pl_result = loaded.get("project_lifecycle_result") or {}
+            pl_stage = pl_result.get("lifecycle_stage")
+            if pl_stage:
+                lifecycle_stage_count[pl_stage] = lifecycle_stage_count.get(pl_stage, 0) + 1
         except Exception:
             continue
     dispatch_planning_summary: dict[str, Any] = {
@@ -194,4 +214,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "recommended_action_by_project": recommended_action_by_project,
         "agent_selection_by_project": agent_selection_by_project,
         "agent_role_count": agent_role_count,
+        "governance_status_by_project": governance_status_by_project,
+        "governance_status_count": governance_status_count,
+        "risk_level_count": risk_level_count,
+        "project_lifecycle_by_project": project_lifecycle_by_project,
+        "project_lifecycle_status_count": project_lifecycle_status_count,
+        "lifecycle_stage_count": lifecycle_stage_count,
     }
