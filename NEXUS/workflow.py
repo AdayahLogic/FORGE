@@ -44,6 +44,7 @@ from NEXUS.browser_agent import open_safe_research_urls, write_browser_research_
 from NEXUS.full_automation import build_full_automation_summary, write_full_automation_report
 from NEXUS.execution_ledger import get_ledger_path, append_entry as ledger_append
 from NEXUS.run_context import create_run_context, finalize_run_context
+from NEXUS.system_health import evaluate_health, write_system_health_report
 
 
 def route_project(state: StudioState):
@@ -767,6 +768,30 @@ def full_automation_agent(state: StudioState):
     return state
 
 
+def system_health_node(state: StudioState):
+    """Evaluate system health and optionally write a small report."""
+    summary = evaluate_health(
+        project_path=state.project_path,
+        run_id=state.run_id,
+        execution_session_summary=state.execution_session_summary,
+        execution_policy_summary=state.execution_policy_summary,
+        notes=state.notes,
+        agent_routing_report_path=state.agent_routing_report_path,
+    )
+    state.system_health_summary = summary
+    if state.project_path and state.active_project:
+        try:
+            report_path = write_system_health_report(
+                state.project_path,
+                state.active_project,
+                summary,
+            )
+            state.system_health_report_path = report_path
+        except Exception:
+            pass
+    return state
+
+
 def save_persistent_project_state_node(state: StudioState):
     print("[State] Saving persistent project state...")
 
@@ -840,6 +865,8 @@ def save_persistent_project_state_node(state: StudioState):
             task_queue_snapshot=state.task_queue_snapshot,
             run_id=state.run_id,
             execution_session_summary=state.execution_session_summary,
+            system_health_summary=state.system_health_summary,
+            system_health_report_path=state.system_health_report_path,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -850,6 +877,18 @@ def save_persistent_project_state_node(state: StudioState):
             status="failed",
             error_summary=str(e),
         )
+        # Reflect save failure in health summary
+        health = state.system_health_summary or {}
+        flags = list(health.get("safety_flags", []))
+        if "workflow_failed" not in flags:
+            flags.append("workflow_failed")
+        state.system_health_summary = {
+            **health,
+            "overall_status": "critical",
+            "safety_flags": flags,
+            "human_review_recommended": True,
+            "alerts": list(health.get("alerts", [])) + [f"Persistent state save failed: {e}"],
+        }
         try:
             ledger_append(
                 state.project_path,
@@ -897,6 +936,7 @@ def build_workflow():
     graph.add_node("file_modification", file_modification_agent)
     graph.add_node("diff_patch", diff_patch_agent)
     graph.add_node("full_automation", full_automation_agent)
+    graph.add_node("system_health", system_health_node)
     graph.add_node("persistent_state_save", save_persistent_project_state_node)
 
     graph.set_entry_point("router")
@@ -928,7 +968,8 @@ def build_workflow():
     graph.add_edge("browser_research", "file_modification")
     graph.add_edge("file_modification", "diff_patch")
     graph.add_edge("diff_patch", "full_automation")
-    graph.add_edge("full_automation", "persistent_state_save")
+    graph.add_edge("full_automation", "system_health")
+    graph.add_edge("system_health", "persistent_state_save")
     graph.add_edge("persistent_state_save", END)
 
     return graph.compile()

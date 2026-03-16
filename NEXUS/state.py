@@ -69,3 +69,5 @@ class StudioState(BaseModel):
     browser_research_summary: Dict[str, Any] = {}
     full_automation_summary: Dict[str, Any] = {}
     execution_policy_summary: Dict[str, Any] = {}
+    system_health_summary: Dict[str, Any] = {}
+    system_health_report_path: Optional[str] = None
