@@ -1,35 +1,37 @@
 {
-  "saved_at": "2026-03-15T20:59:35.931017",
+  "saved_at": "2026-03-16T11:41:53.399297",
   "active_project": "jarvis",
   "project_state_file": "projects\\jarvis\\state\\project_state.json",
   "notes": "Full automation report created at: C:\\AI_STUDIO\\projects\\jarvis\\generated\\full_automation_report.txt",
   "architect_plan": {
     "objective": "Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.",
     "assumptions": [
-      "Active project is jarvis and planning must remain scoped to Jarvis workspace context only.",
-      "This phase is limited to orchestration-layer planning and integration boundaries, not full file mutation or tool execution.",
-      "Memory loading should read only project-local overview, focus, notes, and task sources before planning.",
-      "OpenAI integration should be introduced behind a small adapter interface so model access can be swapped or mocked later.",
-      "Structured task planning output should be deterministic JSON suitable for downstream coding, documentation, or testing agents."
+      "The active workspace is jarvis and all planning must remain scoped to Jarvis project context only.",
+      "This phase is limited to orchestration logic and structured planning output, not real file mutation or tool execution.",
+      "Memory loading should read project overview, current focus, dev notes, and next steps as isolated inputs for the active project.",
+      "OpenAI integration should be introduced behind a thin adapter so model access can be swapped or disabled safely.",
+      "Structured output should remain deterministic and compatible with downstream agent routing."
     ],
     "implementation_steps": [
-      "Define a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context.",
-      "Add an LLM client adapter for OpenAI with configuration isolation, timeout handling, and mock-friendly interfaces.",
-      "Create a planner pipeline that combines user request plus scoped project context and returns structured JSON planning output.",
-      "Enforce workspace-boundary guards so only the active project context is available to the planner unless explicitly overridden.",
-      "Add basic validation tests for context loading, JSON output shape, and project-isolation behavior."
+      "Implement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object.",
+      "Add validation so the loader rejects missing project identifiers, cross-project path access, and fallback to non-active workspaces unless explicitly requested.",
+      "Create an OpenAI client adapter with config-driven model selection, timeout handling, and a clear interface for planner requests.",
+      "Define a structured planning schema containing objective, assumptions, implementation steps, risks, next agent, and optional patch request fields.",
+      "Wire the planner flow so it loads Jarvis context first, builds a scoped planning prompt, calls the model adapter, and returns schema-validated JSON.",
+      "Add logging around context loading and planning generation that records project name and stage without leaking other workspace content.",
+      "Prepare tests for project isolation, memory loading behavior, model adapter fallback behavior, and JSON schema compliance."
     ],
     "risks": [
-      "Project memory may accidentally include references to other workspaces if notes are not filtered or labeled carefully.",
-      "Model integration can introduce nondeterministic outputs unless response shaping and schema validation are enforced.",
-      "Overloading the planner prompt with raw notes may reduce output quality or cause context-window pressure.",
-      "Premature coupling between planner logic and future file/tool execution may make later expansion harder."
+      "Context-loading logic may accidentally permit cross-project reads if path resolution is not tightly constrained.",
+      "Model responses may drift from the required JSON schema without strict validation and retry handling.",
+      "Overloading prompts with raw dev notes could reduce plan quality or increase token usage.",
+      "Introducing OpenAI integration too early without abstraction could make later provider changes harder."
     ],
     "next_agent": "coder",
     "patch_request": null,
     "validation_status": "valid",
     "validation_issues": [],
-    "raw_model_output": "{\n  \"objective\": \"Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\",\n  \"assumptions\": [\n    \"Active project is jarvis and planning must remain scoped to Jarvis workspace context only.\",\n    \"This phase is limited to orchestration-layer planning and integration boundaries, not full file mutation or tool execution.\",\n    \"Memory loading should read only project-local overview, focus, notes, and task sources before planning.\",\n    \"OpenAI integration should be introduced behind a small adapter interface so model access can be swapped or mocked later.\",\n    \"Structured task planning output should be deterministic JSON suitable for downstream coding, documentation, or testing agents.\"\n  ],\n  \"implementation_steps\": [\n    \"Define a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context.\",\n    \"Add an LLM client adapter for OpenAI with configuration isolation, timeout handling, and mock-friendly interfaces.\",\n    \"Create a planner pipeline that combines user request plus scoped project context and returns structured JSON planning output.\",\n    \"Enforce workspace-boundary guards so only the active project context is available to the planner unless explicitly overridden.\",\n    \"Add basic validation tests for context loading, JSON output shape, and project-isolation behavior.\"\n  ],\n  \"risks\": [\n    \"Project memory may accidentally include references to other workspaces if notes are not filtered or labeled carefully.\",\n    \"Model integration can introduce nondeterministic outputs unless response shaping and schema validation are enforced.\",\n    \"Overloading the planner prompt with raw notes may reduce output quality or cause context-window pressure.\",\n    \"Premature coupling between planner logic and future file/tool execution may ma",
+    "raw_model_output": "{\n  \"objective\": \"Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\",\n  \"assumptions\": [\n    \"The active workspace is jarvis and all planning must remain scoped to Jarvis project context only.\",\n    \"This phase is limited to orchestration logic and structured planning output, not real file mutation or tool execution.\",\n    \"Memory loading should read project overview, current focus, dev notes, and next steps as isolated inputs for the active project.\",\n    \"OpenAI integration should be introduced behind a thin adapter so model access can be swapped or disabled safely.\",\n    \"Structured output should remain deterministic and compatible with downstream agent routing.\"\n  ],\n  \"implementation_steps\": [\n    \"Implement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object.\",\n    \"Add validation so the loader rejects missing project identifiers, cross-project path access, and fallback to non-active workspaces unless explicitly requested.\",\n    \"Create an OpenAI client adapter with config-driven model selection, timeout handling, and a clear interface for planner requests.\",\n    \"Define a structured planning schema containing objective, assumptions, implementation steps, risks, next agent, and optional patch request fields.\",\n    \"Wire the planner flow so it loads Jarvis context first, builds a scoped planning prompt, calls the model adapter, and returns schema-validated JSON.\",\n    \"Add logging around context loading and planning generation that records project name and stage without leaking other workspace content.\",\n    \"Prepare tests for project isolation, memory loading behavior, model adapter fallback behavior, and JSON schema compliance.\"\n  ],\n  \"risks\": [\n    \"Context-loading logic may accidentally permi",
     "planner_attempt_count": 1,
     "planner_attempts": [
       {
@@ -47,51 +49,71 @@
       "id": "task-1",
       "type": "implementation_step",
       "payload": {
-        "description": "Define a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context."
+        "description": "Implement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object."
       },
       "priority": 0,
       "status": "completed",
-      "task": "Define a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context."
+      "task": "Implement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object."
     },
     {
       "id": "task-2",
       "type": "implementation_step",
       "payload": {
-        "description": "Add an LLM client adapter for OpenAI with configuration isolation, timeout handling, and mock-friendly interfaces."
+        "description": "Add validation so the loader rejects missing project identifiers, cross-project path access, and fallback to non-active workspaces unless explicitly requested."
       },
       "priority": 1,
       "status": "pending",
-      "task": "Add an LLM client adapter for OpenAI with configuration isolation, timeout handling, and mock-friendly interfaces."
+      "task": "Add validation so the loader rejects missing project identifiers, cross-project path access, and fallback to non-active workspaces unless explicitly requested."
     },
     {
       "id": "task-3",
       "type": "implementation_step",
       "payload": {
-        "description": "Create a planner pipeline that combines user request plus scoped project context and returns structured JSON planning output."
+        "description": "Create an OpenAI client adapter with config-driven model selection, timeout handling, and a clear interface for planner requests."
       },
       "priority": 2,
       "status": "pending",
-      "task": "Create a planner pipeline that combines user request plus scoped project context and returns structured JSON planning output."
+      "task": "Create an OpenAI client adapter with config-driven model selection, timeout handling, and a clear interface for planner requests."
     },
     {
       "id": "task-4",
       "type": "implementation_step",
       "payload": {
-        "description": "Enforce workspace-boundary guards so only the active project context is available to the planner unless explicitly overridden."
+        "description": "Define a structured planning schema containing objective, assumptions, implementation steps, risks, next agent, and optional patch request fields."
       },
       "priority": 3,
       "status": "pending",
-      "task": "Enforce workspace-boundary guards so only the active project context is available to the planner unless explicitly overridden."
+      "task": "Define a structured planning schema containing objective, assumptions, implementation steps, risks, next agent, and optional patch request fields."
     },
     {
       "id": "task-5",
       "type": "implementation_step",
       "payload": {
-        "description": "Add basic validation tests for context loading, JSON output shape, and project-isolation behavior."
+        "description": "Wire the planner flow so it loads Jarvis context first, builds a scoped planning prompt, calls the model adapter, and returns schema-validated JSON."
       },
       "priority": 4,
       "status": "pending",
-      "task": "Add basic validation tests for context loading, JSON output shape, and project-isolation behavior."
+      "task": "Wire the planner flow so it loads Jarvis context first, builds a scoped planning prompt, calls the model adapter, and returns schema-validated JSON."
+    },
+    {
+      "id": "task-6",
+      "type": "implementation_step",
+      "payload": {
+        "description": "Add logging around context loading and planning generation that records project name and stage without leaking other workspace content."
+      },
+      "priority": 5,
+      "status": "pending",
+      "task": "Add logging around context loading and planning generation that records project name and stage without leaking other workspace content."
+    },
+    {
+      "id": "task-7",
+      "type": "implementation_step",
+      "payload": {
+        "description": "Prepare tests for project isolation, memory loading behavior, model adapter fallback behavior, and JSON schema compliance."
+      },
+      "priority": 6,
+      "status": "pending",
+      "task": "Prepare tests for project isolation, memory loading behavior, model adapter fallback behavior, and JSON schema compliance."
     }
   ],
   "task_queue_snapshot": [
@@ -99,51 +121,71 @@
       "id": "task-1",
       "type": "implementation_step",
       "payload": {
-        "description": "Define a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context."
+        "description": "Implement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object."
       },
       "priority": 0,
       "status": "pending",
-      "task": "Define a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context."
+      "task": "Implement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object."
     },
     {
       "id": "task-2",
       "type": "implementation_step",
       "payload": {
-        "description": "Add an LLM client adapter for OpenAI with configuration isolation, timeout handling, and mock-friendly interfaces."
+        "description": "Add validation so the loader rejects missing project identifiers, cross-project path access, and fallback to non-active workspaces unless explicitly requested."
       },
       "priority": 1,
       "status": "pending",
-      "task": "Add an LLM client adapter for OpenAI with configuration isolation, timeout handling, and mock-friendly interfaces."
+      "task": "Add validation so the loader rejects missing project identifiers, cross-project path access, and fallback to non-active workspaces unless explicitly requested."
     },
     {
       "id": "task-3",
       "type": "implementation_step",
       "payload": {
-        "description": "Create a planner pipeline that combines user request plus scoped project context and returns structured JSON planning output."
+        "description": "Create an OpenAI client adapter with config-driven model selection, timeout handling, and a clear interface for planner requests."
       },
       "priority": 2,
       "status": "pending",
-      "task": "Create a planner pipeline that combines user request plus scoped project context and returns structured JSON planning output."
+      "task": "Create an OpenAI client adapter with config-driven model selection, timeout handling, and a clear interface for planner requests."
     },
     {
       "id": "task-4",
       "type": "implementation_step",
       "payload": {
-        "description": "Enforce workspace-boundary guards so only the active project context is available to the planner unless explicitly overridden."
+        "description": "Define a structured planning schema containing objective, assumptions, implementation steps, risks, next agent, and optional patch request fields."
       },
       "priority": 3,
       "status": "pending",
-      "task": "Enforce workspace-boundary guards so only the active project context is available to the planner unless explicitly overridden."
+      "task": "Define a structured planning schema containing objective, assumptions, implementation steps, risks, next agent, and optional patch request fields."
     },
     {
       "id": "task-5",
       "type": "implementation_step",
       "payload": {
-        "description": "Add basic validation tests for context loading, JSON output shape, and project-isolation behavior."
+        "description": "Wire the planner flow so it loads Jarvis context first, builds a scoped planning prompt, calls the model adapter, and returns schema-validated JSON."
       },
       "priority": 4,
       "status": "pending",
-      "task": "Add basic validation tests for context loading, JSON output shape, and project-isolation behavior."
+      "task": "Wire the planner flow so it loads Jarvis context first, builds a scoped planning prompt, calls the model adapter, and returns schema-validated JSON."
+    },
+    {
+      "id": "task-6",
+      "type": "implementation_step",
+      "payload": {
+        "description": "Add logging around context loading and planning generation that records project name and stage without leaking other workspace content."
+      },
+      "priority": 5,
+      "status": "pending",
+      "task": "Add logging around context loading and planning generation that records project name and stage without leaking other workspace content."
+    },
+    {
+      "id": "task-7",
+      "type": "implementation_step",
+      "payload": {
+        "description": "Prepare tests for project isolation, memory loading behavior, model adapter fallback behavior, and JSON schema compliance."
+      },
+      "priority": 6,
+      "status": "pending",
+      "task": "Prepare tests for project isolation, memory loading behavior, model adapter fallback behavior, and JSON schema compliance."
     }
   ],
   "coder_output_path": "projects\\jarvis\\generated\\coder_output.txt",
@@ -157,8 +199,8 @@
   "supervisor_decision": {
     "active_project": "jarvis",
     "completed_tasks": 1,
-    "pending_tasks": 4,
-    "previous_saved_at": "2026-03-15T20:33:36.291971",
+    "pending_tasks": 6,
+    "previous_saved_at": "2026-03-15T20:59:35.931017",
     "previous_notes": "Full automation report created at: C:\\AI_STUDIO\\projects\\jarvis\\generated\\full_automation_report.txt",
     "recommended_action": "continue_development_cycle",
     "proceed_with_cycle": true,
@@ -168,7 +210,7 @@
   "autonomous_cycle_summary": {
     "recommended_action": "continue_development_cycle",
     "proceed_with_cycle": true,
-    "pending_tasks_at_start": 4,
+    "pending_tasks_at_start": 6,
     "max_cycles_allowed": 3,
     "cycles_run": 3,
     "stopped_reason": "Stopped at safe max cycle limit (3)."
@@ -207,16 +249,16 @@
     },
     "dev_note_result": {
       "target_path": "projects\\jarvis\\memory\\dev_notes.txt",
-      "note_written": "[2026-03-15 20:59:35] jarvis: tool execution cycle recorded. Objective snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation."
+      "note_written": "[2026-03-16 11:41:52] jarvis: tool execution cycle recorded. Objective snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation."
     }
   },
   "file_modification_report_path": "projects\\jarvis\\generated\\file_modification_report.txt",
   "file_modification_summary": {
     "target_path": "projects\\jarvis\\src\\ai_generated_module.py",
-    "bytes_before": 1830,
-    "bytes_after": 2604,
+    "bytes_before": 2256,
+    "bytes_after": 3030,
     "lines_added_estimate": 13,
-    "update_preview": "\n\n# --- Controlled Jarvis Update ---\n# Timestamp: 2026-03-15 20:59:35\n# Objective Snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\n\ndef get_latest_jarvis_update() -> dict:\n    return {\n        \"updated_at\": \"2026-03-15 20:59:35\",\n        \"project\": \"Jarvis\",\n        \"objective\": \"Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped m",
+    "update_preview": "\n\n# --- Controlled Jarvis Update ---\n# Timestamp: 2026-03-16 11:41:53\n# Objective Snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\n\ndef get_latest_jarvis_update() -> dict:\n    return {\n        \"updated_at\": \"2026-03-16 11:41:53\",\n        \"project\": \"Jarvis\",\n        \"objective\": \"Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped m",
     "update_function_name": "get_latest_jarvis_update",
     "update_project_name": "Jarvis",
     "execution_policy_decision": {
@@ -284,8 +326,8 @@
     "purpose": "Repository-aware implementation and code changes.",
     "cursor_usage": "Use Cursor agent to modify files inside the repo with narrow scope.",
     "codex_usage": "Use Codex for function generation, refactors, or repetitive code patterns.",
-    "cursor_prompt": "Task: Implement the next safe development slice for project 'jarvis'.\n\nTarget runtime agent:\ncoder\n\nObjective:\nDefine the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\n\nPrimary pending task:\nDefine a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context.\n\nRules:\n- make narrow, minimal changes\n- do not redesign architecture\n- do not delete working modules\n- keep changes backward compatible\n- prefer small modular files\n- stop and explain before making broad changes\n\nSuggested allowed areas:\n- core/\n- tests/\n- docs/\n\nExpected output:\n- summary of files changed\n- summary of logic added\n- suggested tests to run\n",
-    "codex_prompt": "Generate code support for project 'jarvis'.\n\nRuntime agent:\ncoder\n\nObjective:\nDefine the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\n\nFocus task:\nDefine a project-context loader that reads Jarvis overview, memory, and task files into a single scoped planning context.\n\nRequirements:\n- generate modular code only\n- do not redesign architecture\n- prefer small isolated functions/classes\n- keep code easy to integrate into an existing repository\n- include safe defaults and clear naming\n- avoid touching unrelated systems\n",
+    "cursor_prompt": "Task: Implement the next safe development slice for project 'jarvis'.\n\nTarget runtime agent:\ncoder\n\nObjective:\nDefine the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\n\nPrimary pending task:\nImplement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object.\n\nRules:\n- make narrow, minimal changes\n- do not redesign architecture\n- do not delete working modules\n- keep changes backward compatible\n- prefer small modular files\n- stop and explain before making broad changes\n\nSuggested allowed areas:\n- core/\n- tests/\n- docs/\n\nExpected output:\n- summary of files changed\n- summary of logic added\n- suggested tests to run\n",
+    "codex_prompt": "Generate code support for project 'jarvis'.\n\nRuntime agent:\ncoder\n\nObjective:\nDefine the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.\n\nFocus task:\nImplement a project-context loader that resolves and aggregates Jarvis-only docs and memory files into a normalized in-memory context object.\n\nRequirements:\n- generate modular code only\n- do not redesign architecture\n- prefer small isolated functions/classes\n- keep code easy to integrate into an existing repository\n- include safe defaults and clear naming\n- avoid touching unrelated systems\n",
     "human_review_checklist": [
       "Confirm the requested runtime node 'coder' makes sense for this task.",
       "Confirm the task scope is narrow and does not redesign the system.",
@@ -293,7 +335,21 @@
       "Run tests before accepting major changes.",
       "Review diffs before commit or deployment."
     ],
-    "handoff_status": "execution_packet_ready"
+    "handoff_status": "execution_packet_ready",
+    "selected_runtime_target": "codex",
+    "fallback_runtime_target": "local",
+    "runtime_selection_status": "selected",
+    "runtime_selection_reason": "Code generation/refactor drafting; target codex.",
+    "runtime_review_required": true,
+    "dispatch_plan_summary": {
+      "dispatch_planning_status": "planned",
+      "ready_for_dispatch": true,
+      "project_name": "jarvis",
+      "runtime_node": "coder",
+      "runtime_target_id": "codex",
+      "task_type": "coder",
+      "planned_at": "2026-03-16T15:41:52.342290+00:00"
+    }
   },
   "engine_registry_report_path": "projects\\jarvis\\generated\\engine_registry_report.txt",
   "engine_registry_summary": {
@@ -679,13 +735,13 @@
     "review_required_count": 2
   },
   "execution_ledger_path": "projects\\jarvis\\state\\execution_ledger.jsonl",
-  "run_id": "14165d281986435fad1902cb25891dff",
+  "run_id": "1a5fd89244fe4af29b671842d9a2ca77",
   "execution_session_summary": {
-    "run_id": "14165d281986435fad1902cb25891dff",
+    "run_id": "1a5fd89244fe4af29b671842d9a2ca77",
     "project_name": "jarvis",
     "user_input": "Continue Jarvis orchestration planning",
-    "started_at": "2026-03-15T20:59:25.290980",
-    "ended_at": "2026-03-15T20:59:35.930299",
+    "started_at": "2026-03-16T11:41:44.037912",
+    "ended_at": "2026-03-16T11:41:53.398794",
     "status": "completed",
     "entry_count": null,
     "error_summary": null
@@ -704,7 +760,29 @@
       "agent_routing_report_exists": true
     },
     "human_review_recommended": false,
-    "evaluated_at": "2026-03-15T20:59:35.929195"
+    "evaluated_at": "2026-03-16T11:41:53.397763"
   },
-  "system_health_report_path": "projects\\jarvis\\generated\\system_health_report.txt"
+  "system_health_report_path": "projects\\jarvis\\generated\\system_health_report.txt",
+  "dispatch_plan_summary": {
+    "dispatch_planning_status": "planned",
+    "ready_for_dispatch": true,
+    "project_name": "jarvis",
+    "runtime_node": "coder",
+    "runtime_target_id": "codex",
+    "task_type": "coder",
+    "planned_at": "2026-03-16T15:41:52.342290+00:00"
+  },
+  "dispatch_status": "accepted",
+  "dispatch_result": {
+    "runtime": "codex",
+    "status": "accepted",
+    "message": "Task routed to codex runtime (simulated).",
+    "execution_status": "simulated_execution",
+    "execution_mode": "safe_simulation",
+    "next_action": "human_review",
+    "artifacts": [],
+    "errors": [],
+    "runtime_target": "codex"
+  },
+  "runtime_execution_status": "simulated_execution"
 }
