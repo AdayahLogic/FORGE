@@ -9,6 +9,7 @@ from NEXUS.agent_registry import (
 )
 from NEXUS.agent_identity_registry import get_agent_display_name
 from NEXUS.agent_policy_registry import get_policy_summary_for_agent
+from NEXUS.execution_ledger import append_entry as ledger_append
 from NEXUS.path_utils import normalize_display_data
 
 
@@ -133,4 +134,17 @@ def write_agent_router_report(project_path: str, project_name: str, summary: dic
         lines.append(f"- {item}")
 
     report_file.write_text("\n".join(lines), encoding="utf-8")
+
+    try:
+        ledger_append(
+            project_path,
+            "agent_routing",
+            summary.get("route_status") or "unknown",
+            summary.get("route_reason") or "Agent routing completed.",
+            project_name=project_name,
+            agent_name=summary.get("runtime_node"),
+            payload={"runtime_node": summary.get("runtime_node"), "route_status": summary.get("route_status")},
+        )
+    except Exception:
+        pass
     return str(report_file)

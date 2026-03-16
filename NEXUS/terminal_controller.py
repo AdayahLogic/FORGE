@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 
 from NEXUS.execution_policy import evaluate as execution_policy_evaluate
+from NEXUS.execution_ledger import append_entry as ledger_append
 
 
 ALLOWED_COMMANDS = [
@@ -77,5 +78,16 @@ def write_terminal_report(project_path: str, project_name: str, results: list) -
         lines.append("")
 
     report_path.write_text("\n".join(lines), encoding="utf-8")
-
+    try:
+        ledger_append(
+            project_path,
+            "terminal_execution",
+            "completed",
+            f"Terminal report written for {project_name}; {len(results)} command(s) run.",
+            project_name=project_name,
+            tool_name="terminal",
+            payload={"command_count": len(results)},
+        )
+    except Exception:
+        pass
     return str(report_path)

@@ -42,6 +42,7 @@ from NEXUS.path_migration import (
 from NEXUS.terminal_controller import run_allowed_commands, write_terminal_report
 from NEXUS.browser_agent import open_safe_research_urls, write_browser_research_report
 from NEXUS.full_automation import build_full_automation_summary, write_full_automation_report
+from NEXUS.execution_ledger import get_ledger_path, append_entry as ledger_append
 
 
 def route_project(state: StudioState):
@@ -750,6 +751,15 @@ def save_persistent_project_state_node(state: StudioState):
         return state
 
     try:
+        state.execution_ledger_path = get_ledger_path(state.project_path)
+        ledger_append(
+            state.project_path,
+            "workflow_run_summary",
+            "completed",
+            f"Workflow run completed for project {state.active_project or 'unknown'}.",
+            project_name=state.active_project,
+            payload={"notes": (state.notes or "")[:200]},
+        )
         saved_path = save_project_state(
             project_path=state.project_path,
             active_project=state.active_project,
@@ -791,6 +801,7 @@ def save_persistent_project_state_node(state: StudioState):
             path_migration_report_path=state.path_migration_report_path,
             path_migration_summary=state.path_migration_summary,
             execution_policy_summary=state.execution_policy_summary,
+            execution_ledger_path=state.execution_ledger_path,
             terminal_report_path=state.terminal_report_path,
             terminal_summary=state.terminal_summary,
             browser_research_report_path=state.browser_research_report_path,

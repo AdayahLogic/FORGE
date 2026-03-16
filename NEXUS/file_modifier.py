@@ -7,6 +7,7 @@ from NEXUS.path_utils import (
     sanitize_identifier,
 )
 from NEXUS.execution_policy import evaluate as execution_policy_evaluate
+from NEXUS.execution_ledger import append_entry as ledger_append
 
 
 def ensure_generated_folder(project_path: str) -> Path:
@@ -119,4 +120,16 @@ def write_file_modification_report(project_path: str, project_name: str, summary
         ])
 
     report_file.write_text("\n".join(lines), encoding="utf-8")
+    try:
+        ledger_append(
+            project_path,
+            "file_modification",
+            "completed",
+            f"File modification report written for {project_name}.",
+            project_name=project_name,
+            tool_name="file_modification",
+            payload={"target_path": summary.get("target_path"), "bytes_after": summary.get("bytes_after")},
+        )
+    except Exception:
+        pass
     return str(report_file)

@@ -45,6 +45,7 @@ class StudioState(BaseModel):
     browser_research_report_path: Optional[str] = None
     full_automation_report_path: Optional[str] = None
     persistent_state_path: Optional[str] = None
+    execution_ledger_path: Optional[str] = None
 
     previous_run_state: Dict[str, Any] = {}
     supervisor_decision: Dict[str, Any] = {}

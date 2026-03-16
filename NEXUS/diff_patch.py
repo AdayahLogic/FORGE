@@ -4,6 +4,7 @@ import difflib
 
 from NEXUS.path_utils import normalize_display_data, to_studio_relative_path
 from NEXUS.execution_policy import evaluate as execution_policy_evaluate
+from NEXUS.execution_ledger import append_entry as ledger_append
 
 
 SAFE_PATCH_EXTENSIONS = {
@@ -259,4 +260,16 @@ def write_patch_report(project_path: str, project_name: str, summary: dict) -> s
         ])
 
     report_file.write_text("\n".join(lines), encoding="utf-8")
+    try:
+        ledger_append(
+            project_path,
+            "diff_patch",
+            summary.get("status") or "unknown",
+            summary.get("reason") or "Diff patch report written.",
+            project_name=project_name,
+            tool_name="diff_patch",
+            payload={"patch_applied": summary.get("patch_applied")},
+        )
+    except Exception:
+        pass
     return str(report_file)
