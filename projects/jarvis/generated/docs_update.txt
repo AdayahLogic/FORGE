@@ -1,5 +1,5 @@
 AI Studio Documentation Update
-Timestamp: 2026-03-15 20:10:33
+Timestamp: 2026-03-15 20:33:35
 Project: jarvis
 
 Execution Summary:
@@ -14,14 +14,14 @@ Architect Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Remaining Tasks:
-- Add workspace-isolation checks so requests, memory reads, and produced plans remain tied to the active project id.
-- Implement a minimal OpenAI client wrapper that accepts loaded context, user intent, and planner instructions and returns structured JSON.
-- Define and validate a stable planning schema with objective, assumptions, implementation_steps, risks, next_agent, and optional patch_request.
-- Add orchestration flow that loads Jarvis context first, invokes the model wrapper second, and emits scoped planning output third.
-- Add lightweight tests for context loading, project isolation, JSON schema compliance, and safe handling when patch_request is absent.
+- Add a model client abstraction for OpenAI requests with configurable model, API key source, timeout, and safe error handling.
+- Implement a planning pipeline that composes project context, user request, and planner instructions into structured JSON output.
+- Enforce workspace isolation checks so no other project memory or paths can be loaded unless explicitly selected.
+- Add minimal validation for required output fields: objective, assumptions, implementation_steps, risks, next_agent, and patch_request.
+- Prepare a later handoff for file and tool execution without enabling destructive actions in this slice.
 
 Completed Tasks:
-- Create a project-context loader that reads only Jarvis workspace docs and assembles a normalized context object.
+- Define a project-context loader that reads only Jarvis-scoped overview, memory, and task files into a normalized planning context.
 
 Documentation Notes:
 - This report was generated automatically by the AI Studio docs agent.

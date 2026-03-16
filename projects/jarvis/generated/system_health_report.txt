@@ -1,0 +1,19 @@
+System Health Report
+Timestamp: 2026-03-15 20:33:36
+Project: jarvis
+
+Overall status: healthy
+Human review recommended: False
+
+Safety flags:
+
+Alerts:
+
+Checks:
+  - project_path_exists: True
+  - state_dir_exists: True
+  - ledger_exists: True
+  - run_id_present: True
+  - session_summary_present: True
+  - policy_summary_present: True
+  - agent_routing_report_exists: True
