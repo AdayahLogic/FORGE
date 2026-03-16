@@ -1,5 +1,5 @@
 Diff Patch Report
-Timestamp: 2026-03-15 19:23:04
+Timestamp: 2026-03-15 20:10:34
 Project: jarvis
 
 Patch Summary:
@@ -15,3 +15,8 @@ Patch Summary:
 
 Diff Preview:
 [none]
+
+Execution policy:
+- status: review_required
+- allowed: True
+- review_required: True

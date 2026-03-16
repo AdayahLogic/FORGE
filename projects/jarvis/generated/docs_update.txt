@@ -1,5 +1,5 @@
 AI Studio Documentation Update
-Timestamp: 2026-03-15 19:23:04
+Timestamp: 2026-03-15 20:10:33
 Project: jarvis
 
 Execution Summary:
@@ -8,19 +8,20 @@ Execution Summary:
 
 Task Status:
 - completed_tasks: 1
-- pending_tasks: 4
+- pending_tasks: 5
 
 Architect Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Remaining Tasks:
-- Create an OpenAI client adapter with configuration isolation, prompt input assembly, and safe failure handling.
-- Add a planner pipeline that combines user request plus loaded Jarvis context into structured JSON planning output.
-- Enforce workspace guards so planner state, memory paths, and model prompts are tagged to jarvis only.
-- Add basic tests for context loading, isolation behavior, and planner JSON schema validity.
+- Add workspace-isolation checks so requests, memory reads, and produced plans remain tied to the active project id.
+- Implement a minimal OpenAI client wrapper that accepts loaded context, user intent, and planner instructions and returns structured JSON.
+- Define and validate a stable planning schema with objective, assumptions, implementation_steps, risks, next_agent, and optional patch_request.
+- Add orchestration flow that loads Jarvis context first, invokes the model wrapper second, and emits scoped planning output third.
+- Add lightweight tests for context loading, project isolation, JSON schema compliance, and safe handling when patch_request is absent.
 
 Completed Tasks:
-- Define a project-context loader that reads overview, memory, and next-steps files only from the active Jarvis workspace.
+- Create a project-context loader that reads only Jarvis workspace docs and assembles a normalized context object.
 
 Documentation Notes:
 - This report was generated automatically by the AI Studio docs agent.
