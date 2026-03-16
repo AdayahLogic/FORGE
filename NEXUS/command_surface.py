@@ -18,6 +18,7 @@ from NEXUS.agent_registry import get_runtime_routable_agents
 from NEXUS.tool_registry import list_active_tools, list_planned_tools
 from NEXUS.engine_registry import list_active_engines, list_planned_engines
 from NEXUS.capability_registry import list_active_capabilities, list_planned_capabilities
+from NEXUS.registry_dashboard import build_registry_dashboard_summary
 
 
 SUPPORTED_COMMANDS = frozenset({
@@ -26,6 +27,7 @@ SUPPORTED_COMMANDS = frozenset({
     "ledger_tail",
     "project_summary",
     "registry_status",
+    "dashboard_summary",
 })
 
 
@@ -67,7 +69,7 @@ def run_command(
     """
     Execute a single studio command and return a normalized result dict.
 
-    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status.
+    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary.
     Result shape: command, status, project_name, summary, payload.
     """
     cmd = (command or "").strip().lower()
@@ -114,6 +116,18 @@ def run_command(
                 status="ok",
                 summary="Registry counts and names.",
                 payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "dashboard_summary":
+        try:
+            snapshot = build_registry_dashboard_summary()
+            return _result(
+                command=cmd,
+                status="ok",
+                summary=f"Unified registry snapshot for {snapshot.get('studio_name', 'NEXUS')}.",
+                payload=snapshot,
             )
         except Exception as e:
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
