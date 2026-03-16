@@ -47,6 +47,7 @@ from NEXUS.run_context import create_run_context, finalize_run_context
 from NEXUS.system_health import evaluate_health, write_system_health_report
 from NEXUS.dispatch_planner import build_dispatch_plan_safe
 from NEXUS.runtime_dispatcher import dispatch as runtime_dispatch
+from NEXUS.automation_layer import evaluate_automation_outcome_safe
 
 
 def route_project(state: StudioState):
@@ -205,6 +206,8 @@ def agent_router_node(state: StudioState):
             run_id=state.run_id,
         )
         state.agent_routing_summary = summary
+        state.agent_profile = summary.get("agent_profile") or {}
+        state.agent_selection_summary = summary.get("agent_selection_summary") or {}
         state.execution_policy_summary = summary.get("runtime_node_policy_summary") or {}
         state.agent_routing_report_path = report_path
         state.notes = f"Agent router report created at: {report_path}"
@@ -311,6 +314,22 @@ def runtime_dispatch_node(state: StudioState):
             "errors": [{"reason": "exception"}],
         }
         state.runtime_execution_status = "failed"
+    return state
+
+
+def automation_layer_node(state: StudioState):
+    """Evaluate automation outcome and recommend next action (no execution)."""
+    result = evaluate_automation_outcome_safe(
+        dispatch_status=state.dispatch_status,
+        runtime_execution_status=state.runtime_execution_status,
+        dispatch_result=state.dispatch_result,
+        dispatch_plan=state.dispatch_plan,
+        dispatch_plan_summary=state.dispatch_plan_summary,
+        active_project=state.active_project,
+        project_path=state.project_path,
+    )
+    state.automation_result = result
+    state.automation_status = result.get("automation_status")
     return state
 
 
@@ -945,6 +964,9 @@ def save_persistent_project_state_node(state: StudioState):
             dispatch_status=state.dispatch_status,
             dispatch_result=state.dispatch_result,
             runtime_execution_status=state.runtime_execution_status,
+            automation_status=state.automation_status,
+            automation_result=state.automation_result,
+            agent_selection_summary=state.agent_selection_summary,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -995,6 +1017,7 @@ def build_workflow():
     graph.add_node("execution_bridge", execution_bridge_node)
     graph.add_node("dispatch_planning", dispatch_planning_node)
     graph.add_node("runtime_dispatch", runtime_dispatch_node)
+    graph.add_node("automation_layer", automation_layer_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -1029,7 +1052,8 @@ def build_workflow():
     graph.add_edge("agent_router", "execution_bridge")
     graph.add_edge("execution_bridge", "dispatch_planning")
     graph.add_edge("dispatch_planning", "runtime_dispatch")
-    graph.add_edge("runtime_dispatch", "engine_registry")
+    graph.add_edge("runtime_dispatch", "automation_layer")
+    graph.add_edge("automation_layer", "engine_registry")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")

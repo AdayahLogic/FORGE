@@ -58,6 +58,8 @@ class StudioState(BaseModel):
     file_modification_summary: Dict[str, Any] = {}
     diff_patch_summary: Dict[str, Any] = {}
     agent_routing_summary: Dict[str, Any] = {}
+    agent_profile: Dict[str, Any] = {}
+    agent_selection_summary: Dict[str, Any] = {}
     execution_bridge_summary: Dict[str, Any] = {}
     engine_registry_summary: Dict[str, Any] = {}
     capability_registry_summary: Dict[str, Any] = {}
@@ -76,3 +78,5 @@ class StudioState(BaseModel):
     dispatch_status: Optional[str] = None
     dispatch_result: Dict[str, Any] = {}
     runtime_execution_status: Optional[str] = None
+    automation_status: Optional[str] = None
+    automation_result: Dict[str, Any] = {}

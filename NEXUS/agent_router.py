@@ -7,8 +7,9 @@ from NEXUS.agent_registry import (
     get_runtime_routable_agents,
     resolve_agent_alias,
 )
-from NEXUS.agent_identity_registry import get_agent_display_name
+from NEXUS.agent_identity_registry import get_agent_display_name, AGENT_IDENTITY_REGISTRY
 from NEXUS.agent_policy_registry import get_policy_summary_for_agent
+from NEXUS.agent_expansion import build_agent_profile_safe, build_agent_selection_summary
 from NEXUS.execution_ledger import append_entry as ledger_append
 from NEXUS.path_utils import normalize_display_data
 
@@ -94,6 +95,28 @@ def build_agent_route(architect_plan: dict | None, active_project: str | None) -
         "mapped_runtime_agent": mapped_runtime_agent,
         "human_review_recommended": route_status not in {"direct_runtime_route"},
     }
+
+    # Enrich with normalized agent profile and selection summary
+    identity_data = AGENT_IDENTITY_REGISTRY.get(runtime_node) if runtime_node else None
+    try:
+        profile = build_agent_profile_safe(
+            selected_agent=runtime_node,
+            runtime_node=runtime_node,
+            routing_summary=summary,
+            agent_identity_data=identity_data,
+        )
+        selection = build_agent_selection_summary(agent_profile=profile)
+        summary["agent_profile"] = profile
+        summary["agent_selection_summary"] = selection
+    except Exception:
+        summary["agent_profile"] = {}
+        summary["agent_selection_summary"] = {
+            "selected_agent": runtime_node or "coder",
+            "agent_role": "implementation",
+            "selection_reason": summary.get("route_reason", ""),
+            "confidence": "low",
+            "specialties": [],
+        }
 
     return normalize_display_data(summary)
 

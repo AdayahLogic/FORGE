@@ -113,6 +113,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     ready_count = 0
     dispatch_status_by_project: dict[str, str] = {}
     dispatch_status_count: dict[str, int] = {}
+    automation_status_by_project: dict[str, str] = {}
+    automation_status_count: dict[str, int] = {}
+    recommended_action_by_project: dict[str, str] = {}
+    agent_selection_by_project: dict[str, str] = {}
+    agent_role_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -134,6 +139,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             ds = loaded.get("dispatch_status") or "none"
             dispatch_status_by_project[key] = ds
             dispatch_status_count[ds] = dispatch_status_count.get(ds, 0) + 1
+            a_status = loaded.get("automation_status") or "none"
+            automation_status_by_project[key] = a_status
+            automation_status_count[a_status] = automation_status_count.get(a_status, 0) + 1
+            a_result = loaded.get("automation_result") or {}
+            if a_result.get("recommended_action"):
+                recommended_action_by_project[key] = str(a_result.get("recommended_action"))
+            agent_sel = loaded.get("agent_selection_summary") or {}
+            sel_agent = agent_sel.get("selected_agent") or agent_sel.get("agent_role") or "none"
+            agent_selection_by_project[key] = str(sel_agent)
+            role = agent_sel.get("agent_role")
+            if role:
+                agent_role_count[role] = agent_role_count.get(role, 0) + 1
         except Exception:
             continue
     dispatch_planning_summary: dict[str, Any] = {
@@ -172,4 +189,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "dispatch_status_by_project": dispatch_status_by_project,
         "execution_status_by_project": execution_status_by_project,
         "execution_status_count": execution_status_count,
+        "automation_status_count": automation_status_count,
+        "automation_status_by_project": automation_status_by_project,
+        "recommended_action_by_project": recommended_action_by_project,
+        "agent_selection_by_project": agent_selection_by_project,
+        "agent_role_count": agent_role_count,
     }

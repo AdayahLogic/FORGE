@@ -34,6 +34,8 @@ SUPPORTED_COMMANDS = frozenset({
     "runtime_select",
     "dispatch_plan",
     "dispatch_status",
+    "automation_status",
+    "agent_status",
 })
 
 
@@ -82,7 +84,7 @@ def run_command(
     """
     Execute a single studio command and return a normalized result dict.
 
-    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary, runtime_targets, runtime_select, dispatch_plan, dispatch_status.
+    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary, runtime_targets, runtime_select, dispatch_plan, dispatch_status, automation_status, agent_status.
     Result shape: command, status, project_name, summary, payload.
     For runtime_select, optional agent_name, tool_name, action_type, task_type, sensitivity, review_context are passed to the selector.
     """
@@ -248,6 +250,82 @@ def run_command(
                         "message": dispatch_result_val.get("message"),
                     },
                 },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "automation_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            status_val = loaded.get("automation_status")
+            ar = loaded.get("automation_result") or {}
+            payload = {
+                "automation_status": status_val,
+                "recommended_action": ar.get("recommended_action"),
+                "human_review_required": ar.get("human_review_required"),
+                "reason": ar.get("reason"),
+            }
+            summary_line = f"automation_status={status_val}; action={payload.get('recommended_action')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "agent_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            sel = loaded.get("agent_selection_summary") or {}
+            payload = {
+                "selected_agent": sel.get("selected_agent"),
+                "agent_role": sel.get("agent_role"),
+                "selection_reason": sel.get("selection_reason"),
+                "confidence": sel.get("confidence"),
+                "specialties": sel.get("specialties") or [],
+            }
+            summary_line = f"agent={payload.get('selected_agent')}; role={payload.get('agent_role')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
