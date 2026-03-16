@@ -1,5 +1,5 @@
 Capability Registry Report
-Timestamp: 2026-03-16 16:14:39
+Timestamp: 2026-03-16 19:13:40
 Project: jarvis
 
 Registry Summary:

@@ -1,7 +1,7 @@
 """
 AI Generated Module
 Project: jarvis
-Generated: 2026-03-16 16:14:39
+Generated: 2026-03-16 19:13:40
 
 Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
@@ -19,7 +19,7 @@ def get_project_summary() -> dict:
         "project": PROJECT_NAME,
         "objective": PROJECT_OBJECTIVE,
         "status": "generated",
-        "task_count": 5
+        "task_count": 6
     }
 
 
@@ -32,18 +32,19 @@ def print_project_summary() -> None:
 
 
 # Task Snapshot
-# - Define a project-context loader that resolves and reads only jarvis-scoped docs and memory files into a normalized context object. [pending]
-# - Add an LLM provider interface with an OpenAI-backed adapter configured by environment variables and safe defaults. [pending]
-# - Create a planner pipeline that accepts project context plus user intent and returns the required structured JSON fields. [pending]
-# - Enforce workspace-isolation guards so project name, memory paths, and planner output are validated before model invocation. [pending]
-# - Add minimal tests for context loading, isolation behavior, and JSON planning output shape using mocked model responses. [pending]
+# - Define a project-context loader that reads overview, focus, notes, and task files from the active Jarvis workspace only. [pending]
+# - Create an LLM adapter for OpenAI requests with configuration-driven model selection, timeout handling, and safe error fallback. [pending]
+# - Implement a planner pipeline that combines user request plus loaded Jarvis context into a normalized planning prompt. [pending]
+# - Add a structured response formatter that always returns objective, assumptions, implementation_steps, risks, next_agent, and optional patch_request. [pending]
+# - Enforce workspace isolation checks so planners cannot load memory or files from other projects unless explicitly requested. [pending]
+# - Add lightweight tests for context loading, isolation behavior, OpenAI adapter fallback, and JSON output shape. [pending]
 # --- Controlled Jarvis Update ---
-# Timestamp: 2026-03-16 16:14:39
+# Timestamp: 2026-03-16 19:13:41
 # Objective Snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 def get_latest_jarvis_update() -> dict:
     return {
-        "updated_at": "2026-03-16 16:14:39",
+        "updated_at": "2026-03-16 19:13:41",
         "project": "Jarvis",
         "objective": "Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.",
         "status": "controlled_update_applied"
