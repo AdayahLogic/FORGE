@@ -23,6 +23,7 @@ from NEXUS.capability_registry import list_active_capabilities, list_planned_cap
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import get_selection_defaults_summary
 from NEXUS.project_state import load_project_state
+from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 
 
 STUDIO_NAME = "NEXUS"
@@ -135,6 +136,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     heartbeat_status_by_project: dict[str, str] = {}
     heartbeat_status_count: dict[str, int] = {}
     heartbeat_action_count: dict[str, int] = {}
+    scheduler_status_by_project: dict[str, str] = {}
+    scheduler_status_count: dict[str, int] = {}
+    next_cycle_permitted_count: int = 0
+    scheduler_action_count: dict[str, int] = {}
+    states_by_project: dict[str, dict[str, Any]] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -143,6 +149,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             loaded = load_project_state(path)
             if "load_error" in loaded:
                 continue
+            states_by_project[key] = loaded
             dps = loaded.get("dispatch_plan_summary") or {}
             dispatch_by_project[key] = {
                 "dispatch_planning_status": dps.get("dispatch_planning_status"),
@@ -204,8 +211,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             h_action = (loaded.get("heartbeat_result") or {}).get("heartbeat_action")
             if h_action:
                 heartbeat_action_count[str(h_action)] = heartbeat_action_count.get(str(h_action), 0) + 1
+            sr = loaded.get("scheduler_result") or {}
+            sched_status = loaded.get("scheduler_status") or sr.get("scheduler_status") or "none"
+            scheduler_status_by_project[key] = str(sched_status)
+            scheduler_status_count[sched_status] = scheduler_status_count.get(sched_status, 0) + 1
+            if sr.get("next_cycle_permitted"):
+                next_cycle_permitted_count += 1
+            sched_action = sr.get("scheduler_action")
+            if sched_action:
+                scheduler_action_count[str(sched_action)] = scheduler_action_count.get(str(sched_action), 0) + 1
         except Exception:
             continue
+
+    studio_coordination_summary = build_studio_coordination_summary_safe(states_by_project)
+
     dispatch_planning_summary: dict[str, Any] = {
         "dispatch_planning_status": "planned" if dispatch_by_project else "no_data",
         "ready_for_dispatch_count": ready_count,
@@ -264,4 +283,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "heartbeat_status_by_project": heartbeat_status_by_project,
         "heartbeat_status_count": heartbeat_status_count,
         "heartbeat_action_count": heartbeat_action_count,
+        "scheduler_status_by_project": scheduler_status_by_project,
+        "scheduler_status_count": scheduler_status_count,
+        "next_cycle_permitted_count": next_cycle_permitted_count,
+        "scheduler_action_count": scheduler_action_count,
+        "studio_coordination_summary": studio_coordination_summary,
     }

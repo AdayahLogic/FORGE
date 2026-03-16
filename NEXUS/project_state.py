@@ -104,6 +104,8 @@ def save_project_state(
     resume_result: dict | None = None,
     heartbeat_status: str | None = None,
     heartbeat_result: dict | None = None,
+    scheduler_status: str | None = None,
+    scheduler_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -182,6 +184,8 @@ def save_project_state(
         "resume_result": resume_result or {},
         "heartbeat_status": heartbeat_status,
         "heartbeat_result": heartbeat_result or {},
+        "scheduler_status": scheduler_status,
+        "scheduler_result": scheduler_result or {},
     }
 
     payload = normalize_display_data(payload)

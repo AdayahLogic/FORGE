@@ -42,6 +42,8 @@ SUPPORTED_COMMANDS = frozenset({
     "review_queue",
     "resume_status",
     "heartbeat_status",
+    "scheduler_status",
+    "studio_coordination",
 })
 
 
@@ -570,6 +572,64 @@ def run_command(
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "scheduler_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            sr = loaded.get("scheduler_result") or {}
+            payload = {
+                "scheduler_status": loaded.get("scheduler_status") or sr.get("scheduler_status"),
+                "scheduler_action": sr.get("scheduler_action"),
+                "scheduler_reason": sr.get("scheduler_reason"),
+                "next_cycle_permitted": sr.get("next_cycle_permitted"),
+                "cycle_limit_reached": sr.get("cycle_limit_reached"),
+            }
+            summary_line = f"scheduler_status={payload.get('scheduler_status')}; next_cycle_permitted={payload.get('next_cycle_permitted')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "studio_coordination":
+        try:
+            from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+            states_by_project: dict[str, dict] = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    states_by_project[key] = load_project_state(p)
+            summary = build_studio_coordination_summary_safe(states_by_project)
+            summary_line = f"coordination={summary.get('coordination_status')}; priority={summary.get('priority_project')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=None,
+                summary=summary_line,
+                payload=summary,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
 
     if cmd == "health":
         try:
