@@ -3,6 +3,7 @@ from datetime import datetime
 
 from NEXUS.execution_targets import EXECUTION_TARGETS, DEFAULT_EXECUTION_TARGET
 from NEXUS.path_utils import normalize_display_data
+from NEXUS.runtime_target_selector import select_runtime_target
 
 
 def ensure_generated_folder(project_path: str) -> Path:
@@ -124,6 +125,34 @@ def build_execution_bridge_packet(
 
     target = EXECUTION_TARGETS.get(runtime_node, DEFAULT_EXECUTION_TARGET)
 
+    # Runtime target selection: agent + optional tool/task hints
+    agent_name = runtime_node if runtime_node != "unknown" else None
+    tool_name = None
+    task_type = None
+    if architect_plan and isinstance(architect_plan, dict):
+        if architect_plan.get("patch_request"):
+            tool_name = "diff_patch"
+        if agent_name == "architect" or agent_name == "planner":
+            task_type = "planning"
+    try:
+        selection = select_runtime_target(
+            agent_name=agent_name,
+            tool_name=tool_name,
+            action_type=None,
+            task_type=task_type,
+        )
+        selected_runtime_target = selection.get("selected_target", "local")
+        fallback_runtime_target = selection.get("fallback_target", "local")
+        runtime_selection_status = selection.get("selection_status", "selected")
+        runtime_selection_reason = selection.get("reason", "")
+        runtime_review_required = selection.get("review_required", True)
+    except Exception:
+        selected_runtime_target = "local"
+        fallback_runtime_target = "local"
+        runtime_selection_status = "error_fallback"
+        runtime_selection_reason = "Selection failed; using local fallback."
+        runtime_review_required = True
+
     packet = {
         "active_project": active_project,
         "runtime_node": runtime_node,
@@ -147,6 +176,11 @@ def build_execution_bridge_packet(
         ),
         "human_review_checklist": _build_human_review_checklist(routing),
         "handoff_status": "execution_packet_ready",
+        "selected_runtime_target": selected_runtime_target,
+        "fallback_runtime_target": fallback_runtime_target,
+        "runtime_selection_status": runtime_selection_status,
+        "runtime_selection_reason": runtime_selection_reason,
+        "runtime_review_required": runtime_review_required,
     }
 
     return normalize_display_data(packet)
@@ -168,6 +202,13 @@ def write_execution_bridge_report(project_path: str, project_name: str, packet: 
         f"- secondary_tool: {packet.get('secondary_tool')}",
         f"- human_review_required: {packet.get('human_review_required')}",
         f"- purpose: {packet.get('purpose')}",
+        "",
+        "Runtime Target Selection:",
+        f"- selected_runtime_target: {packet.get('selected_runtime_target')}",
+        f"- fallback_runtime_target: {packet.get('fallback_runtime_target')}",
+        f"- runtime_selection_status: {packet.get('runtime_selection_status')}",
+        f"- runtime_selection_reason: {packet.get('runtime_selection_reason')}",
+        f"- runtime_review_required: {packet.get('runtime_review_required')}",
         "",
         "Cursor Usage:",
         packet.get("cursor_usage", "[none]"),
