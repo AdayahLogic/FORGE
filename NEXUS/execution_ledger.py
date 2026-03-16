@@ -81,3 +81,30 @@ def append_entry(
         return path
     except Exception:
         return None
+
+
+def read_ledger_tail(project_path: str | None, n: int = 20) -> list[dict[str, Any]]:
+    """
+    Read the last n lines from the project execution ledger and parse as JSONL.
+    Returns a list of record dicts (newest last). Missing or unreadable file returns [].
+    """
+    if not project_path:
+        return []
+    path = get_ledger_path(project_path)
+    if not path or not Path(path).exists():
+        return []
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in lines[-n:] if len(lines) > n else lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            records.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return records

@@ -1,6 +1,9 @@
+import json
+import sys
 import warnings
 from NEXUS.workflow import build_workflow
 from NEXUS.state import StudioState
+from NEXUS.command_surface import SUPPORTED_COMMANDS, run_command
 
 warnings.filterwarnings("ignore")
 
@@ -131,5 +134,27 @@ def run_studio(user_input: str):
 
 
 if __name__ == "__main__":
-    user_prompt = input("Enter project request: ")
-    run_studio(user_prompt)
+    args = sys.argv[1:]
+    if args and args[0].strip().lower() in SUPPORTED_COMMANDS:
+        cmd = args[0].strip().lower()
+        project_name = None
+        n = 20
+        i = 1
+        while i < len(args):
+            if args[i] == "--project" and i + 1 < len(args):
+                project_name = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "-n" and i + 1 < len(args):
+                try:
+                    n = int(args[i + 1])
+                except ValueError:
+                    n = 20
+                i += 2
+                continue
+            i += 1
+        result = run_command(command=cmd, project_name=project_name, n=n)
+        print(json.dumps(result, indent=2))
+    else:
+        user_prompt = input("Enter project request: ")
+        run_studio(user_prompt)
