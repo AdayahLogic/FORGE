@@ -140,6 +140,12 @@ if __name__ == "__main__":
         project_name = None
         n = 20
         i = 1
+        agent_name = None
+        tool_name = None
+        action_type = None
+        task_type = None
+        sensitivity = None
+        review_context = None
         while i < len(args):
             if args[i] == "--project" and i + 1 < len(args):
                 project_name = args[i + 1]
@@ -152,8 +158,42 @@ if __name__ == "__main__":
                     n = 20
                 i += 2
                 continue
+            if args[i] == "--agent" and i + 1 < len(args):
+                agent_name = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--tool" and i + 1 < len(args):
+                tool_name = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--action" and i + 1 < len(args):
+                action_type = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--task" and i + 1 < len(args):
+                task_type = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--sensitivity" and i + 1 < len(args):
+                sensitivity = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--review-context" and i + 1 < len(args):
+                review_context = args[i + 1]
+                i += 2
+                continue
             i += 1
-        result = run_command(command=cmd, project_name=project_name, n=n)
+        result = run_command(
+            command=cmd,
+            project_name=project_name,
+            n=n,
+            agent_name=agent_name,
+            tool_name=tool_name,
+            action_type=action_type,
+            task_type=task_type,
+            sensitivity=sensitivity,
+            review_context=review_context,
+        )
         print(json.dumps(result, indent=2))
     else:
         user_prompt = input("Enter project request: ")

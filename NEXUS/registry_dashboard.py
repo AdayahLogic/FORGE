@@ -21,6 +21,7 @@ from NEXUS.tool_registry import list_active_tools, list_planned_tools
 from NEXUS.engine_registry import list_active_engines, list_planned_engines
 from NEXUS.capability_registry import list_active_capabilities, list_planned_capabilities
 from NEXUS.runtime_target_registry import get_runtime_target_summary
+from NEXUS.runtime_target_selector import get_selection_defaults_summary
 
 
 STUDIO_NAME = "NEXUS"
@@ -103,6 +104,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
 
     # Runtime targets: active / planned
     runtime_target_summary = get_runtime_target_summary()
+    # Selection defaults (target mappings)
+    runtime_selection_defaults = get_selection_defaults_summary()
 
     return {
         "summary_generated_at": now,
@@ -114,4 +117,5 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "engine_summary": engine_summary,
         "capability_summary": capability_summary,
         "runtime_target_summary": runtime_target_summary,
+        "runtime_selection_defaults": runtime_selection_defaults,
     }

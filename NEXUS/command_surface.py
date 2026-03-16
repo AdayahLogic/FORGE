@@ -20,6 +20,7 @@ from NEXUS.engine_registry import list_active_engines, list_planned_engines
 from NEXUS.capability_registry import list_active_capabilities, list_planned_capabilities
 from NEXUS.registry_dashboard import build_registry_dashboard_summary
 from NEXUS.runtime_target_registry import get_runtime_target_summary
+from NEXUS.runtime_target_selector import select_runtime_target
 
 
 SUPPORTED_COMMANDS = frozenset({
@@ -30,6 +31,7 @@ SUPPORTED_COMMANDS = frozenset({
     "registry_status",
     "dashboard_summary",
     "runtime_targets",
+    "runtime_select",
 })
 
 
@@ -67,12 +69,20 @@ def run_command(
     project_path: str | None = None,
     project_name: str | None = None,
     n: int = 20,
+    agent_name: str | None = None,
+    tool_name: str | None = None,
+    action_type: str | None = None,
+    task_type: str | None = None,
+    sensitivity: str | None = None,
+    review_context: str | None = None,
+    **kwargs: Any,
 ) -> dict[str, Any]:
     """
     Execute a single studio command and return a normalized result dict.
 
-    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary, runtime_targets.
+    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary, runtime_targets, runtime_select.
     Result shape: command, status, project_name, summary, payload.
+    For runtime_select, optional agent_name, tool_name, action_type, task_type, sensitivity, review_context are passed to the selector.
     """
     cmd = (command or "").strip().lower()
     if cmd not in SUPPORTED_COMMANDS:
@@ -142,6 +152,25 @@ def run_command(
                 status="ok",
                 summary=f"Active: {summary.get('active_count', 0)}, planned: {summary.get('planned_count', 0)}.",
                 payload=summary,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "runtime_select":
+        try:
+            decision = select_runtime_target(
+                agent_name=agent_name,
+                tool_name=tool_name,
+                action_type=action_type,
+                task_type=task_type,
+                sensitivity=sensitivity,
+                review_context=review_context,
+            )
+            return _result(
+                command=cmd,
+                status="ok",
+                summary=f"Selected: {decision.get('selected_target', '')}; {decision.get('selection_status', '')}.",
+                payload=decision,
             )
         except Exception as e:
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
