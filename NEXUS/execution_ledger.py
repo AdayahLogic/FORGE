@@ -37,13 +37,14 @@ def append_entry(
     agent_name: str | None = None,
     tool_name: str | None = None,
     payload: dict[str, Any] | None = None,
+    run_id: str | None = None,
 ) -> str | None:
     """
     Append one JSONL record to the project's execution ledger.
 
     Fields: timestamp (ISO), event_type, project_name, agent_name, tool_name,
-    status, summary, payload (optional, kept small). Returns ledger path if
-    written, None if skipped or failed.
+    status, summary, payload (optional), run_id (optional). Returns ledger path
+    if written, None if skipped or failed.
     """
     path = get_ledger_path(project_path)
     if not path:
@@ -58,6 +59,8 @@ def append_entry(
         "status": status,
         "summary": summary,
     }
+    if run_id:
+        record["run_id"] = run_id
     if payload is not None:
         # Keep payload small: truncate long values, omit huge structures
         safe_payload: dict[str, Any] = {}

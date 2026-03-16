@@ -43,6 +43,7 @@ from NEXUS.terminal_controller import run_allowed_commands, write_terminal_repor
 from NEXUS.browser_agent import open_safe_research_urls, write_browser_research_report
 from NEXUS.full_automation import build_full_automation_summary, write_full_automation_report
 from NEXUS.execution_ledger import get_ledger_path, append_entry as ledger_append
+from NEXUS.run_context import create_run_context, finalize_run_context
 
 
 def route_project(state: StudioState):
@@ -73,6 +74,25 @@ def load_persistent_project_state(state: StudioState):
     else:
         state.notes = "No previous project state found."
 
+    # Run context: create run_id and write workflow_run_started
+    run_ctx = create_run_context(
+        project_name=state.active_project,
+        user_input=state.user_input,
+    )
+    state.run_id = run_ctx["run_id"]
+    state.execution_session_summary = run_ctx
+    try:
+        ledger_append(
+            state.project_path,
+            "workflow_run_started",
+            "started",
+            f"Workflow run started for project {state.active_project or 'unknown'}.",
+            project_name=state.active_project,
+            run_id=state.run_id,
+            payload={"run_id": state.run_id, "user_input": (state.user_input or "")[:200]},
+        )
+    except Exception:
+        pass
     return state
 
 
@@ -179,6 +199,7 @@ def agent_router_node(state: StudioState):
             project_path=state.project_path,
             project_name=state.active_project or "unknown_project",
             summary=summary,
+            run_id=state.run_id,
         )
         state.agent_routing_summary = summary
         state.execution_policy_summary = summary.get("runtime_node_policy_summary") or {}
@@ -619,9 +640,10 @@ def terminal_agent(state: StudioState):
         results = run_allowed_commands(state.project_path)
 
         report_path = write_terminal_report(
-            project_path=state.project_path,
-            project_name=state.active_project,
-            results=results
+            state.project_path,
+            state.active_project or "unknown_project",
+            results,
+            run_id=state.run_id,
         )
 
         state.terminal_summary = {"commands_run": len(results)}
@@ -672,9 +694,10 @@ def file_modification_agent(state: StudioState):
             target_relative_path="src/ai_generated_module.py"
         )
         report_path = write_file_modification_report(
-            project_path=state.project_path,
-            project_name=state.active_project or "unknown_project",
-            summary=summary
+            state.project_path,
+            state.active_project or "unknown_project",
+            summary,
+            run_id=state.run_id,
         )
         state.file_modification_summary = summary
         state.file_modification_report_path = report_path
@@ -700,9 +723,10 @@ def diff_patch_agent(state: StudioState):
             patch_request=patch_request,
         )
         report_path = write_patch_report(
-            project_path=state.project_path,
-            project_name=state.active_project,
-            summary=summary
+            state.project_path,
+            state.active_project,
+            summary,
+            run_id=state.run_id,
         )
         state.diff_patch_summary = summary
         state.diff_patch_report_path = report_path
@@ -752,13 +776,18 @@ def save_persistent_project_state_node(state: StudioState):
 
     try:
         state.execution_ledger_path = get_ledger_path(state.project_path)
+        state.execution_session_summary = finalize_run_context(
+            state.execution_session_summary or {},
+            status="completed",
+        )
         ledger_append(
             state.project_path,
-            "workflow_run_summary",
+            "workflow_run_completed",
             "completed",
             f"Workflow run completed for project {state.active_project or 'unknown'}.",
             project_name=state.active_project,
-            payload={"notes": (state.notes or "")[:200]},
+            run_id=state.run_id,
+            payload={"run_id": state.run_id, "notes": (state.notes or "")[:200]},
         )
         saved_path = save_project_state(
             project_path=state.project_path,
@@ -809,11 +838,30 @@ def save_persistent_project_state_node(state: StudioState):
             full_automation_report_path=state.full_automation_report_path,
             full_automation_summary=state.full_automation_summary,
             task_queue_snapshot=state.task_queue_snapshot,
+            run_id=state.run_id,
+            execution_session_summary=state.execution_session_summary,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
     except Exception as e:
         state.notes = f"Persistent state save failed: {e}"
+        state.execution_session_summary = finalize_run_context(
+            state.execution_session_summary or {},
+            status="failed",
+            error_summary=str(e),
+        )
+        try:
+            ledger_append(
+                state.project_path,
+                "workflow_run_failed",
+                "failed",
+                f"Workflow run failed: {str(e)[:200]}.",
+                project_name=state.active_project,
+                run_id=state.run_id,
+                payload={"run_id": state.run_id, "error": str(e)[:200]},
+            )
+        except Exception:
+            pass
 
     return state
 

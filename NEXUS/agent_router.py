@@ -98,7 +98,13 @@ def build_agent_route(architect_plan: dict | None, active_project: str | None) -
     return normalize_display_data(summary)
 
 
-def write_agent_router_report(project_path: str, project_name: str, summary: dict) -> str:
+def write_agent_router_report(
+    project_path: str,
+    project_name: str,
+    summary: dict,
+    *,
+    run_id: str | None = None,
+) -> str:
     generated_path = ensure_generated_folder(project_path)
     report_file = generated_path / "agent_router_report.txt"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -144,6 +150,7 @@ def write_agent_router_report(project_path: str, project_name: str, summary: dic
             project_name=project_name,
             agent_name=summary.get("runtime_node"),
             payload={"runtime_node": summary.get("runtime_node"), "route_status": summary.get("route_status")},
+            run_id=run_id,
         )
     except Exception:
         pass

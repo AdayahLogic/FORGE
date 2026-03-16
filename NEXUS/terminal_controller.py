@@ -43,7 +43,13 @@ def run_allowed_commands(project_path: str) -> list:
     return results
 
 
-def write_terminal_report(project_path: str, project_name: str, results: list) -> str:
+def write_terminal_report(
+    project_path: str,
+    project_name: str,
+    results: list,
+    *,
+    run_id: str | None = None,
+) -> str:
     base_path = Path(project_path)
     generated = base_path / "generated"
     generated.mkdir(exist_ok=True)
@@ -87,6 +93,7 @@ def write_terminal_report(project_path: str, project_name: str, results: list) -
             project_name=project_name,
             tool_name="terminal",
             payload={"command_count": len(results)},
+            run_id=run_id,
         )
     except Exception:
         pass

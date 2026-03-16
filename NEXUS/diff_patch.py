@@ -223,7 +223,13 @@ def apply_safe_patch(
     return normalize_display_data(summary)
 
 
-def write_patch_report(project_path: str, project_name: str, summary: dict) -> str:
+def write_patch_report(
+    project_path: str,
+    project_name: str,
+    summary: dict,
+    *,
+    run_id: str | None = None,
+) -> str:
     generated_path = ensure_generated_folder(project_path)
     report_file = generated_path / "diff_patch_report.txt"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -269,6 +275,7 @@ def write_patch_report(project_path: str, project_name: str, summary: dict) -> s
             project_name=project_name,
             tool_name="diff_patch",
             payload={"patch_applied": summary.get("patch_applied")},
+            run_id=run_id,
         )
     except Exception:
         pass

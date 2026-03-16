@@ -80,6 +80,8 @@ def save_project_state(
     path_migration_summary: dict | None = None,
     execution_policy_summary: dict | None = None,
     execution_ledger_path: str | None = None,
+    run_id: str | None = None,
+    execution_session_summary: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -134,6 +136,8 @@ def save_project_state(
         "path_migration_summary": path_migration_summary or {},
         "execution_policy_summary": execution_policy_summary or {},
         "execution_ledger_path": execution_ledger_path,
+        "run_id": run_id,
+        "execution_session_summary": execution_session_summary or {},
     }
 
     payload = normalize_display_data(payload)

@@ -86,7 +86,13 @@ def {function_name}() -> dict:
     return normalize_display_data(summary)
 
 
-def write_file_modification_report(project_path: str, project_name: str, summary: dict) -> str:
+def write_file_modification_report(
+    project_path: str,
+    project_name: str,
+    summary: dict,
+    *,
+    run_id: str | None = None,
+) -> str:
     generated_path = ensure_generated_folder(project_path)
     report_file = generated_path / "file_modification_report.txt"
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -129,6 +135,7 @@ def write_file_modification_report(project_path: str, project_name: str, summary
             project_name=project_name,
             tool_name="file_modification",
             payload={"target_path": summary.get("target_path"), "bytes_after": summary.get("bytes_after")},
+            run_id=run_id,
         )
     except Exception:
         pass
