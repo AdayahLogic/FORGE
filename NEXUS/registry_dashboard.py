@@ -130,6 +130,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     queue_status_by_project: dict[str, str] = {}
     review_queue_count_by_type: dict[str, int] = {}
     queued_projects: list[str] = []
+    resume_status_by_project: dict[str, str] = {}
+    resume_status_count: dict[str, int] = {}
+    heartbeat_status_by_project: dict[str, str] = {}
+    heartbeat_status_count: dict[str, int] = {}
+    heartbeat_action_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -190,6 +195,15 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             review_queue_count_by_type[q_type] = review_queue_count_by_type.get(q_type, 0) + 1
             if q_status == "queued":
                 queued_projects.append(key)
+            r_status = loaded.get("resume_status") or (loaded.get("resume_result") or {}).get("resume_status") or "none"
+            resume_status_by_project[key] = str(r_status)
+            resume_status_count[r_status] = resume_status_count.get(r_status, 0) + 1
+            h_status = loaded.get("heartbeat_status") or (loaded.get("heartbeat_result") or {}).get("heartbeat_status") or "none"
+            heartbeat_status_by_project[key] = str(h_status)
+            heartbeat_status_count[h_status] = heartbeat_status_count.get(h_status, 0) + 1
+            h_action = (loaded.get("heartbeat_result") or {}).get("heartbeat_action")
+            if h_action:
+                heartbeat_action_count[str(h_action)] = heartbeat_action_count.get(str(h_action), 0) + 1
         except Exception:
             continue
     dispatch_planning_summary: dict[str, Any] = {
@@ -245,4 +259,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "queue_status_by_project": queue_status_by_project,
         "review_queue_count_by_type": review_queue_count_by_type,
         "queued_projects": queued_projects,
+        "resume_status_by_project": resume_status_by_project,
+        "resume_status_count": resume_status_count,
+        "heartbeat_status_by_project": heartbeat_status_by_project,
+        "heartbeat_status_count": heartbeat_status_count,
+        "heartbeat_action_count": heartbeat_action_count,
     }

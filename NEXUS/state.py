@@ -89,3 +89,7 @@ class StudioState(BaseModel):
     workflow_route_status: Optional[str] = None
     workflow_route_reason: Optional[str] = None
     review_queue_entry: Dict[str, Any] = {}
+    resume_status: Optional[str] = None
+    resume_result: Dict[str, Any] = {}
+    heartbeat_status: Optional[str] = None
+    heartbeat_result: Dict[str, Any] = {}

@@ -40,6 +40,8 @@ SUPPORTED_COMMANDS = frozenset({
     "project_lifecycle",
     "enforcement_status",
     "review_queue",
+    "resume_status",
+    "heartbeat_status",
 })
 
 
@@ -482,6 +484,83 @@ def run_command(
                 "requires_human_action": qe.get("requires_human_action"),
             }
             summary_line = f"queue_status={payload.get('queue_status')}; queue_type={payload.get('queue_type')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "resume_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            rr = loaded.get("resume_result") or {}
+            payload = {
+                "resume_status": loaded.get("resume_status") or rr.get("resume_status"),
+                "resume_type": rr.get("resume_type"),
+                "resume_reason": rr.get("resume_reason"),
+                "resume_action": rr.get("resume_action"),
+                "requires_human_action": rr.get("requires_human_action"),
+            }
+            summary_line = f"resume_status={payload.get('resume_status')}; resume_type={payload.get('resume_type')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "heartbeat_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            hr = loaded.get("heartbeat_result") or {}
+            payload = {
+                "heartbeat_status": loaded.get("heartbeat_status") or hr.get("heartbeat_status"),
+                "heartbeat_action": hr.get("heartbeat_action"),
+                "heartbeat_reason": hr.get("heartbeat_reason"),
+                "next_cycle_allowed": hr.get("next_cycle_allowed"),
+                "queue_detected": hr.get("queue_detected"),
+                "resume_detected": hr.get("resume_detected"),
+            }
+            summary_line = f"heartbeat_status={payload.get('heartbeat_status')}; next_cycle_allowed={payload.get('next_cycle_allowed')}"
             return _result(
                 command=cmd,
                 status="ok",

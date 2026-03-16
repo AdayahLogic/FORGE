@@ -100,6 +100,10 @@ def save_project_state(
     workflow_route_status: str | None = None,
     workflow_route_reason: str | None = None,
     review_queue_entry: dict | None = None,
+    resume_status: str | None = None,
+    resume_result: dict | None = None,
+    heartbeat_status: str | None = None,
+    heartbeat_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -174,6 +178,10 @@ def save_project_state(
         "workflow_route_status": workflow_route_status,
         "workflow_route_reason": workflow_route_reason,
         "review_queue_entry": review_queue_entry or {},
+        "resume_status": resume_status,
+        "resume_result": resume_result or {},
+        "heartbeat_status": heartbeat_status,
+        "heartbeat_result": heartbeat_result or {},
     }
 
     payload = normalize_display_data(payload)

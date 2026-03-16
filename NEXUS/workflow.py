@@ -52,6 +52,8 @@ from NEXUS.governance_layer import evaluate_governance_outcome_safe
 from NEXUS.project_lifecycle import evaluate_project_lifecycle_safe
 from NEXUS.enforcement_layer import evaluate_enforcement_outcome_safe
 from NEXUS.review_queue import build_review_queue_entry_safe
+from NEXUS.resume_engine import evaluate_resume_outcome_safe
+from NEXUS.heartbeat_loop import evaluate_heartbeat_safe
 
 
 def route_project(state: StudioState):
@@ -489,6 +491,43 @@ def blocked_stop_node(state: StudioState):
         governance_status=state.governance_status,
         project_lifecycle_status=state.project_lifecycle_status,
     )
+    return state
+
+
+def resume_evaluation_node(state: StudioState):
+    """Evaluate resume outcome from queue and enforcement state; store result."""
+    result = evaluate_resume_outcome_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        review_queue_entry=state.review_queue_entry,
+        enforcement_status=state.enforcement_status,
+        enforcement_result=state.enforcement_result,
+        workflow_route_status=state.workflow_route_status,
+        workflow_route_reason=state.workflow_route_reason,
+        governance_status=state.governance_status,
+        project_lifecycle_status=state.project_lifecycle_status,
+    )
+    state.resume_result = result
+    state.resume_status = result.get("resume_status")
+    return state
+
+
+def heartbeat_evaluation_node(state: StudioState):
+    """Evaluate heartbeat from resume, queue, governance, lifecycle; store result."""
+    result = evaluate_heartbeat_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        review_queue_entry=state.review_queue_entry,
+        resume_result=state.resume_result,
+        governance_status=state.governance_status,
+        governance_result=state.governance_result,
+        project_lifecycle_status=state.project_lifecycle_status,
+        project_lifecycle_result=state.project_lifecycle_result,
+        autonomous_cycle_summary=state.autonomous_cycle_summary,
+        dispatch_status=state.dispatch_status,
+    )
+    state.heartbeat_result = result
+    state.heartbeat_status = result.get("heartbeat_status")
     return state
 
 
@@ -1135,6 +1174,10 @@ def save_persistent_project_state_node(state: StudioState):
             workflow_route_status=state.workflow_route_status,
             workflow_route_reason=state.workflow_route_reason,
             review_queue_entry=state.review_queue_entry,
+            resume_status=state.resume_status,
+            resume_result=state.resume_result,
+            heartbeat_status=state.heartbeat_status,
+            heartbeat_result=state.heartbeat_result,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -1193,6 +1236,8 @@ def build_workflow():
     graph.add_node("approval_hold", approval_hold_node)
     graph.add_node("hold_state", hold_state_node)
     graph.add_node("blocked_stop", blocked_stop_node)
+    graph.add_node("resume_evaluation", resume_evaluation_node)
+    graph.add_node("heartbeat_evaluation", heartbeat_evaluation_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -1242,10 +1287,12 @@ def build_workflow():
             "blocked_stop": "blocked_stop",
         },
     )
-    graph.add_edge("manual_review_hold", "persistent_state_save")
-    graph.add_edge("approval_hold", "persistent_state_save")
-    graph.add_edge("hold_state", "persistent_state_save")
-    graph.add_edge("blocked_stop", "persistent_state_save")
+    graph.add_edge("manual_review_hold", "resume_evaluation")
+    graph.add_edge("approval_hold", "resume_evaluation")
+    graph.add_edge("hold_state", "resume_evaluation")
+    graph.add_edge("blocked_stop", "resume_evaluation")
+    graph.add_edge("resume_evaluation", "heartbeat_evaluation")
+    graph.add_edge("heartbeat_evaluation", "persistent_state_save")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")
@@ -1267,7 +1314,7 @@ def build_workflow():
     graph.add_edge("file_modification", "diff_patch")
     graph.add_edge("diff_patch", "full_automation")
     graph.add_edge("full_automation", "system_health")
-    graph.add_edge("system_health", "persistent_state_save")
+    graph.add_edge("system_health", "resume_evaluation")
     graph.add_edge("persistent_state_save", END)
 
     return graph.compile()
