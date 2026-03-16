@@ -1,11 +1,23 @@
 import json
+import os
 import sys
 import warnings
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+# Load repo-root .env as early as possible (directory containing NEXUS, projects, requirements.txt)
+_repo_root = Path(__file__).resolve().parent.parent
+_dotenv_path = (_repo_root / ".env").resolve()
+load_dotenv(_dotenv_path)
+print("[Config] .env loaded from", _dotenv_path)
+print("[Config] OPENAI_API_KEY detected: yes" if os.environ.get("OPENAI_API_KEY") else "[Config] OPENAI_API_KEY detected: no")
+
+warnings.filterwarnings("ignore")
+
 from NEXUS.workflow import build_workflow
 from NEXUS.state import StudioState
 from NEXUS.command_surface import SUPPORTED_COMMANDS, run_command
-
-warnings.filterwarnings("ignore")
 
 
 def run_studio(user_input: str):
