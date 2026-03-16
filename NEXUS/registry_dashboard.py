@@ -124,6 +124,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     project_lifecycle_by_project: dict[str, str] = {}
     project_lifecycle_status_count: dict[str, int] = {}
     lifecycle_stage_count: dict[str, int] = {}
+    enforcement_status_by_project: dict[str, str] = {}
+    enforcement_status_count: dict[str, int] = {}
+    workflow_action_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -171,6 +174,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             pl_stage = pl_result.get("lifecycle_stage")
             if pl_stage:
                 lifecycle_stage_count[pl_stage] = lifecycle_stage_count.get(pl_stage, 0) + 1
+            e_status = loaded.get("enforcement_status") or (loaded.get("enforcement_result") or {}).get("enforcement_status") or "none"
+            enforcement_status_by_project[key] = str(e_status)
+            enforcement_status_count[e_status] = enforcement_status_count.get(e_status, 0) + 1
+            wf_action = (loaded.get("enforcement_result") or {}).get("workflow_action")
+            if wf_action:
+                workflow_action_count[str(wf_action)] = workflow_action_count.get(str(wf_action), 0) + 1
         except Exception:
             continue
     dispatch_planning_summary: dict[str, Any] = {
@@ -220,4 +229,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "project_lifecycle_by_project": project_lifecycle_by_project,
         "project_lifecycle_status_count": project_lifecycle_status_count,
         "lifecycle_stage_count": lifecycle_stage_count,
+        "enforcement_status_by_project": enforcement_status_by_project,
+        "enforcement_status_count": enforcement_status_count,
+        "workflow_action_count": workflow_action_count,
     }

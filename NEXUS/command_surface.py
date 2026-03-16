@@ -38,6 +38,7 @@ SUPPORTED_COMMANDS = frozenset({
     "agent_status",
     "governance_status",
     "project_lifecycle",
+    "enforcement_status",
 })
 
 
@@ -86,7 +87,7 @@ def run_command(
     """
     Execute a single studio command and return a normalized result dict.
 
-    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary, runtime_targets, runtime_select, dispatch_plan, dispatch_status, automation_status, agent_status, governance_status, project_lifecycle.
+    Supported commands: health, latest_session, ledger_tail, project_summary, registry_status, dashboard_summary, runtime_targets, runtime_select, dispatch_plan, dispatch_status, automation_status, agent_status, governance_status, project_lifecycle, enforcement_status.
     Result shape: command, status, project_name, summary, payload.
     For runtime_select, optional agent_name, tool_name, action_type, task_type, sensitivity, review_context are passed to the selector.
     """
@@ -401,6 +402,46 @@ def run_command(
                 "reason": plr.get("reason"),
             }
             summary_line = f"lifecycle={payload.get('lifecycle_status')}; stage={payload.get('lifecycle_stage')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "enforcement_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            er = loaded.get("enforcement_result") or {}
+            payload = {
+                "enforcement_status": loaded.get("enforcement_status") or er.get("enforcement_status"),
+                "workflow_action": er.get("workflow_action"),
+                "approval_gate": er.get("approval_gate"),
+                "manual_review_gate": er.get("manual_review_gate"),
+                "downstream_blocked": er.get("downstream_blocked"),
+                "reason": er.get("reason"),
+                "enforcement_tags": er.get("enforcement_tags") or [],
+            }
+            summary_line = f"enforcement={payload.get('enforcement_status')}; workflow_action={payload.get('workflow_action')}"
             return _result(
                 command=cmd,
                 status="ok",

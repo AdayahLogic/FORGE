@@ -50,6 +50,7 @@ from NEXUS.runtime_dispatcher import dispatch as runtime_dispatch
 from NEXUS.automation_layer import evaluate_automation_outcome_safe
 from NEXUS.governance_layer import evaluate_governance_outcome_safe
 from NEXUS.project_lifecycle import evaluate_project_lifecycle_safe
+from NEXUS.enforcement_layer import evaluate_enforcement_outcome_safe
 
 
 def route_project(state: StudioState):
@@ -374,6 +375,79 @@ def project_lifecycle_node(state: StudioState):
     )
     state.project_lifecycle_result = result
     state.project_lifecycle_status = result.get("lifecycle_status")
+    return state
+
+
+def enforcement_layer_node(state: StudioState):
+    """Evaluate enforcement outcome from governance and lifecycle (no execution)."""
+    result = evaluate_enforcement_outcome_safe(
+        governance_status=state.governance_status,
+        governance_result=state.governance_result,
+        project_lifecycle_status=state.project_lifecycle_status,
+        project_lifecycle_result=state.project_lifecycle_result,
+        active_project=state.active_project,
+        project_path=state.project_path,
+    )
+    state.enforcement_result = result
+    state.enforcement_status = result.get("enforcement_status")
+    return state
+
+
+def determine_post_enforcement_route(state: StudioState) -> str:
+    """
+    Route after enforcement_layer based on workflow_action and enforcement_status.
+    Returns node name: engine_registry, manual_review_hold, approval_hold, hold_state, blocked_stop.
+    """
+    er = state.enforcement_result or {}
+    workflow_action = (er.get("workflow_action") or "").strip().lower()
+    enforcement_status = (state.enforcement_status or er.get("enforcement_status") or "").strip().lower()
+
+    if workflow_action == "proceed" or enforcement_status == "continue":
+        return "engine_registry"
+    if workflow_action == "manual_review" or enforcement_status == "manual_review_required":
+        return "manual_review_hold"
+    if workflow_action == "await_approval" or enforcement_status == "approval_required":
+        return "approval_hold"
+    if workflow_action == "hold" or enforcement_status == "hold":
+        return "hold_state"
+    if workflow_action == "stop_after_current_stage" or enforcement_status == "blocked":
+        return "blocked_stop"
+    # Missing/malformed: safe default to normal path
+    return "engine_registry"
+
+
+def _set_workflow_route_and_save(state: StudioState, route_status: str, route_reason: str) -> StudioState:
+    """Set workflow route fields and leave state for persistent_state_save."""
+    state.workflow_route_status = route_status
+    state.workflow_route_reason = route_reason
+    return state
+
+
+def manual_review_hold_node(state: StudioState):
+    """Hold node: manual review required; no external actions; then save and END."""
+    er = state.enforcement_result or {}
+    _set_workflow_route_and_save(state, "manual_review_hold", er.get("reason", "Manual review required."))
+    return state
+
+
+def approval_hold_node(state: StudioState):
+    """Hold node: approval required; no external actions; then save and END."""
+    er = state.enforcement_result or {}
+    _set_workflow_route_and_save(state, "approval_hold", er.get("reason", "Approval required."))
+    return state
+
+
+def hold_state_node(state: StudioState):
+    """Hold node: workflow held; no external actions; then save and END."""
+    er = state.enforcement_result or {}
+    _set_workflow_route_and_save(state, "hold_state", er.get("reason", "Workflow held."))
+    return state
+
+
+def blocked_stop_node(state: StudioState):
+    """Hold node: blocked; no external actions; then save and END."""
+    er = state.enforcement_result or {}
+    _set_workflow_route_and_save(state, "blocked_stop", er.get("reason", "Workflow blocked."))
     return state
 
 
@@ -1015,6 +1089,10 @@ def save_persistent_project_state_node(state: StudioState):
             governance_result=state.governance_result,
             project_lifecycle_status=state.project_lifecycle_status,
             project_lifecycle_result=state.project_lifecycle_result,
+            enforcement_status=state.enforcement_status,
+            enforcement_result=state.enforcement_result,
+            workflow_route_status=state.workflow_route_status,
+            workflow_route_reason=state.workflow_route_reason,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -1068,6 +1146,11 @@ def build_workflow():
     graph.add_node("automation_layer", automation_layer_node)
     graph.add_node("governance_layer", governance_layer_node)
     graph.add_node("project_lifecycle", project_lifecycle_node)
+    graph.add_node("enforcement_layer", enforcement_layer_node)
+    graph.add_node("manual_review_hold", manual_review_hold_node)
+    graph.add_node("approval_hold", approval_hold_node)
+    graph.add_node("hold_state", hold_state_node)
+    graph.add_node("blocked_stop", blocked_stop_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -1105,7 +1188,22 @@ def build_workflow():
     graph.add_edge("runtime_dispatch", "automation_layer")
     graph.add_edge("automation_layer", "governance_layer")
     graph.add_edge("governance_layer", "project_lifecycle")
-    graph.add_edge("project_lifecycle", "engine_registry")
+    graph.add_edge("project_lifecycle", "enforcement_layer")
+    graph.add_conditional_edges(
+        "enforcement_layer",
+        determine_post_enforcement_route,
+        {
+            "engine_registry": "engine_registry",
+            "manual_review_hold": "manual_review_hold",
+            "approval_hold": "approval_hold",
+            "hold_state": "hold_state",
+            "blocked_stop": "blocked_stop",
+        },
+    )
+    graph.add_edge("manual_review_hold", "persistent_state_save")
+    graph.add_edge("approval_hold", "persistent_state_save")
+    graph.add_edge("hold_state", "persistent_state_save")
+    graph.add_edge("blocked_stop", "persistent_state_save")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")

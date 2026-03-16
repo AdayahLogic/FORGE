@@ -84,3 +84,7 @@ class StudioState(BaseModel):
     governance_result: Dict[str, Any] = {}
     project_lifecycle_status: Optional[str] = None
     project_lifecycle_result: Dict[str, Any] = {}
+    enforcement_status: Optional[str] = None
+    enforcement_result: Dict[str, Any] = {}
+    workflow_route_status: Optional[str] = None
+    workflow_route_reason: Optional[str] = None
