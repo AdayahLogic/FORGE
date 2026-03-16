@@ -99,6 +99,7 @@ def save_project_state(
     enforcement_result: dict | None = None,
     workflow_route_status: str | None = None,
     workflow_route_reason: str | None = None,
+    review_queue_entry: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -172,6 +173,7 @@ def save_project_state(
         "enforcement_result": enforcement_result or {},
         "workflow_route_status": workflow_route_status,
         "workflow_route_reason": workflow_route_reason,
+        "review_queue_entry": review_queue_entry or {},
     }
 
     payload = normalize_display_data(payload)

@@ -51,6 +51,7 @@ from NEXUS.automation_layer import evaluate_automation_outcome_safe
 from NEXUS.governance_layer import evaluate_governance_outcome_safe
 from NEXUS.project_lifecycle import evaluate_project_lifecycle_safe
 from NEXUS.enforcement_layer import evaluate_enforcement_outcome_safe
+from NEXUS.review_queue import build_review_queue_entry_safe
 
 
 def route_project(state: StudioState):
@@ -427,6 +428,16 @@ def manual_review_hold_node(state: StudioState):
     """Hold node: manual review required; no external actions; then save and END."""
     er = state.enforcement_result or {}
     _set_workflow_route_and_save(state, "manual_review_hold", er.get("reason", "Manual review required."))
+    state.review_queue_entry = build_review_queue_entry_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        enforcement_status=state.enforcement_status,
+        enforcement_result=state.enforcement_result,
+        workflow_route_status=state.workflow_route_status,
+        workflow_route_reason=state.workflow_route_reason,
+        governance_status=state.governance_status,
+        project_lifecycle_status=state.project_lifecycle_status,
+    )
     return state
 
 
@@ -434,6 +445,16 @@ def approval_hold_node(state: StudioState):
     """Hold node: approval required; no external actions; then save and END."""
     er = state.enforcement_result or {}
     _set_workflow_route_and_save(state, "approval_hold", er.get("reason", "Approval required."))
+    state.review_queue_entry = build_review_queue_entry_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        enforcement_status=state.enforcement_status,
+        enforcement_result=state.enforcement_result,
+        workflow_route_status=state.workflow_route_status,
+        workflow_route_reason=state.workflow_route_reason,
+        governance_status=state.governance_status,
+        project_lifecycle_status=state.project_lifecycle_status,
+    )
     return state
 
 
@@ -441,6 +462,16 @@ def hold_state_node(state: StudioState):
     """Hold node: workflow held; no external actions; then save and END."""
     er = state.enforcement_result or {}
     _set_workflow_route_and_save(state, "hold_state", er.get("reason", "Workflow held."))
+    state.review_queue_entry = build_review_queue_entry_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        enforcement_status=state.enforcement_status,
+        enforcement_result=state.enforcement_result,
+        workflow_route_status=state.workflow_route_status,
+        workflow_route_reason=state.workflow_route_reason,
+        governance_status=state.governance_status,
+        project_lifecycle_status=state.project_lifecycle_status,
+    )
     return state
 
 
@@ -448,6 +479,16 @@ def blocked_stop_node(state: StudioState):
     """Hold node: blocked; no external actions; then save and END."""
     er = state.enforcement_result or {}
     _set_workflow_route_and_save(state, "blocked_stop", er.get("reason", "Workflow blocked."))
+    state.review_queue_entry = build_review_queue_entry_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        enforcement_status=state.enforcement_status,
+        enforcement_result=state.enforcement_result,
+        workflow_route_status=state.workflow_route_status,
+        workflow_route_reason=state.workflow_route_reason,
+        governance_status=state.governance_status,
+        project_lifecycle_status=state.project_lifecycle_status,
+    )
     return state
 
 
@@ -1093,6 +1134,7 @@ def save_persistent_project_state_node(state: StudioState):
             enforcement_result=state.enforcement_result,
             workflow_route_status=state.workflow_route_status,
             workflow_route_reason=state.workflow_route_reason,
+            review_queue_entry=state.review_queue_entry,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"

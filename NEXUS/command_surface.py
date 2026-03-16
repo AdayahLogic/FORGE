@@ -39,6 +39,7 @@ SUPPORTED_COMMANDS = frozenset({
     "governance_status",
     "project_lifecycle",
     "enforcement_status",
+    "review_queue",
 })
 
 
@@ -442,6 +443,45 @@ def run_command(
                 "enforcement_tags": er.get("enforcement_tags") or [],
             }
             summary_line = f"enforcement={payload.get('enforcement_status')}; workflow_action={payload.get('workflow_action')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "review_queue":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            qe = loaded.get("review_queue_entry") or {}
+            payload = {
+                "queue_status": qe.get("queue_status"),
+                "queue_type": qe.get("queue_type"),
+                "queue_reason": qe.get("queue_reason"),
+                "resume_action": qe.get("resume_action"),
+                "resume_condition": qe.get("resume_condition"),
+                "requires_human_action": qe.get("requires_human_action"),
+            }
+            summary_line = f"queue_status={payload.get('queue_status')}; queue_type={payload.get('queue_type')}"
             return _result(
                 command=cmd,
                 status="ok",

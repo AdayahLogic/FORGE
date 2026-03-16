@@ -127,6 +127,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     enforcement_status_by_project: dict[str, str] = {}
     enforcement_status_count: dict[str, int] = {}
     workflow_action_count: dict[str, int] = {}
+    queue_status_by_project: dict[str, str] = {}
+    review_queue_count_by_type: dict[str, int] = {}
+    queued_projects: list[str] = []
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -180,6 +183,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             wf_action = (loaded.get("enforcement_result") or {}).get("workflow_action")
             if wf_action:
                 workflow_action_count[str(wf_action)] = workflow_action_count.get(str(wf_action), 0) + 1
+            qe = loaded.get("review_queue_entry") or {}
+            q_status = qe.get("queue_status") or "none"
+            q_type = qe.get("queue_type") or "none"
+            queue_status_by_project[key] = str(q_status)
+            review_queue_count_by_type[q_type] = review_queue_count_by_type.get(q_type, 0) + 1
+            if q_status == "queued":
+                queued_projects.append(key)
         except Exception:
             continue
     dispatch_planning_summary: dict[str, Any] = {
@@ -232,4 +242,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "enforcement_status_by_project": enforcement_status_by_project,
         "enforcement_status_count": enforcement_status_count,
         "workflow_action_count": workflow_action_count,
+        "queue_status_by_project": queue_status_by_project,
+        "review_queue_count_by_type": review_queue_count_by_type,
+        "queued_projects": queued_projects,
     }

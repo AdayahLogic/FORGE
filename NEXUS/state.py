@@ -88,3 +88,4 @@ class StudioState(BaseModel):
     enforcement_result: Dict[str, Any] = {}
     workflow_route_status: Optional[str] = None
     workflow_route_reason: Optional[str] = None
+    review_queue_entry: Dict[str, Any] = {}
