@@ -20,6 +20,7 @@ from NEXUS.agent_registry import get_runtime_routable_agents
 from NEXUS.tool_registry import list_active_tools, list_planned_tools
 from NEXUS.engine_registry import list_active_engines, list_planned_engines
 from NEXUS.capability_registry import list_active_capabilities, list_planned_capabilities
+from NEXUS.runtime_target_registry import get_runtime_target_summary
 
 
 STUDIO_NAME = "NEXUS"
@@ -100,6 +101,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "planned_names": caps_planned,
     }
 
+    # Runtime targets: active / planned
+    runtime_target_summary = get_runtime_target_summary()
+
     return {
         "summary_generated_at": now,
         "studio_name": STUDIO_NAME,
@@ -109,4 +113,5 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "tool_summary": tool_summary,
         "engine_summary": engine_summary,
         "capability_summary": capability_summary,
+        "runtime_target_summary": runtime_target_summary,
     }
