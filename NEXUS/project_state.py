@@ -84,6 +84,10 @@ def save_project_state(
     execution_session_summary: dict | None = None,
     system_health_summary: dict | None = None,
     system_health_report_path: str | None = None,
+    dispatch_plan_summary: dict | None = None,
+    dispatch_status: str | None = None,
+    dispatch_result: dict | None = None,
+    runtime_execution_status: str | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -142,6 +146,10 @@ def save_project_state(
         "execution_session_summary": execution_session_summary or {},
         "system_health_summary": system_health_summary or {},
         "system_health_report_path": system_health_report_path,
+        "dispatch_plan_summary": dispatch_plan_summary or {},
+        "dispatch_status": dispatch_status,
+        "dispatch_result": dispatch_result or {},
+        "runtime_execution_status": runtime_execution_status,
     }
 
     payload = normalize_display_data(payload)

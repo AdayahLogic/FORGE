@@ -71,3 +71,8 @@ class StudioState(BaseModel):
     execution_policy_summary: Dict[str, Any] = {}
     system_health_summary: Dict[str, Any] = {}
     system_health_report_path: Optional[str] = None
+    dispatch_plan: Dict[str, Any] = {}
+    dispatch_plan_summary: Dict[str, Any] = {}
+    dispatch_status: Optional[str] = None
+    dispatch_result: Dict[str, Any] = {}
+    runtime_execution_status: Optional[str] = None

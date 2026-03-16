@@ -22,6 +22,7 @@ from NEXUS.engine_registry import list_active_engines, list_planned_engines
 from NEXUS.capability_registry import list_active_capabilities, list_planned_capabilities
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import get_selection_defaults_summary
+from NEXUS.project_state import load_project_state
 
 
 STUDIO_NAME = "NEXUS"
@@ -107,6 +108,54 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     # Selection defaults (target mappings)
     runtime_selection_defaults = get_selection_defaults_summary()
 
+    # Dispatch planning: per-project from persisted state
+    dispatch_by_project: dict[str, dict[str, Any]] = {}
+    ready_count = 0
+    dispatch_status_by_project: dict[str, str] = {}
+    dispatch_status_count: dict[str, int] = {}
+    for key in project_keys:
+        path = PROJECTS[key].get("path")
+        if not path:
+            continue
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                continue
+            dps = loaded.get("dispatch_plan_summary") or {}
+            dispatch_by_project[key] = {
+                "dispatch_planning_status": dps.get("dispatch_planning_status"),
+                "ready_for_dispatch": dps.get("ready_for_dispatch", False),
+                "runtime_target_id": dps.get("runtime_target_id"),
+                "runtime_node": dps.get("runtime_node"),
+                "task_type": dps.get("task_type"),
+            }
+            if dps.get("ready_for_dispatch"):
+                ready_count += 1
+            ds = loaded.get("dispatch_status") or "none"
+            dispatch_status_by_project[key] = ds
+            dispatch_status_count[ds] = dispatch_status_count.get(ds, 0) + 1
+        except Exception:
+            continue
+    dispatch_planning_summary: dict[str, Any] = {
+        "dispatch_planning_status": "planned" if dispatch_by_project else "no_data",
+        "ready_for_dispatch_count": ready_count,
+        "by_project": dispatch_by_project,
+    }
+
+    execution_status_by_project: dict[str, str] = {}
+    execution_status_count: dict[str, int] = {}
+    for k, ds in dispatch_status_by_project.items():
+        # Read from already-loaded state where available (by reloading would be overkill here)
+        # Use persisted runtime_execution_status if present; otherwise leave as unknown.
+        try:
+            path = PROJECTS[k].get("path")
+            loaded = load_project_state(path) if path else {}
+            exec_status = loaded.get("runtime_execution_status") or (loaded.get("dispatch_result") or {}).get("execution_status") or "unknown"
+        except Exception:
+            exec_status = "unknown"
+        execution_status_by_project[k] = exec_status
+        execution_status_count[exec_status] = execution_status_count.get(exec_status, 0) + 1
+
     return {
         "summary_generated_at": now,
         "studio_name": STUDIO_NAME,
@@ -118,4 +167,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "capability_summary": capability_summary,
         "runtime_target_summary": runtime_target_summary,
         "runtime_selection_defaults": runtime_selection_defaults,
+        "dispatch_planning_summary": dispatch_planning_summary,
+        "dispatch_status_count": dispatch_status_count,
+        "dispatch_status_by_project": dispatch_status_by_project,
+        "execution_status_by_project": execution_status_by_project,
+        "execution_status_count": execution_status_count,
     }

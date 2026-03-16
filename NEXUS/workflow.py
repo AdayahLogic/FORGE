@@ -45,6 +45,8 @@ from NEXUS.full_automation import build_full_automation_summary, write_full_auto
 from NEXUS.execution_ledger import get_ledger_path, append_entry as ledger_append
 from NEXUS.run_context import create_run_context, finalize_run_context
 from NEXUS.system_health import evaluate_health, write_system_health_report
+from NEXUS.dispatch_planner import build_dispatch_plan_safe
+from NEXUS.runtime_dispatcher import dispatch as runtime_dispatch
 
 
 def route_project(state: StudioState):
@@ -237,6 +239,78 @@ def execution_bridge_node(state: StudioState):
     except Exception as e:
         state.notes = f"Execution bridge failed: {e}"
 
+    return state
+
+
+def dispatch_planning_node(state: StudioState):
+    """Build normalized dispatch plan from routing and execution bridge; planning only."""
+    try:
+        project_summary = {
+            "project_id": state.active_project,
+            "project_name": state.active_project,
+            "active_project": state.active_project,
+            "project_path": state.project_path,
+        }
+        plan = build_dispatch_plan_safe(
+            project_summary=project_summary,
+            request=state.user_input,
+            planner_output=state.architect_plan,
+            router_output=state.agent_routing_summary,
+            execution_bridge_packet=state.execution_bridge_summary,
+        )
+        state.dispatch_plan = plan
+        exec_block = plan.get("execution") or {}
+        routing_block = plan.get("routing") or {}
+        request_block = plan.get("request") or {}
+        state.dispatch_plan_summary = {
+            "dispatch_planning_status": plan.get("dispatch_planning_status", "planned"),
+            "ready_for_dispatch": plan.get("ready_for_dispatch", False),
+            "project_name": (plan.get("project") or {}).get("project_name") or state.active_project,
+            "runtime_node": routing_block.get("runtime_node", ""),
+            "runtime_target_id": exec_block.get("runtime_target_id", ""),
+            "task_type": request_block.get("task_type", ""),
+            "planned_at": (plan.get("timestamps") or {}).get("planned_at", ""),
+        }
+        base = state.execution_bridge_summary if isinstance(state.execution_bridge_summary, dict) else {}
+        state.execution_bridge_summary = {**base, "dispatch_plan_summary": state.dispatch_plan_summary}
+    except Exception:
+        state.dispatch_plan = {}
+        state.dispatch_plan_summary = {
+            "dispatch_planning_status": "error_fallback",
+            "ready_for_dispatch": False,
+            "project_name": state.active_project or "",
+            "runtime_node": "",
+            "runtime_target_id": "local",
+            "task_type": "",
+            "planned_at": "",
+        }
+
+    return state
+
+
+def runtime_dispatch_node(state: StudioState):
+    """Simulate runtime dispatch from dispatch_plan; store status and result."""
+    try:
+        plan = state.dispatch_plan or {}
+        result = runtime_dispatch(plan)
+        state.dispatch_status = result.get("dispatch_status", "skipped")
+        state.dispatch_result = result.get("dispatch_result", {}) or {}
+        state.runtime_execution_status = (state.dispatch_result or {}).get("execution_status")
+        if "runtime_target" not in state.dispatch_result and result.get("runtime_target"):
+            state.dispatch_result = {**state.dispatch_result, "runtime_target": result.get("runtime_target")}
+    except Exception:
+        state.dispatch_status = "error"
+        state.dispatch_result = {
+            "runtime": "unknown",
+            "status": "error",
+            "message": "Dispatch failed.",
+            "execution_status": "failed",
+            "execution_mode": "safe_simulation",
+            "next_action": "human_review",
+            "artifacts": [],
+            "errors": [{"reason": "exception"}],
+        }
+        state.runtime_execution_status = "failed"
     return state
 
 
@@ -867,6 +941,10 @@ def save_persistent_project_state_node(state: StudioState):
             execution_session_summary=state.execution_session_summary,
             system_health_summary=state.system_health_summary,
             system_health_report_path=state.system_health_report_path,
+            dispatch_plan_summary=state.dispatch_plan_summary,
+            dispatch_status=state.dispatch_status,
+            dispatch_result=state.dispatch_result,
+            runtime_execution_status=state.runtime_execution_status,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -915,6 +993,8 @@ def build_workflow():
     graph.add_node("task_queue", task_queue_builder)
     graph.add_node("agent_router", agent_router_node)
     graph.add_node("execution_bridge", execution_bridge_node)
+    graph.add_node("dispatch_planning", dispatch_planning_node)
+    graph.add_node("runtime_dispatch", runtime_dispatch_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -947,7 +1027,9 @@ def build_workflow():
     graph.add_edge("architect", "task_queue")
     graph.add_edge("task_queue", "agent_router")
     graph.add_edge("agent_router", "execution_bridge")
-    graph.add_edge("execution_bridge", "engine_registry")
+    graph.add_edge("execution_bridge", "dispatch_planning")
+    graph.add_edge("dispatch_planning", "runtime_dispatch")
+    graph.add_edge("runtime_dispatch", "engine_registry")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")
