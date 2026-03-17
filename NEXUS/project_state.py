@@ -120,6 +120,12 @@ def save_project_state(
     runtime_router_result: dict | None = None,
     model_router_result: dict | None = None,
     deployment_preflight_result: dict | None = None,
+    self_improvement_status: str | None = None,
+    self_improvement_result: dict | None = None,
+    change_gate_status: str | None = None,
+    change_gate_result: dict | None = None,
+    regression_status: str | None = None,
+    regression_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -264,6 +270,12 @@ def save_project_state(
         "runtime_router_result": runtime_router_result or {},
         "model_router_result": model_router_result or {},
         "deployment_preflight_result": deployment_preflight_result or {},
+        "self_improvement_status": self_improvement_status,
+        "self_improvement_result": self_improvement_result or {},
+        "change_gate_status": change_gate_status,
+        "change_gate_result": change_gate_result or {},
+        "regression_status": regression_status,
+        "regression_result": regression_result or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,

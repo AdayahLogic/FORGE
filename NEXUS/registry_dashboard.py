@@ -167,6 +167,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     model_route_by_project: dict[str, str] = {}
     model_route_count: dict[str, int] = {}
     deployment_preflight_count: dict[str, int] = {}
+    change_gate_status_count: dict[str, int] = {}
+    regression_status_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -300,6 +302,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             dp = loaded.get("deployment_preflight_result") or {}
             dp_status = dp.get("deployment_preflight_status") or "none"
             deployment_preflight_count[dp_status] = deployment_preflight_count.get(dp_status, 0) + 1
+
+            cgs = loaded.get("change_gate_status") or "none"
+            change_gate_status_count[cgs] = change_gate_status_count.get(cgs, 0) + 1
+
+            rs = loaded.get("regression_status") or "none"
+            regression_status_count[rs] = regression_status_count.get(rs, 0) + 1
         except Exception:
             continue
 
@@ -308,6 +316,43 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         studio_coordination_summary=studio_coordination_summary,
         states_by_project=states_by_project,
     )
+
+    # Self-improvement backlog visibility signals (planning-only).
+    try:
+        from NEXUS.self_improvement_engine import build_self_improvement_backlog_safe, select_next_improvement_safe
+
+        dashboard_stub = {
+            "guardrail_status_count": guardrail_status_count,
+        }
+        backlog_items = build_self_improvement_backlog_safe(
+            dashboard_summary=dashboard_stub,
+            studio_coordination_summary=studio_coordination_summary,
+            driver_summary=studio_driver_summary,
+        )
+        selected = select_next_improvement_safe(backlog_items=backlog_items)
+        backlog_count = len(backlog_items)
+        selected_item = next((i for i in backlog_items if i.get("item_id") == selected.get("selected_item_id")), {})  # type: ignore[arg-type]
+        selected_improvement_summary = {
+            "selected_item_id": selected.get("selected_item_id"),
+            "selected_title": selected.get("selected_title"),
+            "selected_category": selected.get("selected_category"),
+            "selected_priority": selected_item.get("priority"),
+        }
+    except Exception:
+        backlog_count = 0
+        selected_improvement_summary = {}
+
+    # Overall regression status
+    if regression_status_count.get("blocked"):
+        regression_status = "blocked"
+    elif regression_status_count.get("error_fallback"):
+        regression_status = "error_fallback"
+    elif regression_status_count.get("warning"):
+        regression_status = "warning"
+    elif regression_status_count and any(k in regression_status_count for k in ("passed",)):
+        regression_status = "passed"
+    else:
+        regression_status = "none"
 
     dispatch_planning_summary: dict[str, Any] = {
         "dispatch_planning_status": "planned" if dispatch_by_project else "no_data",
@@ -398,4 +443,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "model_route_by_project": model_route_by_project,
         "model_route_count": model_route_count,
         "deployment_preflight_count": deployment_preflight_count,
+        "self_improvement_backlog_count": backlog_count,
+        "selected_improvement_summary": selected_improvement_summary,
+        "change_gate_status_count": change_gate_status_count,
+        "regression_status": regression_status,
     }

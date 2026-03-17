@@ -62,6 +62,10 @@ SUPPORTED_COMMANDS = frozenset({
     "deployment_preflight",
     "operator_snapshot",
     "project_onboard",
+    "self_improvement_backlog",
+    "improve_system",
+    "change_gate",
+    "regression_check",
 })
 
 
@@ -1400,6 +1404,179 @@ def run_command(
                 summary=result.get("reason") or result.get("onboarding_status"),
                 payload=result,
             )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "self_improvement_backlog":
+        # No project required. Pure planning/visibility.
+        try:
+            from NEXUS.self_improvement_engine import build_self_improvement_backlog_safe, select_next_improvement_safe
+            from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+            from NEXUS.studio_driver import build_studio_driver_result_safe
+
+            # Load states for deterministic coordination/driver summaries.
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    loaded = load_project_state(p)
+                    if isinstance(loaded, dict) and "load_error" not in loaded:
+                        states_by_project[key] = loaded
+
+            studio_coordination_summary = build_studio_coordination_summary_safe(states_by_project)
+            studio_driver_summary = build_studio_driver_result_safe(
+                studio_coordination_summary=studio_coordination_summary,
+                states_by_project=states_by_project,
+            )
+
+            dashboard_summary = build_registry_dashboard_summary()
+            backlog_items = build_self_improvement_backlog_safe(
+                dashboard_summary=dashboard_summary,
+                studio_coordination_summary=studio_coordination_summary,
+                driver_summary=studio_driver_summary,
+            )
+            selected = select_next_improvement_safe(backlog_items=backlog_items)
+            # Keep response compact: return top N items.
+            top_n = int(kwargs.get("n_backlog", 5) or 5)
+            backlog_all_count = len(backlog_items)
+            backlog_items = backlog_items[: max(1, top_n)]
+            payload = {
+                "backlog_status": "ok",
+                "backlog_count": backlog_all_count,
+                "selected_improvement_summary": selected,
+                "backlog_items": backlog_items,
+            }
+            return _result(command=cmd, status="ok", project_name=None, summary="Self-improvement backlog ready.", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "improve_system":
+        # Planning only: select one improvement candidate; run regression checks and return recommendation.
+        try:
+            project_key = proj_name or "jarvis"
+            from NEXUS.self_improvement_engine import build_self_improvement_backlog_safe, select_next_improvement_safe
+            from NEXUS.regression_checks import run_regression_checks_safe
+            from NEXUS.change_safety_gate import evaluate_change_gate_safe
+            from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+            from NEXUS.studio_driver import build_studio_driver_result_safe
+
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    loaded = load_project_state(p)
+                    if isinstance(loaded, dict) and "load_error" not in loaded:
+                        states_by_project[key] = loaded
+
+            studio_coordination_summary = build_studio_coordination_summary_safe(states_by_project)
+            studio_driver_summary = build_studio_driver_result_safe(
+                studio_coordination_summary=studio_coordination_summary,
+                states_by_project=states_by_project,
+            )
+            dashboard_summary = build_registry_dashboard_summary()
+
+            backlog_items = build_self_improvement_backlog_safe(
+                dashboard_summary=dashboard_summary,
+                studio_coordination_summary=studio_coordination_summary,
+                driver_summary=studio_driver_summary,
+            )
+            selected = select_next_improvement_safe(backlog_items=backlog_items)
+
+            # Regression checks gate acceptance (planning-only).
+            regression = run_regression_checks_safe(project_name=project_key or "jarvis")
+
+            # Change gate: conservative (no execution in this sprint).
+            selected_item = next((i for i in backlog_items if i.get("item_id") == selected.get("selected_item_id")), {})  # type: ignore[arg-type]
+            gate = evaluate_change_gate_safe(
+                target_area=selected_item.get("target_area"),
+                category=selected_item.get("category"),
+                priority=selected_item.get("priority"),
+                project_name=project_key or "jarvis",
+                core_files_touched=False,
+            )
+
+            regression_status = (regression or {}).get("regression_status")
+            if regression_status == "passed" and gate.get("execution_allowed") is False:
+                improvement_status = "planned"
+            elif regression_status in ("warning",) and gate.get("execution_allowed") is False:
+                improvement_status = "planned"
+            elif regression_status == "blocked":
+                improvement_status = "error_fallback"
+            else:
+                improvement_status = "none_available"
+
+            improvement_reason = (
+                f"Selected={selected.get('selected_item_id')}; regression={regression_status}; gate={gate.get('change_gate_status')}."
+            )
+            payload = {
+                "improvement_status": improvement_status,
+                "selected_item_id": selected.get("selected_item_id"),
+                "selected_title": selected.get("selected_title"),
+                "selected_category": selected.get("selected_category"),
+                "improvement_reason": improvement_reason,
+                "execution_recommended": False,
+            }
+
+            # Persist compact planning results for operator visibility.
+            if path:
+                update_project_state_fields(
+                    path,
+                    self_improvement_status=payload.get("improvement_status"),
+                    self_improvement_result=payload,
+                    regression_status=(regression or {}).get("regression_status"),
+                    regression_result=regression,
+                    change_gate_status=(gate or {}).get("change_gate_status"),
+                    change_gate_result=gate,
+                )
+
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"improvement_status={payload.get('improvement_status')}", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "change_gate":
+        # Compact gate evaluation; planning only.
+        try:
+            from NEXUS.change_safety_gate import evaluate_change_gate_safe
+            target_area = kwargs.get("target_area")
+            category = kwargs.get("category")
+            priority = kwargs.get("priority")
+            core_files_touched = bool(kwargs.get("core_files_touched", False))
+            gate = evaluate_change_gate_safe(
+                target_area=target_area,
+                category=category,
+                priority=priority,
+                project_name=proj_name or "unknown",
+                core_files_touched=core_files_touched,
+            )
+            if path:
+                update_project_state_fields(
+                    path,
+                    change_gate_status=gate.get("change_gate_status"),
+                    change_gate_result=gate,
+                )
+            payload = {
+                "change_gate_status": gate.get("change_gate_status") or "blocked",
+                "change_gate_reason": gate.get("change_gate_reason") or "",
+                "execution_allowed": bool(gate.get("execution_allowed", False)),
+                "review_required": bool(gate.get("review_required", False)),
+            }
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"gate={payload.get('change_gate_status')}", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "regression_check":
+        try:
+            from NEXUS.regression_checks import run_regression_checks_safe
+            project_key = proj_name or "jarvis"
+            regression = run_regression_checks_safe(project_name=project_key)
+            if path:
+                update_project_state_fields(
+                    path,
+                    regression_status=regression.get("regression_status"),
+                    regression_result=regression,
+                )
+            payload = regression
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"regression_status={payload.get('regression_status')}", payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 

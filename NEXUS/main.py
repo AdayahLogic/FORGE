@@ -152,6 +152,10 @@ if __name__ == "__main__":
         project_name = None
         n = 20
         tail = None
+        target_area = None
+        category = None
+        priority = None
+        core_files_touched = None
         i = 1
         agent_name = None
         tool_name = None
@@ -207,6 +211,23 @@ if __name__ == "__main__":
                     tail = None
                 i += 2
                 continue
+            if args[i] == "--target-area" and i + 1 < len(args):
+                target_area = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--category" and i + 1 < len(args):
+                category = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--priority" and i + 1 < len(args):
+                priority = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--core-files-touched" and i + 1 < len(args):
+                v = (args[i + 1] or "").strip().lower()
+                core_files_touched = v in ("1", "true", "yes", "y")
+                i += 2
+                continue
             i += 1
         result = run_command(
             command=cmd,
@@ -220,6 +241,10 @@ if __name__ == "__main__":
             sensitivity=sensitivity,
             review_context=review_context,
             completion_type=completion_type,
+            target_area=target_area,
+            category=category,
+            priority=priority,
+            core_files_touched=core_files_touched,
         )
         print(json.dumps(result, indent=2))
     else:
