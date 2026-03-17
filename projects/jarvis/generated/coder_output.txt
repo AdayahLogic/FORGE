@@ -1,14 +1,15 @@
 Coder Execution Report
-Timestamp: 2026-03-16 20:49:41
+Timestamp: 2026-03-16 21:00:16
 Project: jarvis
 
 Task Queue Snapshot:
-1. Define a project context loader that resolves the active workspace and loads only jarvis-scoped docs, memory, and task files into a normalized context object. [pending]
-2. Create an LLM client adapter interface for planning calls, with configuration for model name, API key sourcing, timeout, and safe fallback behavior. [pending]
-3. Implement a planner pipeline that combines user request plus loaded project context and returns structured JSON with objective, assumptions, steps, risks, next_agent, and optional patch_request. [pending]
-4. Add validation to reject malformed planning output and enforce patch safety rules, defaulting to patch_request null when uncertain. [pending]
-5. Add logging for workspace selection, context load status, model call success or fallback, and planner validation results without leaking cross-project data. [pending]
-6. Prepare lightweight tests for workspace isolation, missing-file tolerance, valid JSON planning output, and safe handling of unavailable model credentials. [pending]
+1. Define a project-context loader that resolves Jarvis overview, focus, memory, and task files from the Jarvis workspace only. [pending]
+2. Create a normalized context object for planner input with explicit fields for project identity, docs, memory, and requested objective. [pending]
+3. Add an OpenAI client adapter interface that accepts the normalized context and returns planner-safe structured output. [pending]
+4. Define and validate the planner response schema with required fields: objective, assumptions, implementation_steps, risks, next_agent, patch_request. [pending]
+5. Add routing logic that maps implementation work to coder, documentation work to documentation agent, and testing work to testing agent. [pending]
+6. Add guardrails that reject cross-project context injection and fall back to the active project workspace when intent is ambiguous. [pending]
+7. Prepare a minimal test slice for context isolation, schema compliance, and safe null patch behavior. [pending]
 
 Execution Notes:
 - Coder agent initialized successfully.

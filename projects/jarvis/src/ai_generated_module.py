@@ -1,7 +1,7 @@
 """
 AI Generated Module
 Project: jarvis
-Generated: 2026-03-16 20:49:41
+Generated: 2026-03-16 21:00:16
 
 Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
@@ -19,7 +19,7 @@ def get_project_summary() -> dict:
         "project": PROJECT_NAME,
         "objective": PROJECT_OBJECTIVE,
         "status": "generated",
-        "task_count": 6
+        "task_count": 7
     }
 
 
@@ -32,19 +32,20 @@ def print_project_summary() -> None:
 
 
 # Task Snapshot
-# - Define a project context loader that resolves the active workspace and loads only jarvis-scoped docs, memory, and task files into a normalized context object. [pending]
-# - Create an LLM client adapter interface for planning calls, with configuration for model name, API key sourcing, timeout, and safe fallback behavior. [pending]
-# - Implement a planner pipeline that combines user request plus loaded project context and returns structured JSON with objective, assumptions, steps, risks, next_agent, and optional patch_request. [pending]
-# - Add validation to reject malformed planning output and enforce patch safety rules, defaulting to patch_request null when uncertain. [pending]
-# - Add logging for workspace selection, context load status, model call success or fallback, and planner validation results without leaking cross-project data. [pending]
-# - Prepare lightweight tests for workspace isolation, missing-file tolerance, valid JSON planning output, and safe handling of unavailable model credentials. [pending]
+# - Define a project-context loader that resolves Jarvis overview, focus, memory, and task files from the Jarvis workspace only. [pending]
+# - Create a normalized context object for planner input with explicit fields for project identity, docs, memory, and requested objective. [pending]
+# - Add an OpenAI client adapter interface that accepts the normalized context and returns planner-safe structured output. [pending]
+# - Define and validate the planner response schema with required fields: objective, assumptions, implementation_steps, risks, next_agent, patch_request. [pending]
+# - Add routing logic that maps implementation work to coder, documentation work to documentation agent, and testing work to testing agent. [pending]
+# - Add guardrails that reject cross-project context injection and fall back to the active project workspace when intent is ambiguous. [pending]
+# - Prepare a minimal test slice for context isolation, schema compliance, and safe null patch behavior. [pending]
 # --- Controlled Jarvis Update ---
-# Timestamp: 2026-03-16 20:49:41
+# Timestamp: 2026-03-16 21:00:17
 # Objective Snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 def get_latest_jarvis_update() -> dict:
     return {
-        "updated_at": "2026-03-16 20:49:41",
+        "updated_at": "2026-03-16 21:00:17",
         "project": "Jarvis",
         "objective": "Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.",
         "status": "controlled_update_applied"

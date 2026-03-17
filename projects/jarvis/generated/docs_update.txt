@@ -1,5 +1,5 @@
 AI Studio Documentation Update
-Timestamp: 2026-03-16 20:49:41
+Timestamp: 2026-03-16 21:00:16
 Project: jarvis
 
 Execution Summary:
@@ -8,20 +8,21 @@ Execution Summary:
 
 Task Status:
 - completed_tasks: 1
-- pending_tasks: 5
+- pending_tasks: 6
 
 Architect Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Remaining Tasks:
-- Create an LLM client adapter interface for planning calls, with configuration for model name, API key sourcing, timeout, and safe fallback behavior.
-- Implement a planner pipeline that combines user request plus loaded project context and returns structured JSON with objective, assumptions, steps, risks, next_agent, and optional patch_request.
-- Add validation to reject malformed planning output and enforce patch safety rules, defaulting to patch_request null when uncertain.
-- Add logging for workspace selection, context load status, model call success or fallback, and planner validation results without leaking cross-project data.
-- Prepare lightweight tests for workspace isolation, missing-file tolerance, valid JSON planning output, and safe handling of unavailable model credentials.
+- Create a normalized context object for planner input with explicit fields for project identity, docs, memory, and requested objective.
+- Add an OpenAI client adapter interface that accepts the normalized context and returns planner-safe structured output.
+- Define and validate the planner response schema with required fields: objective, assumptions, implementation_steps, risks, next_agent, patch_request.
+- Add routing logic that maps implementation work to coder, documentation work to documentation agent, and testing work to testing agent.
+- Add guardrails that reject cross-project context injection and fall back to the active project workspace when intent is ambiguous.
+- Prepare a minimal test slice for context isolation, schema compliance, and safe null patch behavior.
 
 Completed Tasks:
-- Define a project context loader that resolves the active workspace and loads only jarvis-scoped docs, memory, and task files into a normalized context object.
+- Define a project-context loader that resolves Jarvis overview, focus, memory, and task files from the Jarvis workspace only.
 
 Documentation Notes:
 - This report was generated automatically by the AI Studio docs agent.
