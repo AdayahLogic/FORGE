@@ -57,6 +57,9 @@ SUPPORTED_COMMANDS = frozenset({
     "autonomous_studio_cycle",
     "autonomy_status",
     "guardrail_status",
+    "runtime_route",
+    "model_route",
+    "deployment_preflight",
 })
 
 
@@ -1062,12 +1065,12 @@ def run_command(
                 )
             ar = loaded.get("autonomy_result") or {}
             payload = {
-                "autonomy_status": loaded.get("autonomy_status") or ar.get("autonomy_status"),
-                "autonomy_action": ar.get("autonomy_action"),
-                "autonomy_reason": ar.get("autonomy_reason"),
-                "target_project": ar.get("target_project"),
-                "autonomous_run_started": ar.get("autonomous_run_started"),
-                "bounded_operation": ar.get("bounded_operation"),
+                "autonomy_status": loaded.get("autonomy_status") or ar.get("autonomy_status") or "idle",
+                "autonomy_action": ar.get("autonomy_action") or "none",
+                "autonomy_reason": ar.get("autonomy_reason") or "",
+                "target_project": ar.get("target_project") or (loaded.get("active_project") or proj_name or ""),
+                "autonomous_run_started": bool(ar.get("autonomous_run_started", False)),
+                "bounded_operation": bool(ar.get("bounded_operation", True)),
             }
             summary_line = f"autonomy_status={payload.get('autonomy_status')}; autonomous_run_started={payload.get('autonomous_run_started')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
@@ -1094,15 +1097,127 @@ def run_command(
                     payload=loaded,
                 )
             gr = loaded.get("guardrail_result") or {}
+            if not gr or (loaded.get("guardrail_status") is None and gr.get("guardrail_status") is None):
+                # Compute on-demand for stable output (and persist for later visibility).
+                try:
+                    from NEXUS.production_guardrails import evaluate_guardrails_safe
+                    computed = evaluate_guardrails_safe(
+                        autonomous_launch=False,
+                        project_state=loaded,
+                        review_queue_entry=loaded.get("review_queue_entry"),
+                        recovery_result=loaded.get("recovery_result"),
+                        reexecution_result=loaded.get("reexecution_result"),
+                        studio_driver_result=None,
+                        target_project=loaded.get("active_project") or proj_name,
+                        states_by_project={},
+                        execution_attempted=False,
+                    )
+                    update_project_state_fields(
+                        path,
+                        guardrail_status=computed.get("guardrail_status"),
+                        guardrail_result=computed,
+                    )
+                    gr = computed
+                except Exception:
+                    pass
             payload = {
-                "guardrail_status": loaded.get("guardrail_status") or gr.get("guardrail_status"),
-                "guardrail_reason": gr.get("guardrail_reason"),
-                "launch_allowed": gr.get("launch_allowed"),
-                "recursion_blocked": gr.get("recursion_blocked"),
-                "state_repair_recommended": gr.get("state_repair_recommended"),
+                "guardrail_status": loaded.get("guardrail_status") or gr.get("guardrail_status") or "passed",
+                "guardrail_reason": gr.get("guardrail_reason") or "",
+                "launch_allowed": bool(gr.get("launch_allowed", True)),
+                "recursion_blocked": bool(gr.get("recursion_blocked", False)),
+                "state_repair_recommended": bool(gr.get("state_repair_recommended", False)),
             }
             summary_line = f"guardrail_status={payload.get('guardrail_status')}; launch_allowed={payload.get('launch_allowed')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "runtime_route":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.runtime_router import route_runtime_safe
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+            patch_req = (loaded.get("architect_plan") or {}).get("patch_request") if isinstance(loaded.get("architect_plan"), dict) else None
+            result = route_runtime_safe(
+                active_project=loaded.get("active_project") or proj_name,
+                runtime_node=(loaded.get("dispatch_plan_summary") or {}).get("runtime_node"),
+                task_type=(loaded.get("dispatch_plan_summary") or {}).get("task_type"),
+                patch_request=patch_req if isinstance(patch_req, dict) else None,
+                purpose="runtime_route_command",
+                primary_tool=None,
+                secondary_tool=None,
+            )
+            update_project_state_fields(path, runtime_router_result=result)
+            summary_line = f"runtime={result.get('selected_runtime')}; status={result.get('runtime_router_status')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "model_route":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.model_router import route_model_safe
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+            result = route_model_safe(
+                task_class=(kwargs.get("task_class") or "fallback"),
+                active_project=loaded.get("active_project") or proj_name,
+                agent_name=(loaded.get("agent_selection_summary") or {}).get("selected_agent") if isinstance(loaded.get("agent_selection_summary"), dict) else None,
+                runtime_node=(loaded.get("dispatch_plan_summary") or {}).get("runtime_node"),
+                request_text=(loaded.get("architect_plan") or {}).get("objective") if isinstance(loaded.get("architect_plan"), dict) else None,
+            )
+            update_project_state_fields(path, model_router_result=result)
+            summary_line = f"provider={result.get('selected_provider')}; model={result.get('selected_model')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "deployment_preflight":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.deployment_preflight import evaluate_deployment_preflight_safe
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+            guardrail = loaded.get("guardrail_result") if isinstance(loaded.get("guardrail_result"), dict) else None
+            launch = loaded.get("launch_result") if isinstance(loaded.get("launch_result"), dict) else None
+            rr = loaded.get("runtime_router_result") if isinstance(loaded.get("runtime_router_result"), dict) else None
+            mr = loaded.get("model_router_result") if isinstance(loaded.get("model_router_result"), dict) else None
+            result = evaluate_deployment_preflight_safe(
+                active_project=loaded.get("active_project") or proj_name,
+                project_state=loaded,
+                guardrail_result=guardrail,
+                launch_result=launch,
+                runtime_router_result=rr,
+                model_router_result=mr,
+            )
+            update_project_state_fields(path, deployment_preflight_result=result)
+            summary_line = f"preflight={result.get('deployment_preflight_status')}; review_required={result.get('review_required')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 

@@ -117,8 +117,25 @@ def save_project_state(
     autonomy_result: dict | None = None,
     guardrail_status: str | None = None,
     guardrail_result: dict | None = None,
+    runtime_router_result: dict | None = None,
+    model_router_result: dict | None = None,
+    deployment_preflight_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
+
+    # Preserve router/preflight results across saves when not explicitly provided.
+    previous: dict = {}
+    try:
+        if state_file.exists():
+            previous = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception:
+        previous = {}
+    if runtime_router_result is None and isinstance(previous.get("runtime_router_result"), dict):
+        runtime_router_result = previous.get("runtime_router_result")
+    if model_router_result is None and isinstance(previous.get("model_router_result"), dict):
+        model_router_result = previous.get("model_router_result")
+    if deployment_preflight_result is None and isinstance(previous.get("deployment_preflight_result"), dict):
+        deployment_preflight_result = previous.get("deployment_preflight_result")
 
     # Compact audit summaries (no history arrays; derived from existing results)
     lr = (launch_result or {}) if isinstance(launch_result, dict) else {}
@@ -244,6 +261,9 @@ def save_project_state(
         "autonomy_result": autonomy_result or {},
         "guardrail_status": guardrail_status,
         "guardrail_result": guardrail_result or {},
+        "runtime_router_result": runtime_router_result or {},
+        "model_router_result": model_router_result or {},
+        "deployment_preflight_result": deployment_preflight_result or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,
@@ -267,6 +287,48 @@ def update_project_state_fields(project_path: str, **fields: object) -> str:
     if not isinstance(loaded, dict) or loaded.get("load_error"):
         return ""
     merged = {**loaded, **fields, "saved_at": datetime.now().isoformat()}
+
+    # Backfill compact audit summaries if missing (safe, deterministic, no history arrays).
+    if "last_run_summary" not in merged or not isinstance(merged.get("last_run_summary"), dict):
+        dispatch_result = merged.get("dispatch_result") if isinstance(merged.get("dispatch_result"), dict) else {}
+        merged["last_run_summary"] = {
+            "saved_at": merged.get("saved_at") or "",
+            "active_project": merged.get("active_project") or "",
+            "run_id": merged.get("run_id") or "",
+            "runtime_execution_status": merged.get("runtime_execution_status") or dispatch_result.get("execution_status") or "",
+            "dispatch_status": merged.get("dispatch_status") or "",
+        }
+    if "last_launch_summary" not in merged or not isinstance(merged.get("last_launch_summary"), dict):
+        lr = merged.get("launch_result") if isinstance(merged.get("launch_result"), dict) else {}
+        merged["last_launch_summary"] = {
+            "launch_status": merged.get("launch_status") or lr.get("launch_status") or "none",
+            "launch_action": lr.get("launch_action") or "none",
+            "launch_reason": lr.get("launch_reason") or "",
+            "target_project": lr.get("target_project") or merged.get("active_project") or "",
+            "execution_started": bool(lr.get("execution_started", False)),
+            "bounded_execution": bool(lr.get("bounded_execution", True)),
+            "source": lr.get("source") or "none",
+        }
+    if "last_recovery_summary" not in merged or not isinstance(merged.get("last_recovery_summary"), dict):
+        rr = merged.get("recovery_result") if isinstance(merged.get("recovery_result"), dict) else {}
+        merged["last_recovery_summary"] = {
+            "recovery_status": merged.get("recovery_status") or rr.get("recovery_status") or "none",
+            "recovery_action": rr.get("recovery_action") or "none",
+            "recovery_reason": rr.get("recovery_reason") or "",
+            "retry_permitted": bool(rr.get("retry_permitted", False)),
+            "repair_required": bool(rr.get("repair_required", False)),
+            "retry_count_exceeded": bool(rr.get("retry_count_exceeded", False)),
+        }
+    if "last_completion_summary" not in merged or not isinstance(merged.get("last_completion_summary"), dict):
+        cr = merged.get("completion_result") if isinstance(merged.get("completion_result"), dict) else {}
+        merged["last_completion_summary"] = {
+            "completion_status": cr.get("completion_status") or "none",
+            "completion_type": cr.get("completion_type") or "none",
+            "queue_cleared": bool(cr.get("queue_cleared", False)),
+            "resume_unlocked": bool(cr.get("resume_unlocked", False)),
+            "completion_recorded": bool(cr.get("completion_recorded", False)),
+        }
+
     merged = normalize_display_data(merged)
     state_file = get_project_state_file(project_path)
     state_file.write_text(json.dumps(merged, indent=2), encoding="utf-8")

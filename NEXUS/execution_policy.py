@@ -74,3 +74,54 @@ def evaluate(
     if target_path is not None:
         decision["target_path"] = target_path
     return decision
+
+
+def evaluate_action_family(
+    *,
+    action_family: str,
+    agent_name: str,
+    tool_name: str | None = None,
+    action_type: str | None = None,
+    target_path: str | None = None,
+) -> dict[str, Any]:
+    """
+    Compact policy decision for action families.
+
+    Families: terminal, file_modification, diff_patch, browser_research,
+    deployment_preflight.
+
+    Returns the same decision shape as evaluate(...), keeping compatibility.
+    """
+    fam = (action_family or "").strip().lower()
+    # Map to a canonical tool name when tool_name isn't provided.
+    mapped_tool = (tool_name or "").strip() or fam
+    if fam == "deployment_preflight":
+        # Evaluation-only: allow but recommend review by default.
+        decision = evaluate(agent_name=agent_name, tool_name=mapped_tool, action_type=action_type, target_path=target_path)
+        # Ensure non-escalation: if allowed, keep as review_required to avoid implied auto-deploy.
+        if decision.get("allowed"):
+            decision["status"] = "review_required"
+            decision["review_required"] = True
+            decision["human_review_recommended"] = True
+            decision["reason"] = (decision.get("reason") or "Tool allowed for this agent.") + " Deployment preflight is review-required."
+        return decision
+    return evaluate(agent_name=agent_name, tool_name=mapped_tool, action_type=action_type, target_path=target_path)
+
+
+def evaluate_action_family_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises; returns blocked on exception."""
+    try:
+        return evaluate_action_family(**kwargs)
+    except Exception:
+        return {
+            "status": "blocked",
+            "allowed": False,
+            "review_required": False,
+            "blocked": True,
+            "reason": "Execution policy evaluation failed.",
+            "human_review_recommended": True,
+            "agent_name": (kwargs.get("agent_name") or ""),
+            "tool_name": (kwargs.get("tool_name") or kwargs.get("action_family") or ""),
+            "action_type": kwargs.get("action_type"),
+            "target_path": kwargs.get("target_path"),
+        }

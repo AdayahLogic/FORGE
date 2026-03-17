@@ -162,6 +162,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     guardrail_status_count: dict[str, int] = {}
     recursion_blocked_count: int = 0
     state_repair_recommended_count: int = 0
+    runtime_route_by_project: dict[str, str] = {}
+    runtime_route_count: dict[str, int] = {}
+    model_route_by_project: dict[str, str] = {}
+    model_route_count: dict[str, int] = {}
+    deployment_preflight_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -284,6 +289,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 recursion_blocked_count += 1
             if gr.get("state_repair_recommended"):
                 state_repair_recommended_count += 1
+            rr = loaded.get("runtime_router_result") or {}
+            runtime_sel = rr.get("selected_runtime") or "none"
+            runtime_route_by_project[key] = str(runtime_sel)
+            runtime_route_count[runtime_sel] = runtime_route_count.get(runtime_sel, 0) + 1
+            mr = loaded.get("model_router_result") or {}
+            model_sel = mr.get("selected_model") or "none"
+            model_route_by_project[key] = str(model_sel)
+            model_route_count[model_sel] = model_route_count.get(model_sel, 0) + 1
+            dp = loaded.get("deployment_preflight_result") or {}
+            dp_status = dp.get("deployment_preflight_status") or "none"
+            deployment_preflight_count[dp_status] = deployment_preflight_count.get(dp_status, 0) + 1
         except Exception:
             continue
 
@@ -377,4 +393,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "guardrail_status_count": guardrail_status_count,
         "recursion_blocked_count": recursion_blocked_count,
         "state_repair_recommended_count": state_repair_recommended_count,
+        "runtime_route_by_project": runtime_route_by_project,
+        "runtime_route_count": runtime_route_count,
+        "model_route_by_project": model_route_by_project,
+        "model_route_count": model_route_count,
+        "deployment_preflight_count": deployment_preflight_count,
     }
