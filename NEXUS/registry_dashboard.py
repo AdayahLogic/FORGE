@@ -374,6 +374,92 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         execution_status_by_project[k] = exec_status
         execution_status_count[exec_status] = execution_status_count.get(exec_status, 0) + 1
 
+    # Forge OS layer (Sprint 5): lightweight, summary-only operational fields.
+    try:
+        from portfolio_manager import build_portfolio_summary_safe
+        from runtime_infrastructure import build_runtime_infrastructure_summary_safe
+        from meta_engines.safety_engine import evaluate_safety_engine
+        from meta_engines.security_engine import evaluate_security_engine
+        from meta_engines.compliance_engine import evaluate_compliance_engine
+        from meta_engines.risk_engine import evaluate_risk_engine
+        from meta_engines.policy_engine import evaluate_policy_engine
+        from meta_engines.cost_engine import evaluate_cost_engine
+        from meta_engines.audit_engine import evaluate_audit_engine
+
+        portfolio_summary = build_portfolio_summary_safe(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+        )
+        runtime_infrastructure_summary = build_runtime_infrastructure_summary_safe()
+
+        meta_engine_summary = {
+            "safety_engine": evaluate_safety_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+            "security_engine": evaluate_security_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+            "compliance_engine": evaluate_compliance_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+            "risk_engine": evaluate_risk_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+            "policy_engine": evaluate_policy_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+            "cost_engine": evaluate_cost_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+            "audit_engine": evaluate_audit_engine(
+                states_by_project=states_by_project,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                runtime_infrastructure_summary=runtime_infrastructure_summary,
+            ),
+        }
+
+        meta_engine_review_required_count = sum(
+            1 for v in meta_engine_summary.values()
+            if isinstance(v, dict) and bool(v.get("review_required", False))
+        )
+    except Exception:
+        portfolio_summary = {
+            "portfolio_status": "error_fallback",
+            "total_projects": 0,
+            "active_projects": 0,
+            "blocked_projects": 0,
+            "priority_project": None,
+            "portfolio_reason": "Forge portfolio summary failed.",
+        }
+        runtime_infrastructure_summary = {
+            "runtime_infrastructure_status": "error_fallback",
+            "available_runtimes": [],
+            "future_runtimes": [],
+            "reason": "Forge runtime infrastructure summary failed.",
+        }
+        meta_engine_summary = {}
+        meta_engine_review_required_count = 0
+
     return {
         "summary_generated_at": now,
         "studio_name": STUDIO_NAME,
@@ -446,5 +532,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "self_improvement_backlog_count": backlog_count,
         "selected_improvement_summary": selected_improvement_summary,
         "change_gate_status_count": change_gate_status_count,
+        # Forge OS Sprint 5 additions (summary-only).
+        "portfolio_summary": portfolio_summary,
+        "runtime_infrastructure_summary": runtime_infrastructure_summary,
+        "meta_engine_summary": meta_engine_summary,
+        "meta_engine_review_required_count": meta_engine_review_required_count,
         "regression_status": regression_status,
     }

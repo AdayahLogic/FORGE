@@ -72,6 +72,8 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("launch_studio_cycle, autonomous_studio_cycle")
     print("runtime_route, model_route, deployment_preflight")
     print("project_onboard")
+    print("self_improvement_backlog, improve_system")
+    print("change_gate, regression_check")
 
     print("\n=== Log Tail (forge_operations.jsonl) ===")
     if not log_tail:
@@ -144,6 +146,10 @@ def _run_streamlit(st: Any) -> None:
             "complete_review",
             "complete_approval",
             "project_onboard",
+            "self_improvement_backlog",
+            "improve_system",
+            "change_gate",
+            "regression_check",
             "runtime_route",
             "model_route",
             "deployment_preflight",

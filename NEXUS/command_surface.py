@@ -61,6 +61,10 @@ SUPPORTED_COMMANDS = frozenset({
     "model_route",
     "deployment_preflight",
     "operator_snapshot",
+    "forge_os_snapshot",
+    "portfolio_status",
+    "runtime_infrastructure",
+    "meta_engine_status",
     "project_onboard",
     "self_improvement_backlog",
     "improve_system",
@@ -1382,6 +1386,213 @@ def run_command(
             return _result(command=cmd, status="ok", project_name=None, summary="Operator snapshot ready.", payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "portfolio_status":
+        try:
+            dashboard_summary = build_registry_dashboard_summary()
+            fallback = {
+                "portfolio_status": "error_fallback",
+                "total_projects": 0,
+                "active_projects": 0,
+                "blocked_projects": 0,
+                "priority_project": None,
+                "portfolio_reason": "Forge portfolio summary unavailable.",
+            }
+            payload = dashboard_summary.get("portfolio_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(payload, dict) or not payload:
+                payload = fallback
+            summary_line = f"portfolio_status={payload.get('portfolio_status')}; active={payload.get('active_projects')}; blocked={payload.get('blocked_projects')}; priority={payload.get('priority_project')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=None,
+                summary=str(e),
+                payload={
+                    "portfolio_status": "error_fallback",
+                    "total_projects": 0,
+                    "active_projects": 0,
+                    "blocked_projects": 0,
+                    "priority_project": None,
+                    "portfolio_reason": "Forge portfolio summary failed.",
+                    "error": str(e),
+                },
+            )
+
+    if cmd == "runtime_infrastructure":
+        try:
+            dashboard_summary = build_registry_dashboard_summary()
+            fallback = {
+                "runtime_infrastructure_status": "error_fallback",
+                "available_runtimes": [],
+                "future_runtimes": [],
+                "reason": "Forge runtime infrastructure summary unavailable.",
+            }
+            payload = dashboard_summary.get("runtime_infrastructure_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(payload, dict) or not payload:
+                payload = fallback
+            summary_line = f"runtime_infrastructure_status={payload.get('runtime_infrastructure_status')}; available={len(payload.get('available_runtimes') or [])}; future={len(payload.get('future_runtimes') or [])}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=None,
+                summary=str(e),
+                payload={
+                    "runtime_infrastructure_status": "error_fallback",
+                    "available_runtimes": [],
+                    "future_runtimes": [],
+                    "reason": "Forge runtime infrastructure summary failed.",
+                    "error": str(e),
+                },
+            )
+
+    if cmd == "meta_engine_status":
+        try:
+            dashboard_summary = build_registry_dashboard_summary()
+            fallback_engine = {
+                "engine_status": "error_fallback",
+                "engine_reason": "Meta engine evaluation unavailable.",
+                "review_required": True,
+            }
+            fallback = {
+                "safety_engine": fallback_engine,
+                "security_engine": fallback_engine,
+                "compliance_engine": fallback_engine,
+                "risk_engine": fallback_engine,
+                "policy_engine": fallback_engine,
+                "cost_engine": fallback_engine,
+                "audit_engine": fallback_engine,
+            }
+            payload = dashboard_summary.get("meta_engine_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(payload, dict) or not payload:
+                payload = fallback
+            summary_line = f"meta_engines_ready_count={len([v for v in payload.values() if isinstance(v, dict) and v.get('review_required') is False])}; total={len(payload)}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback_engine = {
+                "engine_status": "error_fallback",
+                "engine_reason": "Meta engine evaluation unavailable.",
+                "review_required": True,
+            }
+            fallback = {
+                "safety_engine": fallback_engine,
+                "security_engine": fallback_engine,
+                "compliance_engine": fallback_engine,
+                "risk_engine": fallback_engine,
+                "policy_engine": fallback_engine,
+                "cost_engine": fallback_engine,
+                "audit_engine": fallback_engine,
+            }
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=fallback)
+
+    if cmd == "forge_os_snapshot":
+        try:
+            dashboard_summary = build_registry_dashboard_summary()
+            fallback_portfolio = {
+                "portfolio_status": "error_fallback",
+                "total_projects": 0,
+                "active_projects": 0,
+                "blocked_projects": 0,
+                "priority_project": None,
+                "portfolio_reason": "Forge portfolio summary unavailable.",
+            }
+            fallback_runtime = {
+                "runtime_infrastructure_status": "error_fallback",
+                "available_runtimes": [],
+                "future_runtimes": [],
+                "reason": "Forge runtime infrastructure summary unavailable.",
+            }
+            fallback_engine = {
+                "engine_status": "error_fallback",
+                "engine_reason": "Meta engine evaluation unavailable.",
+                "review_required": True,
+            }
+            fallback_meta = {
+                "safety_engine": fallback_engine,
+                "security_engine": fallback_engine,
+                "compliance_engine": fallback_engine,
+                "risk_engine": fallback_engine,
+                "policy_engine": fallback_engine,
+                "cost_engine": fallback_engine,
+                "audit_engine": fallback_engine,
+            }
+
+            portfolio_summary = dashboard_summary.get("portfolio_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(portfolio_summary, dict) or not portfolio_summary:
+                portfolio_summary = fallback_portfolio
+
+            runtime_infrastructure_summary = dashboard_summary.get("runtime_infrastructure_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(runtime_infrastructure_summary, dict) or not runtime_infrastructure_summary:
+                runtime_infrastructure_summary = fallback_runtime
+
+            meta_engine_summary = dashboard_summary.get("meta_engine_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(meta_engine_summary, dict) or not meta_engine_summary:
+                meta_engine_summary = fallback_meta
+
+            studio_coordination_summary = dashboard_summary.get("studio_coordination_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(studio_coordination_summary, dict):
+                studio_coordination_summary = {}
+
+            studio_driver_summary = dashboard_summary.get("studio_driver_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(studio_driver_summary, dict):
+                studio_driver_summary = {}
+
+            payload = {
+                "portfolio_summary": portfolio_summary,
+                "runtime_infrastructure_summary": runtime_infrastructure_summary,
+                "meta_engine_summary": meta_engine_summary,
+                "studio_coordination_summary": studio_coordination_summary,
+                "studio_driver_summary": studio_driver_summary,
+                "dashboard_summary": dashboard_summary if isinstance(dashboard_summary, dict) else {},
+            }
+
+            summary_line = (
+                f"forge_os_status={payload.get('portfolio_summary', {}).get('portfolio_status')}; "
+                f"runtime_status={payload.get('runtime_infrastructure_summary', {}).get('runtime_infrastructure_status')}; "
+                f"meta_review_required={sum(1 for v in (payload.get('meta_engine_summary') or {}).values() if isinstance(v, dict) and bool(v.get('review_required')))}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback_portfolio = {
+                "portfolio_status": "error_fallback",
+                "total_projects": 0,
+                "active_projects": 0,
+                "blocked_projects": 0,
+                "priority_project": None,
+                "portfolio_reason": "Forge portfolio summary unavailable.",
+            }
+            fallback_runtime = {
+                "runtime_infrastructure_status": "error_fallback",
+                "available_runtimes": [],
+                "future_runtimes": [],
+                "reason": "Forge runtime infrastructure summary unavailable.",
+            }
+            fallback_engine = {
+                "engine_status": "error_fallback",
+                "engine_reason": "Meta engine evaluation unavailable.",
+                "review_required": True,
+            }
+            fallback_meta = {
+                "safety_engine": fallback_engine,
+                "security_engine": fallback_engine,
+                "compliance_engine": fallback_engine,
+                "risk_engine": fallback_engine,
+                "policy_engine": fallback_engine,
+                "cost_engine": fallback_engine,
+                "audit_engine": fallback_engine,
+            }
+            payload = {
+                "portfolio_summary": fallback_portfolio,
+                "runtime_infrastructure_summary": fallback_runtime,
+                "meta_engine_summary": fallback_meta,
+                "studio_coordination_summary": {},
+                "studio_driver_summary": {},
+                "dashboard_summary": {},
+            }
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=payload)
 
     if cmd == "project_onboard":
         # Requires project context (project_name). Creates project scaffold in projects/<name>.
