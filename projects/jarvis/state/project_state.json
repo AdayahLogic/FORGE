@@ -1,5 +1,5 @@
 {
-  "saved_at": "2026-03-16T21:19:13.740637",
+  "saved_at": "2026-03-16T21:29:19.313690",
   "active_project": "jarvis",
   "project_state_file": "projects\\jarvis\\state\\project_state.json",
   "notes": "Full automation report created at: C:\\AI_STUDIO\\projects\\jarvis\\generated\\full_automation_report.txt",
@@ -873,8 +873,21 @@
   },
   "launch_status": null,
   "launch_result": {},
-  "autonomy_status": null,
-  "autonomy_result": {},
-  "guardrail_status": null,
-  "guardrail_result": {}
+  "autonomy_status": "idle",
+  "autonomy_result": {
+    "autonomy_status": "idle",
+    "autonomy_action": "none",
+    "autonomy_reason": "No autonomous run.",
+    "target_project": "jarvis",
+    "autonomous_run_started": false,
+    "bounded_operation": true
+  },
+  "guardrail_status": "passed",
+  "guardrail_result": {
+    "guardrail_status": "passed",
+    "guardrail_reason": "",
+    "launch_allowed": true,
+    "recursion_blocked": false,
+    "state_repair_recommended": false
+  }
 }
