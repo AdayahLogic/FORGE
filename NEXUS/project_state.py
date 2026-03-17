@@ -106,6 +106,9 @@ def save_project_state(
     heartbeat_result: dict | None = None,
     scheduler_status: str | None = None,
     scheduler_result: dict | None = None,
+    completion_result: dict | None = None,
+    recovery_status: str | None = None,
+    recovery_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -186,9 +189,29 @@ def save_project_state(
         "heartbeat_result": heartbeat_result or {},
         "scheduler_status": scheduler_status,
         "scheduler_result": scheduler_result or {},
+        "completion_result": completion_result or {},
+        "recovery_status": recovery_status,
+        "recovery_result": recovery_result or {},
     }
 
     payload = normalize_display_data(payload)
 
     state_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    return str(state_file)
+
+
+def update_project_state_fields(project_path: str, **fields: object) -> str:
+    """
+    Update only the given fields in project state. Loads current state, merges
+    fields, updates saved_at, and writes back. Minimal update; does not wipe
+    unrelated state.
+    """
+    from datetime import datetime
+    loaded = load_project_state(project_path)
+    if not isinstance(loaded, dict) or loaded.get("load_error"):
+        return ""
+    merged = {**loaded, **fields, "saved_at": datetime.now().isoformat()}
+    merged = normalize_display_data(merged)
+    state_file = get_project_state_file(project_path)
+    state_file.write_text(json.dumps(merged, indent=2), encoding="utf-8")
     return str(state_file)

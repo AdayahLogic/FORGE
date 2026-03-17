@@ -95,3 +95,6 @@ class StudioState(BaseModel):
     heartbeat_result: Dict[str, Any] = {}
     scheduler_status: Optional[str] = None
     scheduler_result: Dict[str, Any] = {}
+    completion_result: Dict[str, Any] = {}
+    recovery_status: Optional[str] = None
+    recovery_result: Dict[str, Any] = {}

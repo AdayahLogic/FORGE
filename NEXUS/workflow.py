@@ -55,6 +55,7 @@ from NEXUS.review_queue import build_review_queue_entry_safe
 from NEXUS.resume_engine import evaluate_resume_outcome_safe
 from NEXUS.heartbeat_loop import evaluate_heartbeat_safe
 from NEXUS.cycle_scheduler import evaluate_cycle_scheduler_safe
+from NEXUS.recovery_engine import evaluate_recovery_outcome_safe
 
 
 def route_project(state: StudioState):
@@ -550,6 +551,28 @@ def scheduler_evaluation_node(state: StudioState):
     )
     state.scheduler_result = result
     state.scheduler_status = result.get("scheduler_status")
+    return state
+
+
+def recovery_evaluation_node(state: StudioState):
+    """Evaluate recovery outcome from completion, resume, scheduler, governance, lifecycle; store result."""
+    result = evaluate_recovery_outcome_safe(
+        active_project=state.active_project,
+        run_id=state.run_id,
+        review_queue_entry=state.review_queue_entry,
+        completion_result=state.completion_result,
+        resume_result=state.resume_result,
+        heartbeat_result=state.heartbeat_result,
+        scheduler_result=state.scheduler_result,
+        governance_status=state.governance_status,
+        governance_result=state.governance_result,
+        project_lifecycle_status=state.project_lifecycle_status,
+        project_lifecycle_result=state.project_lifecycle_result,
+        enforcement_status=state.enforcement_status,
+        enforcement_result=state.enforcement_result,
+    )
+    state.recovery_result = result
+    state.recovery_status = result.get("recovery_status")
     return state
 
 
@@ -1202,6 +1225,9 @@ def save_persistent_project_state_node(state: StudioState):
             heartbeat_result=state.heartbeat_result,
             scheduler_status=state.scheduler_status,
             scheduler_result=state.scheduler_result,
+            completion_result=state.completion_result,
+            recovery_status=state.recovery_status,
+            recovery_result=state.recovery_result,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
@@ -1263,6 +1289,7 @@ def build_workflow():
     graph.add_node("resume_evaluation", resume_evaluation_node)
     graph.add_node("heartbeat_evaluation", heartbeat_evaluation_node)
     graph.add_node("scheduler_evaluation", scheduler_evaluation_node)
+    graph.add_node("recovery_evaluation", recovery_evaluation_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -1318,7 +1345,8 @@ def build_workflow():
     graph.add_edge("blocked_stop", "resume_evaluation")
     graph.add_edge("resume_evaluation", "heartbeat_evaluation")
     graph.add_edge("heartbeat_evaluation", "scheduler_evaluation")
-    graph.add_edge("scheduler_evaluation", "persistent_state_save")
+    graph.add_edge("scheduler_evaluation", "recovery_evaluation")
+    graph.add_edge("recovery_evaluation", "persistent_state_save")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")

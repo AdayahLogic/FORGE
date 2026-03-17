@@ -141,6 +141,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     next_cycle_permitted_count: int = 0
     scheduler_action_count: dict[str, int] = {}
     states_by_project: dict[str, dict[str, Any]] = {}
+    recovery_status_by_project: dict[str, str] = {}
+    recovery_status_count: dict[str, int] = {}
+    retry_ready_count: int = 0
+    repair_required_count: int = 0
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -220,6 +224,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             sched_action = sr.get("scheduler_action")
             if sched_action:
                 scheduler_action_count[str(sched_action)] = scheduler_action_count.get(str(sched_action), 0) + 1
+            rec = loaded.get("recovery_result") or {}
+            rec_status = loaded.get("recovery_status") or rec.get("recovery_status") or "none"
+            recovery_status_by_project[key] = str(rec_status)
+            recovery_status_count[rec_status] = recovery_status_count.get(rec_status, 0) + 1
+            if rec.get("retry_permitted"):
+                retry_ready_count += 1
+            if rec.get("repair_required"):
+                repair_required_count += 1
         except Exception:
             continue
 
@@ -288,4 +300,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "next_cycle_permitted_count": next_cycle_permitted_count,
         "scheduler_action_count": scheduler_action_count,
         "studio_coordination_summary": studio_coordination_summary,
+        "recovery_status_by_project": recovery_status_by_project,
+        "recovery_status_count": recovery_status_count,
+        "retry_ready_count": retry_ready_count,
+        "repair_required_count": repair_required_count,
     }

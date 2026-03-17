@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.registry import PROJECTS
-from NEXUS.project_state import load_project_state
+from NEXUS.project_state import load_project_state, update_project_state_fields
 from NEXUS.execution_ledger import get_ledger_path, read_ledger_tail
 from NEXUS.system_health import evaluate_system_health
 from NEXUS.agent_registry import get_runtime_routable_agents
@@ -44,6 +44,9 @@ SUPPORTED_COMMANDS = frozenset({
     "heartbeat_status",
     "scheduler_status",
     "studio_coordination",
+    "complete_review",
+    "complete_approval",
+    "recovery_status",
 })
 
 
@@ -630,6 +633,152 @@ def run_command(
             )
         except Exception as e:
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "complete_review":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.review_completion import build_completion_result_safe
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            completion_type = (kwargs.get("completion_type") or "manual_review").strip().lower()
+            result = build_completion_result_safe(
+                active_project=loaded.get("active_project"),
+                run_id=loaded.get("run_id"),
+                review_queue_entry=loaded.get("review_queue_entry"),
+                completion_type=completion_type,
+                completion_requested=True,
+                enforcement_result=loaded.get("enforcement_result"),
+                resume_result=loaded.get("resume_result"),
+            )
+            if result.get("completion_recorded"):
+                cleared_entry = {
+                    "queue_status": "not_queued",
+                    "queue_type": "none",
+                    "queue_reason": "Cleared after completion.",
+                    "resume_action": "none",
+                    "resume_condition": "none",
+                    "active_project": loaded.get("active_project") or "",
+                    "run_id": loaded.get("run_id") or "",
+                    "requires_human_action": False,
+                }
+                update_project_state_fields(path, completion_result=result, review_queue_entry=cleared_entry)
+            payload = {
+                "completion_status": result.get("completion_status"),
+                "completion_type": result.get("completion_type"),
+                "queue_cleared": result.get("queue_cleared"),
+                "resume_unlocked": result.get("resume_unlocked"),
+                "completion_recorded": result.get("completion_recorded"),
+            }
+            summary_line = f"completion_status={result.get('completion_status')}; queue_cleared={result.get('queue_cleared')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "complete_approval":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.review_completion import build_completion_result_safe
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            result = build_completion_result_safe(
+                active_project=loaded.get("active_project"),
+                run_id=loaded.get("run_id"),
+                review_queue_entry=loaded.get("review_queue_entry"),
+                completion_type="approval",
+                completion_requested=True,
+                enforcement_result=loaded.get("enforcement_result"),
+                resume_result=loaded.get("resume_result"),
+            )
+            if result.get("completion_recorded"):
+                cleared_entry = {
+                    "queue_status": "not_queued",
+                    "queue_type": "none",
+                    "queue_reason": "Cleared after approval.",
+                    "resume_action": "none",
+                    "resume_condition": "none",
+                    "active_project": loaded.get("active_project") or "",
+                    "run_id": loaded.get("run_id") or "",
+                    "requires_human_action": False,
+                }
+                update_project_state_fields(path, completion_result=result, review_queue_entry=cleared_entry)
+            payload = {
+                "completion_status": result.get("completion_status"),
+                "completion_type": result.get("completion_type"),
+                "queue_cleared": result.get("queue_cleared"),
+                "resume_unlocked": result.get("resume_unlocked"),
+                "completion_recorded": result.get("completion_recorded"),
+            }
+            summary_line = f"completion_status={result.get('completion_status')}; queue_cleared={result.get('queue_cleared')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "recovery_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            rec = loaded.get("recovery_result") or {}
+            payload = {
+                "recovery_status": loaded.get("recovery_status") or rec.get("recovery_status"),
+                "recovery_action": rec.get("recovery_action"),
+                "recovery_reason": rec.get("recovery_reason"),
+                "retry_permitted": rec.get("retry_permitted"),
+                "repair_required": rec.get("repair_required"),
+                "retry_count_exceeded": rec.get("retry_count_exceeded"),
+            }
+            summary_line = f"recovery_status={payload.get('recovery_status')}; retry_permitted={payload.get('retry_permitted')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "health":
         try:

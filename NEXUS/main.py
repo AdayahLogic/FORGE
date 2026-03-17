@@ -158,6 +158,7 @@ if __name__ == "__main__":
         task_type = None
         sensitivity = None
         review_context = None
+        completion_type = None
         while i < len(args):
             if args[i] == "--project" and i + 1 < len(args):
                 project_name = args[i + 1]
@@ -194,6 +195,10 @@ if __name__ == "__main__":
                 review_context = args[i + 1]
                 i += 2
                 continue
+            if args[i] == "--type" and i + 1 < len(args):
+                completion_type = args[i + 1]
+                i += 2
+                continue
             i += 1
         result = run_command(
             command=cmd,
@@ -205,6 +210,7 @@ if __name__ == "__main__":
             task_type=task_type,
             sensitivity=sensitivity,
             review_context=review_context,
+            completion_type=completion_type,
         )
         print(json.dumps(result, indent=2))
     else:
