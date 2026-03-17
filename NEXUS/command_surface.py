@@ -60,6 +60,8 @@ SUPPORTED_COMMANDS = frozenset({
     "runtime_route",
     "model_route",
     "deployment_preflight",
+    "operator_snapshot",
+    "project_onboard",
 })
 
 
@@ -1218,6 +1220,186 @@ def run_command(
             update_project_state_fields(path, deployment_preflight_result=result)
             summary_line = f"preflight={result.get('deployment_preflight_status')}; review_required={result.get('review_required')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "operator_snapshot":
+        # No project required; best-effort compact monitoring snapshot for UI.
+        try:
+            import json
+            from collections import deque
+            from pathlib import Path
+            from NEXUS.studio_config import LOGS_DIR, PROJECTS_DIR
+            from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+            from NEXUS.studio_driver import build_studio_driver_result_safe
+
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    loaded = load_project_state(p)
+                    if isinstance(loaded, dict) and "load_error" not in loaded:
+                        states_by_project[key] = loaded
+
+            studio_coordination_summary = build_studio_coordination_summary_safe(states_by_project)
+            studio_driver_summary = build_studio_driver_result_safe(
+                studio_coordination_summary=studio_coordination_summary,
+                states_by_project=states_by_project,
+            )
+
+            dashboard_summary = {}
+            try:
+                dashboard_summary = build_registry_dashboard_summary()
+            except Exception:
+                dashboard_summary = {}
+
+            log_path = Path(LOGS_DIR) / "forge_operations.jsonl"
+            log_exists = log_path.exists()
+            log_tail_records: list[dict[str, Any]] = []
+            tail_count = 0
+            if log_exists:
+                try:
+                    dq: deque[str] = deque(maxlen=int(kwargs.get("tail", 10) or 10))
+                    with log_path.open("r", encoding="utf-8") as f:
+                        for line in f:
+                            dq.append(line.rstrip("\n"))
+                    for line in list(dq):
+                        try:
+                            log_tail_records.append(json.loads(line))
+                        except Exception:
+                            log_tail_records.append({"_raw": line[:500]})
+                    tail_count = len(log_tail_records)
+                except Exception:
+                    log_tail_records = []
+                    tail_count = 0
+
+            # Compact project table for operator UI.
+            projects_table: list[dict[str, Any]] = []
+            for key in PROJECTS:
+                state = states_by_project.get(key) or {}
+                review_q = state.get("review_queue_entry") or {}
+                projects_table.append(
+                    {
+                        "project": key,
+                        "lifecycle_status": state.get("project_lifecycle_status")
+                        or (state.get("project_lifecycle_result") or {}).get("lifecycle_status"),
+                        "queue_status": review_q.get("queue_status"),
+                        "recovery_status": state.get("recovery_status")
+                        or (state.get("recovery_result") or {}).get("recovery_status"),
+                        "scheduler_status": state.get("scheduler_status") or (state.get("scheduler_result") or {}).get("scheduler_status"),
+                        "autonomy_status": state.get("autonomy_status"),
+                        "launch_status": state.get("launch_status")
+                        or (state.get("launch_result") or {}).get("launch_status"),
+                        "deployment_preflight_status": (state.get("deployment_preflight_result") or {}).get("deployment_preflight_status"),
+                        "priority_project": key == studio_coordination_summary.get("priority_project"),
+                    }
+                )
+
+            # Discover scaffolded-but-unregistered projects under projects/ (visibility only).
+            registered_folder_names_lower: set[str] = set()
+            for k in PROJECTS:
+                p = PROJECTS.get(k, {}).get("path")
+                if p:
+                    try:
+                        registered_folder_names_lower.add(Path(str(p)).name.strip().lower())
+                    except Exception:
+                        continue
+            expected_scaffold_dirs = ["docs", "memory", "tasks", "generated", "state", "src"]
+            scaffolded_unregistered_projects: list[dict[str, Any]] = []
+            projects_dir = Path(PROJECTS_DIR) if PROJECTS_DIR else None
+            if projects_dir and projects_dir.exists():
+                for entry in projects_dir.iterdir():
+                    try:
+                        if not entry.is_dir():
+                            continue
+                        entry_key = entry.name.strip().lower()
+                        if entry_key in registered_folder_names_lower:
+                            continue
+                        scaffold_dirs = {}
+                        missing = []
+                        for d in expected_scaffold_dirs:
+                            exists = (entry / d).exists()
+                            scaffold_dirs[d] = bool(exists)
+                            if not exists:
+                                missing.append(d)
+                        state_file = entry / "state" / "project_state.json"
+                        state_file_exists = bool(state_file.exists())
+
+                        state_row: dict[str, Any] = {}
+                        if state_file_exists:
+                            loaded_unreg = load_project_state(str(entry))
+                            if isinstance(loaded_unreg, dict) and "load_error" not in loaded_unreg:
+                                review_q = loaded_unreg.get("review_queue_entry") or {}
+                                state_row = {
+                                    "lifecycle_status": loaded_unreg.get("project_lifecycle_status")
+                                    or (loaded_unreg.get("project_lifecycle_result") or {}).get("lifecycle_status"),
+                                    "queue_status": review_q.get("queue_status"),
+                                    "recovery_status": loaded_unreg.get("recovery_status")
+                                    or (loaded_unreg.get("recovery_result") or {}).get("recovery_status"),
+                                    "scheduler_status": loaded_unreg.get("scheduler_status")
+                                    or (loaded_unreg.get("scheduler_result") or {}).get("scheduler_status"),
+                                    "autonomy_status": loaded_unreg.get("autonomy_status")
+                                    or (loaded_unreg.get("autonomy_result") or {}).get("autonomy_status"),
+                                    "launch_status": loaded_unreg.get("launch_status")
+                                    or (loaded_unreg.get("launch_result") or {}).get("launch_status"),
+                                    "deployment_preflight_status": (loaded_unreg.get("deployment_preflight_result") or {}).get("deployment_preflight_status"),
+                                }
+
+                        scaffolded_unregistered_projects.append(
+                            {
+                                "project": entry.name,
+                                "folder_path": str(entry),
+                                "registered": False,
+                                "state_file_exists": state_file_exists,
+                                "scaffold_dirs": scaffold_dirs,
+                                "scaffold_missing": missing,
+                                "state": state_row,
+                            }
+                        )
+                    except Exception:
+                        continue
+
+            payload = {
+                "studio_coordination_summary": studio_coordination_summary,
+                "studio_driver_summary": studio_driver_summary,
+                "dashboard_summary": dashboard_summary,
+                # Backward compatible: projects_table was the previous single list.
+                "projects_table": projects_table,
+                # New explicit split for operator discoverability.
+                "registered_projects": projects_table,
+                "scaffolded_unregistered_projects": scaffolded_unregistered_projects,
+                "log_tail_status": {
+                    "log_path": str(log_path),
+                    "exists": log_exists,
+                    "tail_count": tail_count,
+                },
+                "log_tail_records": log_tail_records,
+            }
+            return _result(command=cmd, status="ok", project_name=None, summary="Operator snapshot ready.", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "project_onboard":
+        # Requires project context (project_name). Creates project scaffold in projects/<name>.
+        if not proj_name:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.project_onboarding import create_project_scaffold_safe
+
+            result = create_project_scaffold_safe(project_name=proj_name)
+            return _result(
+                command=cmd,
+                status="ok" if result.get("onboarding_status") != "error_fallback" else "error",
+                project_name=proj_name,
+                summary=result.get("reason") or result.get("onboarding_status"),
+                payload=result,
+            )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 

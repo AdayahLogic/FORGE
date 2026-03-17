@@ -151,6 +151,7 @@ if __name__ == "__main__":
         cmd = args[0].strip().lower()
         project_name = None
         n = 20
+        tail = None
         i = 1
         agent_name = None
         tool_name = None
@@ -199,11 +200,19 @@ if __name__ == "__main__":
                 completion_type = args[i + 1]
                 i += 2
                 continue
+            if args[i] == "--tail" and i + 1 < len(args):
+                try:
+                    tail = int(args[i + 1])
+                except Exception:
+                    tail = None
+                i += 2
+                continue
             i += 1
         result = run_command(
             command=cmd,
             project_name=project_name,
             n=n,
+            tail=tail,
             agent_name=agent_name,
             tool_name=tool_name,
             action_type=action_type,
