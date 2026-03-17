@@ -1252,6 +1252,8 @@ def save_persistent_project_state_node(state: StudioState):
             recovery_result=state.recovery_result,
             reexecution_status=state.reexecution_status,
             reexecution_result=state.reexecution_result,
+            launch_status=state.launch_status,
+            launch_result=state.launch_result,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"

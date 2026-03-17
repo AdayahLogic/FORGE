@@ -49,6 +49,9 @@ SUPPORTED_COMMANDS = frozenset({
     "recovery_status",
     "reexecution_status",
     "studio_driver",
+    "launch_next_cycle",
+    "launch_studio_cycle",
+    "launch_status",
 })
 
 
@@ -845,6 +848,70 @@ def run_command(
             )
         except Exception as e:
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "launch_next_cycle":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.autonomous_launcher import launch_project_cycle
+            loaded = load_project_state(path)
+            project_key = next((k for k in PROJECTS if PROJECTS[k].get("path") == path), None) or (str(proj_name or loaded.get("active_project") or "jarvis").strip().lower())
+            if project_key not in PROJECTS:
+                project_key = "jarvis"
+            result = launch_project_cycle(project_path=path, project_name=project_key, project_state=loaded)
+            summary_line = f"launch_status={result.get('launch_status')}; execution_started={result.get('execution_started')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "launch_studio_cycle":
+        try:
+            from NEXUS.autonomous_launcher import launch_studio_cycle
+            result = launch_studio_cycle()
+            summary_line = f"launch_status={result.get('launch_status')}; target_project={result.get('target_project')}; execution_started={result.get('execution_started')}"
+            return _result(command=cmd, status="ok", project_name=result.get("target_project"), summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "launch_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            lr = loaded.get("launch_result") or {}
+            payload = {
+                "launch_status": loaded.get("launch_status") or lr.get("launch_status"),
+                "launch_action": lr.get("launch_action"),
+                "launch_reason": lr.get("launch_reason"),
+                "target_project": lr.get("target_project"),
+                "execution_started": lr.get("execution_started"),
+                "bounded_execution": lr.get("bounded_execution"),
+                "source": lr.get("source"),
+            }
+            summary_line = f"launch_status={payload.get('launch_status')}; execution_started={payload.get('execution_started')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "health":
         try:

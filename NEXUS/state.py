@@ -100,3 +100,6 @@ class StudioState(BaseModel):
     recovery_result: Dict[str, Any] = {}
     reexecution_status: Optional[str] = None
     reexecution_result: Dict[str, Any] = {}
+    launch_status: Optional[str] = None
+    launch_result: Dict[str, Any] = {}
+    autonomous_launch: bool = False

@@ -150,6 +150,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     reexecution_status_count: dict[str, int] = {}
     run_permitted_count: int = 0
     reexecution_action_count: dict[str, int] = {}
+    launch_status_by_project: dict[str, str] = {}
+    launch_status_count: dict[str, int] = {}
+    execution_started_count: int = 0
+    launch_action_count: dict[str, int] = {}
+    launch_source_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -246,6 +251,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             rex_action = rex.get("reexecution_action")
             if rex_action:
                 reexecution_action_count[str(rex_action)] = reexecution_action_count.get(str(rex_action), 0) + 1
+            lr = loaded.get("launch_result") or {}
+            launch_s = loaded.get("launch_status") or lr.get("launch_status") or "none"
+            launch_status_by_project[key] = str(launch_s)
+            launch_status_count[launch_s] = launch_status_count.get(launch_s, 0) + 1
+            if lr.get("execution_started"):
+                execution_started_count += 1
+            la_action = lr.get("launch_action")
+            if la_action:
+                launch_action_count[str(la_action)] = launch_action_count.get(str(la_action), 0) + 1
+            la_src = lr.get("source")
+            if la_src:
+                launch_source_count[str(la_src)] = launch_source_count.get(str(la_src), 0) + 1
         except Exception:
             continue
 
@@ -327,4 +344,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "run_permitted_count": run_permitted_count,
         "reexecution_action_count": reexecution_action_count,
         "studio_driver_summary": studio_driver_summary,
+        "launch_status_by_project": launch_status_by_project,
+        "launch_status_count": launch_status_count,
+        "execution_started_count": execution_started_count,
+        "launch_action_count": launch_action_count,
+        "launch_source_count": launch_source_count,
     }
