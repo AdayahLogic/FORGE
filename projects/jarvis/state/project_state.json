@@ -1,5 +1,5 @@
 {
-  "saved_at": "2026-03-17T08:59:26.842609",
+  "saved_at": "2026-03-17T09:19:46.738964",
   "active_project": "jarvis",
   "project_state_file": "projects\\jarvis\\state\\project_state.json",
   "notes": "Full automation report created at: C:\\AI_STUDIO\\projects\\jarvis\\generated\\full_automation_report.txt",
@@ -896,8 +896,14 @@
   "launch_result": {},
   "autonomy_status": null,
   "autonomy_result": {},
-  "guardrail_status": null,
-  "guardrail_result": {},
+  "guardrail_status": "passed",
+  "guardrail_result": {
+    "guardrail_status": "passed",
+    "guardrail_reason": "Guardrails passed.",
+    "launch_allowed": true,
+    "recursion_blocked": false,
+    "state_repair_recommended": false
+  },
   "last_run_summary": {
     "saved_at": "2026-03-17T08:59:26.842600",
     "active_project": "jarvis",
@@ -928,5 +934,26 @@
     "queue_cleared": false,
     "resume_unlocked": false,
     "completion_recorded": false
+  },
+  "runtime_router_result": {
+    "runtime_router_status": "routed",
+    "selected_runtime": "codex",
+    "fallback_runtime": "local",
+    "routing_reason": "Isolated generation/refactor drafting request (coder/generation).",
+    "requires_human_review": true
+  },
+  "model_router_result": {
+    "model_router_status": "fallback_selected",
+    "selected_provider": "openai",
+    "selected_model": "gpt-5.4",
+    "task_class": "fallback",
+    "routing_reason": "Fallback task class routed to default OpenAI model."
+  },
+  "deployment_preflight_result": {
+    "deployment_preflight_status": "review_required",
+    "deployment_action": "request_human_review",
+    "deployment_reason": "Preflight suggests artifacts exist; deployment remains review-required.",
+    "deployment_allowed": false,
+    "review_required": true
   }
 }
