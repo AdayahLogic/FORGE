@@ -113,6 +113,10 @@ def save_project_state(
     reexecution_result: dict | None = None,
     launch_status: str | None = None,
     launch_result: dict | None = None,
+    autonomy_status: str | None = None,
+    autonomy_result: dict | None = None,
+    guardrail_status: str | None = None,
+    guardrail_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -200,6 +204,10 @@ def save_project_state(
         "reexecution_result": reexecution_result or {},
         "launch_status": launch_status,
         "launch_result": launch_result or {},
+        "autonomy_status": autonomy_status,
+        "autonomy_result": autonomy_result or {},
+        "guardrail_status": guardrail_status,
+        "guardrail_result": guardrail_result or {},
     }
 
     payload = normalize_display_data(payload)

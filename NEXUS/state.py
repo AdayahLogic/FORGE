@@ -103,3 +103,7 @@ class StudioState(BaseModel):
     launch_status: Optional[str] = None
     launch_result: Dict[str, Any] = {}
     autonomous_launch: bool = False
+    autonomy_status: Optional[str] = None
+    autonomy_result: Dict[str, Any] = {}
+    guardrail_status: Optional[str] = None
+    guardrail_result: Dict[str, Any] = {}

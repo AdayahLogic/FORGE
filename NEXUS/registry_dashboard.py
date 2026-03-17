@@ -155,6 +155,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     execution_started_count: int = 0
     launch_action_count: dict[str, int] = {}
     launch_source_count: dict[str, int] = {}
+    autonomy_status_by_project: dict[str, str] = {}
+    autonomy_status_count: dict[str, int] = {}
+    autonomous_run_started_count: int = 0
+    guardrail_status_by_project: dict[str, str] = {}
+    guardrail_status_count: dict[str, int] = {}
+    recursion_blocked_count: int = 0
+    state_repair_recommended_count: int = 0
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -263,6 +270,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             la_src = lr.get("source")
             if la_src:
                 launch_source_count[str(la_src)] = launch_source_count.get(str(la_src), 0) + 1
+            ar = loaded.get("autonomy_result") or {}
+            a_status = loaded.get("autonomy_status") or ar.get("autonomy_status") or "none"
+            autonomy_status_by_project[key] = str(a_status)
+            autonomy_status_count[a_status] = autonomy_status_count.get(a_status, 0) + 1
+            if ar.get("autonomous_run_started"):
+                autonomous_run_started_count += 1
+            gr = loaded.get("guardrail_result") or {}
+            g_status = loaded.get("guardrail_status") or gr.get("guardrail_status") or "none"
+            guardrail_status_by_project[key] = str(g_status)
+            guardrail_status_count[g_status] = guardrail_status_count.get(g_status, 0) + 1
+            if gr.get("recursion_blocked"):
+                recursion_blocked_count += 1
+            if gr.get("state_repair_recommended"):
+                state_repair_recommended_count += 1
         except Exception:
             continue
 
@@ -349,4 +370,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "execution_started_count": execution_started_count,
         "launch_action_count": launch_action_count,
         "launch_source_count": launch_source_count,
+        "autonomy_status_by_project": autonomy_status_by_project,
+        "autonomy_status_count": autonomy_status_count,
+        "autonomous_run_started_count": autonomous_run_started_count,
+        "guardrail_status_by_project": guardrail_status_by_project,
+        "guardrail_status_count": guardrail_status_count,
+        "recursion_blocked_count": recursion_blocked_count,
+        "state_repair_recommended_count": state_repair_recommended_count,
     }

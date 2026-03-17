@@ -11,6 +11,9 @@ from typing import Any
 
 AUTONOMOUS_USER_INPUT_PREFIX = "Autonomous cycle (launch): "
 
+# No-recursion guard: block nested autonomous launch from inside an already-launched run.
+_in_autonomous_run: bool = False
+
 
 def build_launch_result(
     *,
@@ -117,22 +120,41 @@ def _invoke_workflow_once(project_name: str, project_path: str, source: str) -> 
     """
     Build workflow, create state for the project, invoke exactly once.
     Returns launch result with execution_started=True. No recursive launch.
+    Sets _in_autonomous_run for the duration so nested launch attempts are blocked.
     """
+    global _in_autonomous_run
     from NEXUS.workflow import build_workflow
     from NEXUS.state import StudioState
 
-    user_input = f"{AUTONOMOUS_USER_INPUT_PREFIX}{project_name}"
-    state = StudioState(user_input=user_input, active_project=project_name, project_path=project_path, autonomous_launch=True)
-    workflow = build_workflow()
-    workflow.invoke(state)
+    _in_autonomous_run = True
+    try:
+        user_input = f"{AUTONOMOUS_USER_INPUT_PREFIX}{project_name}"
+        state = StudioState(user_input=user_input, active_project=project_name, project_path=project_path, autonomous_launch=True)
+        workflow = build_workflow()
+        workflow.invoke(state)
+        return build_launch_result(
+            launch_status="launched",
+            launch_action="run_project_cycle",
+            launch_reason=f"One bounded run completed for {project_name}.",
+            target_project=project_name,
+            execution_started=True,
+            bounded_execution=True,
+            source=source,
+        )
+    finally:
+        _in_autonomous_run = False
+
+
+def _blocked_nested_launch_result() -> dict[str, Any]:
+    """Return standard result when nested autonomous launch is blocked."""
     return build_launch_result(
-        launch_status="launched",
-        launch_action="run_project_cycle",
-        launch_reason=f"One bounded run completed for {project_name}.",
-        target_project=project_name,
-        execution_started=True,
+        launch_status="blocked",
+        launch_action="stop",
+        launch_reason="Nested autonomous launch blocked by no-recursion guard.",
+        target_project=None,
+        execution_started=False,
         bounded_execution=True,
-        source=source,
+        source="manual",
     )
 
 
@@ -144,7 +166,11 @@ def launch_project_cycle(
     """
     If reexecution permits, run exactly one workflow cycle for the project.
     Otherwise return not_launched result. At most one run; no recursion.
+    Blocks if already inside an autonomous run.
     """
+    global _in_autonomous_run
+    if _in_autonomous_run:
+        return _blocked_nested_launch_result()
     from NEXUS.project_state import load_project_state, update_project_state_fields
 
     loaded = project_state if project_state is not None else load_project_state(project_path)
@@ -199,7 +225,11 @@ def launch_studio_cycle(
     """
     If studio driver permits, run exactly one workflow cycle for the target project.
     Otherwise return not_launched result. At most one run; no recursion.
+    Blocks if already inside an autonomous run.
     """
+    global _in_autonomous_run
+    if _in_autonomous_run:
+        return _blocked_nested_launch_result()
     from NEXUS.registry import PROJECTS
     from NEXUS.project_state import load_project_state, update_project_state_fields
     from NEXUS.studio_coordinator import build_studio_coordination_summary_safe

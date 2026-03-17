@@ -52,6 +52,10 @@ SUPPORTED_COMMANDS = frozenset({
     "launch_next_cycle",
     "launch_studio_cycle",
     "launch_status",
+    "autonomous_cycle",
+    "autonomous_studio_cycle",
+    "autonomy_status",
+    "guardrail_status",
 })
 
 
@@ -909,6 +913,101 @@ def run_command(
                 "source": lr.get("source"),
             }
             summary_line = f"launch_status={payload.get('launch_status')}; execution_started={payload.get('execution_started')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "autonomous_cycle":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.continuous_autonomy import run_project_autonomy
+            loaded = load_project_state(path)
+            project_key = next((k for k in PROJECTS if PROJECTS[k].get("path") == path), None) or (str(proj_name or loaded.get("active_project") or "jarvis").strip().lower())
+            if project_key not in PROJECTS:
+                project_key = "jarvis"
+            result = run_project_autonomy(project_path=path, project_name=project_key, project_state=loaded)
+            summary_line = f"autonomy_status={result.get('autonomy_status')}; autonomous_run_started={result.get('autonomous_run_started')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "autonomous_studio_cycle":
+        try:
+            from NEXUS.continuous_autonomy import run_studio_autonomy
+            result = run_studio_autonomy()
+            summary_line = f"autonomy_status={result.get('autonomy_status')}; target_project={result.get('target_project')}; autonomous_run_started={result.get('autonomous_run_started')}"
+            return _result(command=cmd, status="ok", project_name=result.get("target_project"), summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "autonomy_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            ar = loaded.get("autonomy_result") or {}
+            payload = {
+                "autonomy_status": loaded.get("autonomy_status") or ar.get("autonomy_status"),
+                "autonomy_action": ar.get("autonomy_action"),
+                "autonomy_reason": ar.get("autonomy_reason"),
+                "target_project": ar.get("target_project"),
+                "autonomous_run_started": ar.get("autonomous_run_started"),
+                "bounded_operation": ar.get("bounded_operation"),
+            }
+            summary_line = f"autonomy_status={payload.get('autonomy_status')}; autonomous_run_started={payload.get('autonomous_run_started')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "guardrail_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            gr = loaded.get("guardrail_result") or {}
+            payload = {
+                "guardrail_status": loaded.get("guardrail_status") or gr.get("guardrail_status"),
+                "guardrail_reason": gr.get("guardrail_reason"),
+                "launch_allowed": gr.get("launch_allowed"),
+                "recursion_blocked": gr.get("recursion_blocked"),
+                "state_repair_recommended": gr.get("state_repair_recommended"),
+            }
+            summary_line = f"guardrail_status={payload.get('guardrail_status')}; launch_allowed={payload.get('launch_allowed')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
