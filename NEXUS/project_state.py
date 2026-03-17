@@ -109,6 +109,8 @@ def save_project_state(
     completion_result: dict | None = None,
     recovery_status: str | None = None,
     recovery_result: dict | None = None,
+    reexecution_status: str | None = None,
+    reexecution_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -192,6 +194,8 @@ def save_project_state(
         "completion_result": completion_result or {},
         "recovery_status": recovery_status,
         "recovery_result": recovery_result or {},
+        "reexecution_status": reexecution_status,
+        "reexecution_result": reexecution_result or {},
     }
 
     payload = normalize_display_data(payload)

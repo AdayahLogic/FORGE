@@ -47,6 +47,8 @@ SUPPORTED_COMMANDS = frozenset({
     "complete_review",
     "complete_approval",
     "recovery_status",
+    "reexecution_status",
+    "studio_driver",
 })
 
 
@@ -666,11 +668,11 @@ def run_command(
             )
             if result.get("completion_recorded"):
                 cleared_entry = {
-                    "queue_status": "not_queued",
-                    "queue_type": "none",
+                    "queue_status": "cleared",
+                    "queue_type": None,
                     "queue_reason": "Cleared after completion.",
-                    "resume_action": "none",
-                    "resume_condition": "none",
+                    "resume_action": None,
+                    "resume_condition": None,
                     "active_project": loaded.get("active_project") or "",
                     "run_id": loaded.get("run_id") or "",
                     "requires_human_action": False,
@@ -719,11 +721,11 @@ def run_command(
             )
             if result.get("completion_recorded"):
                 cleared_entry = {
-                    "queue_status": "not_queued",
-                    "queue_type": "none",
+                    "queue_status": "cleared",
+                    "queue_type": None,
                     "queue_reason": "Cleared after approval.",
-                    "resume_action": "none",
-                    "resume_condition": "none",
+                    "resume_action": None,
+                    "resume_condition": None,
                     "active_project": loaded.get("active_project") or "",
                     "run_id": loaded.get("run_id") or "",
                     "requires_human_action": False,
@@ -779,6 +781,70 @@ def run_command(
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "reexecution_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary=loaded.get("load_error", "Failed to load state."),
+                    payload=loaded,
+                )
+            rex = loaded.get("reexecution_result") or {}
+            payload = {
+                "reexecution_status": loaded.get("reexecution_status") or rex.get("reexecution_status"),
+                "reexecution_action": rex.get("reexecution_action"),
+                "reexecution_reason": rex.get("reexecution_reason"),
+                "target_project": rex.get("target_project"),
+                "run_permitted": rex.get("run_permitted"),
+                "bounded_execution": rex.get("bounded_execution"),
+            }
+            summary_line = f"reexecution_status={payload.get('reexecution_status')}; run_permitted={payload.get('run_permitted')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=summary_line,
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "studio_driver":
+        try:
+            from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+            from NEXUS.studio_driver import build_studio_driver_result_safe
+            states_by_project = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    states_by_project[key] = load_project_state(p)
+            coord = build_studio_coordination_summary_safe(states_by_project)
+            driver = build_studio_driver_result_safe(
+                studio_coordination_summary=coord,
+                states_by_project=states_by_project,
+            )
+            summary_line = f"driver_status={driver.get('driver_status')}; target_project={driver.get('target_project')}"
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=None,
+                summary=summary_line,
+                payload=driver,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
 
     if cmd == "health":
         try:

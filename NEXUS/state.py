@@ -98,3 +98,5 @@ class StudioState(BaseModel):
     completion_result: Dict[str, Any] = {}
     recovery_status: Optional[str] = None
     recovery_result: Dict[str, Any] = {}
+    reexecution_status: Optional[str] = None
+    reexecution_result: Dict[str, Any] = {}

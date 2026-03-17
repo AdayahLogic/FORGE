@@ -24,6 +24,7 @@ from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import get_selection_defaults_summary
 from NEXUS.project_state import load_project_state
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+from NEXUS.studio_driver import build_studio_driver_result_safe
 
 
 STUDIO_NAME = "NEXUS"
@@ -145,6 +146,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     recovery_status_count: dict[str, int] = {}
     retry_ready_count: int = 0
     repair_required_count: int = 0
+    reexecution_status_by_project: dict[str, str] = {}
+    reexecution_status_count: dict[str, int] = {}
+    run_permitted_count: int = 0
+    reexecution_action_count: dict[str, int] = {}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -232,10 +237,23 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 retry_ready_count += 1
             if rec.get("repair_required"):
                 repair_required_count += 1
+            rex = loaded.get("reexecution_result") or {}
+            rex_status = loaded.get("reexecution_status") or rex.get("reexecution_status") or "none"
+            reexecution_status_by_project[key] = str(rex_status)
+            reexecution_status_count[rex_status] = reexecution_status_count.get(rex_status, 0) + 1
+            if rex.get("run_permitted"):
+                run_permitted_count += 1
+            rex_action = rex.get("reexecution_action")
+            if rex_action:
+                reexecution_action_count[str(rex_action)] = reexecution_action_count.get(str(rex_action), 0) + 1
         except Exception:
             continue
 
     studio_coordination_summary = build_studio_coordination_summary_safe(states_by_project)
+    studio_driver_summary = build_studio_driver_result_safe(
+        studio_coordination_summary=studio_coordination_summary,
+        states_by_project=states_by_project,
+    )
 
     dispatch_planning_summary: dict[str, Any] = {
         "dispatch_planning_status": "planned" if dispatch_by_project else "no_data",
@@ -304,4 +322,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "recovery_status_count": recovery_status_count,
         "retry_ready_count": retry_ready_count,
         "repair_required_count": repair_required_count,
+        "reexecution_status_by_project": reexecution_status_by_project,
+        "reexecution_status_count": reexecution_status_count,
+        "run_permitted_count": run_permitted_count,
+        "reexecution_action_count": reexecution_action_count,
+        "studio_driver_summary": studio_driver_summary,
     }
