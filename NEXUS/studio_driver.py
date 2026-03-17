@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.logging_engine import log_system_event
+
 StatesByProject = dict[str, dict[str, Any]]
 
 
@@ -33,6 +35,13 @@ def build_studio_driver_result(
     coordination_status = (coord.get("coordination_status") or "").strip().lower()
 
     if coordination_status == "waiting":
+        log_system_event(
+            project=None,
+            subsystem="studio_driver",
+            action="build_studio_driver_result",
+            status="waiting",
+            reason=coord.get("priority_reason") or "Coordination waiting.",
+        )
         return {
             "driver_status": "waiting",
             "driver_action": "defer",
@@ -42,6 +51,13 @@ def build_studio_driver_result(
         }
 
     if not priority_project:
+        log_system_event(
+            project=None,
+            subsystem="studio_driver",
+            action="build_studio_driver_result",
+            status="idle",
+            reason=coord.get("priority_reason") or "No priority project.",
+        )
         return {
             "driver_status": "idle",
             "driver_action": "idle",
@@ -55,6 +71,13 @@ def build_studio_driver_result(
     r_status = (state.get("resume_status") or (state.get("resume_result") or {}).get("resume_status") or "").strip().lower()
 
     if sched_status == "scheduled":
+        log_system_event(
+            project=priority_project,
+            subsystem="studio_driver",
+            action="select_priority_project",
+            status="ready",
+            reason=coord.get("priority_reason") or "Priority project scheduled.",
+        )
         return {
             "driver_status": "ready",
             "driver_action": "run_priority_project",
@@ -64,6 +87,13 @@ def build_studio_driver_result(
         }
 
     if r_status == "resumable":
+        log_system_event(
+            project=priority_project,
+            subsystem="studio_driver",
+            action="select_priority_project",
+            status="ready",
+            reason=coord.get("priority_reason") or "Priority project resumable.",
+        )
         return {
             "driver_status": "ready",
             "driver_action": "resume_priority_project",
@@ -72,6 +102,13 @@ def build_studio_driver_result(
             "execution_permitted": True,
         }
 
+    log_system_event(
+        project=priority_project,
+        subsystem="studio_driver",
+        action="select_priority_project",
+        status="idle",
+        reason=coord.get("priority_reason") or "Priority project not runnable.",
+    )
     return {
         "driver_status": "idle",
         "driver_action": "idle",

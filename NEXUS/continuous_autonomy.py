@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.logging_engine import log_system_event
+
 
 def build_autonomy_result(
     *,
@@ -120,6 +122,13 @@ def run_project_autonomy(
 
     loaded = project_state if project_state is not None else load_project_state(project_path)
     if loaded.get("load_error"):
+        log_system_event(
+            project=project_name,
+            subsystem="continuous_autonomy",
+            action="run_project_autonomy",
+            status="error",
+            reason=loaded.get("load_error", "Failed to load state."),
+        )
         result = build_autonomy_result_safe(
             autonomy_status="error_fallback",
             autonomy_reason=loaded.get("load_error", "Failed to load state."),
@@ -141,11 +150,13 @@ def run_project_autonomy(
     rec = loaded.get("recovery_result") or {}
     gr = evaluate_guardrails_safe(
         autonomous_launch=False,
+        project_state=loaded,
         review_queue_entry=qe,
         recovery_result=rec,
         reexecution_result=rex,
         target_project=project_name,
         states_by_project={project_name: loaded},
+        execution_attempted=True,
     )
     try:
         update_project_state_fields(
@@ -157,6 +168,13 @@ def run_project_autonomy(
         pass
 
     if not gr.get("launch_allowed"):
+        log_system_event(
+            project=project_name,
+            subsystem="continuous_autonomy",
+            action="guardrails_blocked",
+            status="blocked",
+            reason=gr.get("guardrail_reason") or "Guardrails did not allow launch.",
+        )
         result = build_autonomy_result_safe(
             guardrail_result=gr,
             target_project=project_name,
@@ -173,6 +191,13 @@ def run_project_autonomy(
         return result
 
     if not rex.get("run_permitted"):
+        log_system_event(
+            project=project_name,
+            subsystem="continuous_autonomy",
+            action="reexecution_not_permitted",
+            status="idle",
+            reason=rex.get("reexecution_reason") or "Reexecution not permitted.",
+        )
         result = build_autonomy_result_safe(
             reexecution_result=rex,
             guardrail_result=gr,
@@ -189,10 +214,24 @@ def run_project_autonomy(
         return result
 
     try:
+        log_system_event(
+            project=project_name,
+            subsystem="continuous_autonomy",
+            action="launch_project_cycle",
+            status="attempt",
+            reason="Launching one bounded project cycle.",
+        )
         launch_result = launch_project_cycle(
             project_path=project_path,
             project_name=project_name,
             project_state=loaded,
+        )
+        log_system_event(
+            project=project_name,
+            subsystem="continuous_autonomy",
+            action="launch_project_cycle",
+            status="ok" if launch_result.get("execution_started") else "idle",
+            reason=launch_result.get("launch_reason") or "",
         )
         result = build_autonomy_result(
             autonomy_status="ran" if launch_result.get("execution_started") else "idle",
@@ -212,6 +251,13 @@ def run_project_autonomy(
             pass
         return result
     except Exception as e:
+        log_system_event(
+            project=project_name,
+            subsystem="continuous_autonomy",
+            action="launch_project_cycle",
+            status="error",
+            reason=str(e),
+        )
         result = build_autonomy_result(
             autonomy_status="error_fallback",
             autonomy_action="stop",
@@ -262,12 +308,21 @@ def run_studio_autonomy(
     target = studio_driver_result.get("target_project")
     gr = evaluate_guardrails_safe(
         autonomous_launch=False,
+        project_state=(states_by_project or {}).get(target) if target else None,
         studio_driver_result=studio_driver_result,
         target_project=target,
         states_by_project=states_by_project,
+        execution_attempted=True,
     )
 
     if not gr.get("launch_allowed"):
+        log_system_event(
+            project=target,
+            subsystem="continuous_autonomy",
+            action="studio_guardrails_blocked",
+            status="blocked",
+            reason=gr.get("guardrail_reason") or "Guardrails did not allow studio launch.",
+        )
         result = build_autonomy_result_safe(
             guardrail_result=gr,
             studio_driver_result=studio_driver_result,
@@ -289,6 +344,13 @@ def run_studio_autonomy(
         return result
 
     if not studio_driver_result.get("execution_permitted") or not target:
+        log_system_event(
+            project=target,
+            subsystem="continuous_autonomy",
+            action="studio_driver_not_permitted",
+            status="idle",
+            reason=studio_driver_result.get("driver_reason") or "Studio driver did not permit.",
+        )
         result = build_autonomy_result_safe(
             studio_driver_result=studio_driver_result,
             guardrail_result=gr,
@@ -310,9 +372,23 @@ def run_studio_autonomy(
         return result
 
     try:
+        log_system_event(
+            project=target,
+            subsystem="continuous_autonomy",
+            action="launch_studio_cycle",
+            status="attempt",
+            reason="Launching one bounded studio cycle.",
+        )
         launch_result = launch_studio_cycle(
             states_by_project=states_by_project,
             studio_driver_result=studio_driver_result,
+        )
+        log_system_event(
+            project=target,
+            subsystem="continuous_autonomy",
+            action="launch_studio_cycle",
+            status="ok" if launch_result.get("execution_started") else "idle",
+            reason=launch_result.get("launch_reason") or "",
         )
         result = build_autonomy_result(
             autonomy_status="ran" if launch_result.get("execution_started") else "idle",
@@ -336,6 +412,13 @@ def run_studio_autonomy(
                 pass
         return result
     except Exception as e:
+        log_system_event(
+            project=target,
+            subsystem="continuous_autonomy",
+            action="launch_studio_cycle",
+            status="error",
+            reason=str(e),
+        )
         result = build_autonomy_result(
             autonomy_status="error_fallback",
             autonomy_action="stop",

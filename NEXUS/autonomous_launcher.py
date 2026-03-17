@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.logging_engine import log_system_event
+
 AUTONOMOUS_USER_INPUT_PREFIX = "Autonomous cycle (launch): "
 
 # No-recursion guard: block nested autonomous launch from inside an already-launched run.
@@ -170,7 +172,15 @@ def launch_project_cycle(
     """
     global _in_autonomous_run
     if _in_autonomous_run:
-        return _blocked_nested_launch_result()
+        result = _blocked_nested_launch_result()
+        log_system_event(
+            project=project_name,
+            subsystem="autonomous_launcher",
+            action="launch_project_cycle",
+            status="blocked",
+            reason=result.get("launch_reason") or "Nested launch blocked.",
+        )
+        return result
     from NEXUS.project_state import load_project_state, update_project_state_fields
 
     loaded = project_state if project_state is not None else load_project_state(project_path)
@@ -188,13 +198,34 @@ def launch_project_cycle(
             target_project=project_name,
             execution_started=False,
         )
+        log_system_event(
+            project=project_name,
+            subsystem="autonomous_launcher",
+            action="launch_project_cycle",
+            status="not_launched",
+            reason=result.get("launch_reason") or "Reexecution not permitted.",
+        )
         return result
     try:
+        log_system_event(
+            project=project_name,
+            subsystem="autonomous_launcher",
+            action="launch_project_cycle",
+            status="launched",
+            reason="Reexecution permitted; invoking workflow once.",
+        )
         result = _invoke_workflow_once(project_name, project_path, "reexecution")
         update_project_state_fields(
             project_path,
             launch_status=result.get("launch_status"),
             launch_result=result,
+        )
+        log_system_event(
+            project=project_name,
+            subsystem="autonomous_launcher",
+            action="launch_project_cycle",
+            status="ok" if result.get("execution_started") else "idle",
+            reason=result.get("launch_reason") or "",
         )
         return result
     except Exception as e:
@@ -206,6 +237,13 @@ def launch_project_cycle(
             execution_started=False,
             bounded_execution=True,
             source="reexecution",
+        )
+        log_system_event(
+            project=project_name,
+            subsystem="autonomous_launcher",
+            action="launch_project_cycle",
+            status="error",
+            reason=str(e),
         )
         try:
             update_project_state_fields(
@@ -229,7 +267,15 @@ def launch_studio_cycle(
     """
     global _in_autonomous_run
     if _in_autonomous_run:
-        return _blocked_nested_launch_result()
+        result = _blocked_nested_launch_result()
+        log_system_event(
+            project=None,
+            subsystem="autonomous_launcher",
+            action="launch_studio_cycle",
+            status="blocked",
+            reason=result.get("launch_reason") or "Nested launch blocked.",
+        )
+        return result
     from NEXUS.registry import PROJECTS
     from NEXUS.project_state import load_project_state, update_project_state_fields
     from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
@@ -248,26 +294,56 @@ def launch_studio_cycle(
             states_by_project=states_by_project,
         )
     if not studio_driver_result.get("execution_permitted") or not studio_driver_result.get("target_project"):
-        return build_launch_result_safe(
+        result = build_launch_result_safe(
             studio_driver_result=studio_driver_result,
             source="studio_driver",
             execution_started=False,
         )
+        log_system_event(
+            project=studio_driver_result.get("target_project"),
+            subsystem="autonomous_launcher",
+            action="launch_studio_cycle",
+            status="not_launched",
+            reason=result.get("launch_reason") or "Studio driver did not permit.",
+        )
+        return result
     target = studio_driver_result.get("target_project")
     path = (PROJECTS.get(target) or {}).get("path") if target else None
     if not path:
-        return build_launch_result_safe(
+        result = build_launch_result_safe(
             launch_status="error_fallback",
             launch_reason=f"No path for target project {target}.",
             source="studio_driver",
         )
+        log_system_event(
+            project=target,
+            subsystem="autonomous_launcher",
+            action="launch_studio_cycle",
+            status="error",
+            reason=result.get("launch_reason") or "No target path.",
+        )
+        return result
     try:
+        log_system_event(
+            project=target,
+            subsystem="autonomous_launcher",
+            action="launch_studio_cycle",
+            status="launched",
+            reason=studio_driver_result.get("driver_reason") or "Studio driver permitted; invoking workflow once.",
+        )
         result = _invoke_workflow_once(target, path, "studio_driver")
         result["launch_action"] = studio_driver_result.get("driver_action") or result.get("launch_action")
         update_project_state_fields(
             path,
             launch_status=result.get("launch_status"),
             launch_result=result,
+        )
+        log_system_event(
+            project=target,
+            subsystem="autonomous_launcher",
+            action="launch_studio_cycle",
+            status="ok" if result.get("execution_started") else "idle",
+            reason=result.get("launch_reason") or "",
         )
         return result
     except Exception as e:
@@ -279,6 +355,13 @@ def launch_studio_cycle(
             execution_started=False,
             bounded_execution=True,
             source="studio_driver",
+        )
+        log_system_event(
+            project=target,
+            subsystem="autonomous_launcher",
+            action="launch_studio_cycle",
+            status="error",
+            reason=str(e),
         )
         try:
             update_project_state_fields(path, launch_status=result.get("launch_status"), launch_result=result)

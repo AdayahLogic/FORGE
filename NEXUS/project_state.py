@@ -120,6 +120,42 @@ def save_project_state(
 ) -> str:
     state_file = get_project_state_file(project_path)
 
+    # Compact audit summaries (no history arrays; derived from existing results)
+    lr = (launch_result or {}) if isinstance(launch_result, dict) else {}
+    rr = (recovery_result or {}) if isinstance(recovery_result, dict) else {}
+    cr = (completion_result or {}) if isinstance(completion_result, dict) else {}
+    last_run_summary = {
+        "saved_at": datetime.now().isoformat(),
+        "active_project": active_project or "",
+        "run_id": run_id or "",
+        "runtime_execution_status": runtime_execution_status or (dispatch_result or {}).get("execution_status") if isinstance(dispatch_result, dict) else runtime_execution_status,
+        "dispatch_status": dispatch_status or "",
+    }
+    last_launch_summary = {
+        "launch_status": launch_status or lr.get("launch_status") or "none",
+        "launch_action": lr.get("launch_action") or "none",
+        "launch_reason": lr.get("launch_reason") or "",
+        "target_project": lr.get("target_project") or active_project or "",
+        "execution_started": bool(lr.get("execution_started")),
+        "bounded_execution": bool(lr.get("bounded_execution", True)),
+        "source": lr.get("source") or "none",
+    }
+    last_recovery_summary = {
+        "recovery_status": recovery_status or rr.get("recovery_status") or "none",
+        "recovery_action": rr.get("recovery_action") or "none",
+        "recovery_reason": rr.get("recovery_reason") or "",
+        "retry_permitted": bool(rr.get("retry_permitted")),
+        "repair_required": bool(rr.get("repair_required")),
+        "retry_count_exceeded": bool(rr.get("retry_count_exceeded")),
+    }
+    last_completion_summary = {
+        "completion_status": cr.get("completion_status") or "none",
+        "completion_type": cr.get("completion_type") or "none",
+        "queue_cleared": bool(cr.get("queue_cleared")),
+        "resume_unlocked": bool(cr.get("resume_unlocked")),
+        "completion_recorded": bool(cr.get("completion_recorded")),
+    }
+
     payload = {
         "saved_at": datetime.now().isoformat(),
         "active_project": active_project,
@@ -208,6 +244,10 @@ def save_project_state(
         "autonomy_result": autonomy_result or {},
         "guardrail_status": guardrail_status,
         "guardrail_result": guardrail_result or {},
+        "last_run_summary": last_run_summary,
+        "last_launch_summary": last_launch_summary,
+        "last_recovery_summary": last_recovery_summary,
+        "last_completion_summary": last_completion_summary,
     }
 
     payload = normalize_display_data(payload)

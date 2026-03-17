@@ -22,6 +22,7 @@ from NEXUS.registry_dashboard import build_registry_dashboard_summary
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import select_runtime_target
 
+from NEXUS.logging_engine import log_system_event
 
 SUPPORTED_COMMANDS = frozenset({
     "health",
@@ -118,6 +119,15 @@ def run_command(
         )
 
     path, proj_name = _resolve_project_path(project_path=project_path, project_name=project_name)
+
+    # High-value log: command invoked (once per invocation).
+    log_system_event(
+        project=proj_name,
+        subsystem="command_surface",
+        action=f"command:{cmd}",
+        status="received",
+        reason="Command invoked.",
+    )
 
     if cmd == "registry_status":
         try:
@@ -693,8 +703,22 @@ def run_command(
                 "completion_recorded": result.get("completion_recorded"),
             }
             summary_line = f"completion_status={result.get('completion_status')}; queue_cleared={result.get('queue_cleared')}"
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="complete_review",
+                status="ok",
+                reason=summary_line,
+            )
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
         except Exception as e:
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="complete_review",
+                status="error",
+                reason=str(e),
+            )
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "complete_approval":
@@ -746,8 +770,22 @@ def run_command(
                 "completion_recorded": result.get("completion_recorded"),
             }
             summary_line = f"completion_status={result.get('completion_status')}; queue_cleared={result.get('queue_cleared')}"
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="complete_approval",
+                status="ok",
+                reason=summary_line,
+            )
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
         except Exception as e:
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="complete_approval",
+                status="error",
+                reason=str(e),
+            )
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "recovery_status":
@@ -870,8 +908,22 @@ def run_command(
                 project_key = "jarvis"
             result = launch_project_cycle(project_path=path, project_name=project_key, project_state=loaded)
             summary_line = f"launch_status={result.get('launch_status')}; execution_started={result.get('execution_started')}"
+            log_system_event(
+                project=project_key,
+                subsystem="command_surface",
+                action="launch_next_cycle",
+                status=result.get("launch_status") or "ok",
+                reason=result.get("launch_reason") or summary_line,
+            )
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
         except Exception as e:
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="launch_next_cycle",
+                status="error",
+                reason=str(e),
+            )
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "launch_studio_cycle":
@@ -879,8 +931,22 @@ def run_command(
             from NEXUS.autonomous_launcher import launch_studio_cycle
             result = launch_studio_cycle()
             summary_line = f"launch_status={result.get('launch_status')}; target_project={result.get('target_project')}; execution_started={result.get('execution_started')}"
+            log_system_event(
+                project=result.get("target_project"),
+                subsystem="command_surface",
+                action="launch_studio_cycle",
+                status=result.get("launch_status") or "ok",
+                reason=result.get("launch_reason") or summary_line,
+            )
             return _result(command=cmd, status="ok", project_name=result.get("target_project"), summary=summary_line, payload=result)
         except Exception as e:
+            log_system_event(
+                project=None,
+                subsystem="command_surface",
+                action="launch_studio_cycle",
+                status="error",
+                reason=str(e),
+            )
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
 
     if cmd == "launch_status":
@@ -934,8 +1000,22 @@ def run_command(
                 project_key = "jarvis"
             result = run_project_autonomy(project_path=path, project_name=project_key, project_state=loaded)
             summary_line = f"autonomy_status={result.get('autonomy_status')}; autonomous_run_started={result.get('autonomous_run_started')}"
+            log_system_event(
+                project=project_key,
+                subsystem="command_surface",
+                action="autonomous_cycle",
+                status=result.get("autonomy_status") or "ok",
+                reason=result.get("autonomy_reason") or summary_line,
+            )
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
         except Exception as e:
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="autonomous_cycle",
+                status="error",
+                reason=str(e),
+            )
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "autonomous_studio_cycle":
@@ -943,8 +1023,22 @@ def run_command(
             from NEXUS.continuous_autonomy import run_studio_autonomy
             result = run_studio_autonomy()
             summary_line = f"autonomy_status={result.get('autonomy_status')}; target_project={result.get('target_project')}; autonomous_run_started={result.get('autonomous_run_started')}"
+            log_system_event(
+                project=result.get("target_project"),
+                subsystem="command_surface",
+                action="autonomous_studio_cycle",
+                status=result.get("autonomy_status") or "ok",
+                reason=result.get("autonomy_reason") or summary_line,
+            )
             return _result(command=cmd, status="ok", project_name=result.get("target_project"), summary=summary_line, payload=result)
         except Exception as e:
+            log_system_event(
+                project=None,
+                subsystem="command_surface",
+                action="autonomous_studio_cycle",
+                status="error",
+                reason=str(e),
+            )
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
 
     if cmd == "autonomy_status":

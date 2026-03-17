@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.logging_engine import log_system_event
+
 
 def evaluate_reexecution_outcome(
     *,
@@ -44,6 +46,13 @@ def evaluate_reexecution_outcome(
     queue_status = (qe.get("queue_status") or "").strip().lower()
 
     if r_status == "blocked":
+        log_system_event(
+            project=active_project,
+            subsystem="reexecution_engine",
+            action="evaluate_reexecution_outcome",
+            status="blocked",
+            reason="Recovery status blocked.",
+        )
         return {
             "reexecution_status": "blocked",
             "reexecution_action": "stop",
@@ -54,6 +63,13 @@ def evaluate_reexecution_outcome(
         }
 
     if queue_status == "queued" and r_status == "waiting":
+        log_system_event(
+            project=active_project,
+            subsystem="reexecution_engine",
+            action="evaluate_reexecution_outcome",
+            status="waiting",
+            reason="Work queued; recovery waiting.",
+        )
         return {
             "reexecution_status": "waiting",
             "reexecution_action": "defer",
@@ -65,6 +81,13 @@ def evaluate_reexecution_outcome(
 
     if sr.get("next_cycle_permitted") and rr.get("retry_permitted"):
         action = "resume_project" if rr.get("recovery_action") == "retry_project" else "run_project_cycle"
+        log_system_event(
+            project=active_project or sr.get("scheduled_project"),
+            subsystem="reexecution_engine",
+            action="evaluate_reexecution_outcome",
+            status="ready",
+            reason=sr.get("scheduler_reason") or rr.get("recovery_reason") or "Next cycle permitted.",
+        )
         return {
             "reexecution_status": "ready",
             "reexecution_action": action,
@@ -74,6 +97,13 @@ def evaluate_reexecution_outcome(
             "bounded_execution": True,
         }
 
+    log_system_event(
+        project=active_project,
+        subsystem="reexecution_engine",
+        action="evaluate_reexecution_outcome",
+        status="idle",
+        reason="Re-execution conditions not met.",
+    )
     return {
         "reexecution_status": "idle",
         "reexecution_action": "idle",
