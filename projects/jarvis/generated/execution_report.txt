@@ -1,14 +1,14 @@
 Execution Report
-Timestamp: 2026-03-17 19:04:03
+Timestamp: 2026-03-17 19:40:15
 Project: jarvis
 
 Command Results:
 - Command: python -c import os; print(os.getcwd())
   Return Code: 0
-  STDOUT: C:\AI_STUDIO
+  STDOUT: C:\FORGE
   STDERR: [empty]
 
-- Command: python -c import os; print(os.listdir(r'C:\AI_STUDIO\projects\jarvis'))
+- Command: python -c import os; print(os.listdir(r'C:\FORGE\projects\jarvis'))
   Return Code: 0
   STDOUT: ['docs', 'generated', 'memory', 'src', 'state', 'tasks']
   STDERR: [empty]
