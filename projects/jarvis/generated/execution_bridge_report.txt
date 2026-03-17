@@ -1,5 +1,5 @@
 Execution Bridge Report
-Timestamp: 2026-03-17 18:43:17
+Timestamp: 2026-03-17 19:04:03
 Project: jarvis
 
 Execution Target:
@@ -39,7 +39,7 @@ Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Primary pending task:
-Define a project-context loader that resolves the active workspace and reads only jarvis-scoped docs, memory, and task files.
+Create a project context loader that resolves only jarvis workspace documents and returns a structured memory object.
 
 Rules:
 - make narrow, minimal changes
@@ -70,7 +70,7 @@ Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Focus task:
-Define a project-context loader that resolves the active workspace and reads only jarvis-scoped docs, memory, and task files.
+Create a project context loader that resolves only jarvis workspace documents and returns a structured memory object.
 
 Requirements:
 - generate modular code only

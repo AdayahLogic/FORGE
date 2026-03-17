@@ -1,5 +1,5 @@
 AI Studio Documentation Update
-Timestamp: 2026-03-17 18:43:17
+Timestamp: 2026-03-17 19:04:03
 Project: jarvis
 
 Execution Summary:
@@ -14,14 +14,14 @@ Architect Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Remaining Tasks:
-- Create a planner input assembly step that combines user request with loaded project context and explicit isolation rules.
-- Add an OpenAI client adapter with configuration-based model selection, API-key loading, timeout handling, and clear error surfacing.
-- Implement planner response normalization so outputs always include objective, assumptions, implementation_steps, risks, next_agent, and patch_request.
-- Add routing logic that defaults implementation planning to coder for this request while keeping documentation and testing paths separate.
-- Add validation tests for workspace isolation, missing-memory fallback behavior, JSON shape enforcement, and null patch_request by default.
+- Add validation guards so project selection, memory reads, and downstream planning reject cross-project context leakage.
+- Implement a model client wrapper for OpenAI requests using configuration-based model selection and safe error handling.
+- Define a planner output schema with objective, assumptions, implementation_steps, risks, next_agent, and optional patch_request.
+- Wire the planning flow so loaded jarvis memory is summarized and sent to the model through the planner wrapper.
+- Add lightweight tests for project isolation, memory loading, schema conformance, and OpenAI failure fallback behavior.
 
 Completed Tasks:
-- Define a project-context loader that resolves the active workspace and reads only jarvis-scoped docs, memory, and task files.
+- Create a project context loader that resolves only jarvis workspace documents and returns a structured memory object.
 
 Documentation Notes:
 - This report was generated automatically by the AI Studio docs agent.
