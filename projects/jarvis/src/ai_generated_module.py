@@ -1,7 +1,7 @@
 """
 AI Generated Module
 Project: jarvis
-Generated: 2026-03-17 08:59:26
+Generated: 2026-03-17 18:43:17
 
 Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
@@ -32,19 +32,19 @@ def print_project_summary() -> None:
 
 
 # Task Snapshot
-# - Define a project-context loader that resolves only jarvis workspace documents and returns a normalized in-memory context object. [pending]
-# - Define an LLM provider interface and implement an OpenAI-backed adapter that accepts loaded project context and user intent as inputs. [pending]
-# - Define the planner pipeline order: detect project, load scoped memory, build prompt payload, call model, validate structured JSON output. [pending]
-# - Add schema validation for required planning fields and reject responses that omit objective, assumptions, implementation_steps, risks, or next_agent. [pending]
-# - Add isolation guards so memory paths, task queues, and prompt assembly cannot pull context from other projects unless explicitly requested. [pending]
-# - Prepare a narrow follow-up coding task to implement the context loader and planner schema first, with OpenAI wiring behind a feature flag or config gate. [pending]
+# - Define a project-context loader that resolves the active workspace and reads only jarvis-scoped docs, memory, and task files. [pending]
+# - Create a planner input assembly step that combines user request with loaded project context and explicit isolation rules. [pending]
+# - Add an OpenAI client adapter with configuration-based model selection, API-key loading, timeout handling, and clear error surfacing. [pending]
+# - Implement planner response normalization so outputs always include objective, assumptions, implementation_steps, risks, next_agent, and patch_request. [pending]
+# - Add routing logic that defaults implementation planning to coder for this request while keeping documentation and testing paths separate. [pending]
+# - Add validation tests for workspace isolation, missing-memory fallback behavior, JSON shape enforcement, and null patch_request by default. [pending]
 # --- Controlled Jarvis Update ---
-# Timestamp: 2026-03-17 08:59:26
+# Timestamp: 2026-03-17 18:43:18
 # Objective Snapshot: Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 def get_latest_jarvis_update() -> dict:
     return {
-        "updated_at": "2026-03-17 08:59:26",
+        "updated_at": "2026-03-17 18:43:18",
         "project": "Jarvis",
         "objective": "Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.",
         "status": "controlled_update_applied"

@@ -1,5 +1,5 @@
 AI Studio Documentation Update
-Timestamp: 2026-03-17 08:59:26
+Timestamp: 2026-03-17 18:43:17
 Project: jarvis
 
 Execution Summary:
@@ -14,14 +14,14 @@ Architect Objective:
 Define the next Jarvis implementation slice for the Universal AI Studio orchestration layer by adding project-scoped memory loading, OpenAI model integration, and structured task planning output while preserving strict workspace isolation.
 
 Remaining Tasks:
-- Define an LLM provider interface and implement an OpenAI-backed adapter that accepts loaded project context and user intent as inputs.
-- Define the planner pipeline order: detect project, load scoped memory, build prompt payload, call model, validate structured JSON output.
-- Add schema validation for required planning fields and reject responses that omit objective, assumptions, implementation_steps, risks, or next_agent.
-- Add isolation guards so memory paths, task queues, and prompt assembly cannot pull context from other projects unless explicitly requested.
-- Prepare a narrow follow-up coding task to implement the context loader and planner schema first, with OpenAI wiring behind a feature flag or config gate.
+- Create a planner input assembly step that combines user request with loaded project context and explicit isolation rules.
+- Add an OpenAI client adapter with configuration-based model selection, API-key loading, timeout handling, and clear error surfacing.
+- Implement planner response normalization so outputs always include objective, assumptions, implementation_steps, risks, next_agent, and patch_request.
+- Add routing logic that defaults implementation planning to coder for this request while keeping documentation and testing paths separate.
+- Add validation tests for workspace isolation, missing-memory fallback behavior, JSON shape enforcement, and null patch_request by default.
 
 Completed Tasks:
-- Define a project-context loader that resolves only jarvis workspace documents and returns a normalized in-memory context object.
+- Define a project-context loader that resolves the active workspace and reads only jarvis-scoped docs, memory, and task files.
 
 Documentation Notes:
 - This report was generated automatically by the AI Studio docs agent.

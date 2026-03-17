@@ -1,0 +1,33 @@
+{
+  "saved_at": "2026-03-17T18:21:30.247410",
+  "active_project": "unreg_test_proj_1",
+  "notes": "",
+  "task_queue": [],
+  "task_queue_snapshot": [],
+  "review_queue_entry": {},
+  "recovery_status": "none",
+  "recovery_result": {},
+  "scheduler_status": "none",
+  "scheduler_result": {},
+  "reexecution_status": "none",
+  "reexecution_result": {},
+  "launch_status": "none",
+  "launch_result": {},
+  "autonomy_status": "none",
+  "autonomy_result": {},
+  "guardrail_status": "passed",
+  "guardrail_result": {
+    "guardrail_status": "passed",
+    "guardrail_reason": "Guardrails passed.",
+    "launch_allowed": true,
+    "recursion_blocked": false,
+    "state_repair_recommended": false
+  },
+  "runtime_router_result": {},
+  "model_router_result": {},
+  "deployment_preflight_result": {},
+  "last_run_summary": {},
+  "last_launch_summary": {},
+  "last_recovery_summary": {},
+  "last_completion_summary": {}
+}
