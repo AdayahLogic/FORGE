@@ -481,6 +481,21 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             project_name=(portfolio_summary.get("priority_project") or "jarvis") if isinstance(portfolio_summary, dict) else "jarvis",
             live_regression=False,
         )
+        # Phase 11: compact HELIOS proposal visibility.
+        try:
+            cp = helios_summary.get("change_proposal") if isinstance(helios_summary, dict) else {}
+            helios_proposal_summary = {
+                "proposal_id": (cp or {}).get("proposal_id"),
+                "target_area": (cp or {}).get("target_area"),
+                "change_type": (cp or {}).get("change_type"),
+                "scope_level": (cp or {}).get("scope_level"),
+                "risk_level": (cp or {}).get("risk_level"),
+                "requires_review": bool((cp or {}).get("requires_review", True)),
+                "requires_regression_check": bool((cp or {}).get("requires_regression_check", True)),
+                "recommended_path": (cp or {}).get("recommended_path"),
+            }
+        except Exception:
+            helios_proposal_summary = {"proposal_id": None}
         veritas_summary = build_veritas_summary_safe(
             states_by_project=states_by_project,
             studio_coordination_summary=studio_coordination_summary,
@@ -550,6 +565,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "improvement_reason": "HELIOS summary failed.",
             "execution_gated": True,
         }
+        helios_proposal_summary = {"proposal_id": None, "target_area": None}
         veritas_summary = {
             "veritas_status": "error_fallback",
             "truth_reason": "VERITAS summary failed.",
@@ -666,6 +682,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "helios_summary": helios_summary,
         "veritas_summary": veritas_summary,
         "sentinel_summary": sentinel_summary,
+        "helios_proposal_summary": helios_proposal_summary,
         # Phase 10 visibility.
         "genesis_summary": genesis_summary,
         # PRISM v1 dashboard visibility (read-only persisted outputs).

@@ -92,10 +92,31 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("self_improvement_backlog, improve_system")
     print("change_gate, regression_check")
     print("genesis_generate, genesis_refine, genesis_rank")
+    print("helios_status, helios_proposal")
 
     print("\n=== Elite Layers ===")
     print("titan_status, leviathan_status, helios_status")
     print("veritas_status, sentinel_status, elite_systems_snapshot")
+
+    print("\n=== HELIOS ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        helios = _run_command("helios_status").get("payload") or {}
+        proposal = helios.get("change_proposal") or {}
+        selected = helios.get("selected_improvement") or {}
+
+        print("Status:", helios.get("helios_status"))
+        print("Selected improvement:", selected.get("item_id") or "(none)")
+        print("Improvement category:", helios.get("improvement_category"))
+        print("Proposal target area:", proposal.get("target_area"))
+        print("Scope level:", proposal.get("scope_level"))
+        print("Risk level:", proposal.get("risk_level"))
+        print("Requires review:", proposal.get("requires_review"))
+        print("Blocked by:", "; ".join([str(x) for x in (proposal.get("blocked_by") or [])][:8]) if proposal.get("blocked_by") else "(none)")
+        print("Recommended path:", proposal.get("recommended_path"))
+    except Exception:
+        print("(HELIOS unavailable)")
 
     print("\n=== VERITAS ===")
     try:
@@ -230,6 +251,7 @@ def _run_streamlit(st: Any) -> None:
         "- TITAN: `titan_status`\n"
         "- LEVIATHAN: `leviathan_status`\n"
         "- HELIOS: `helios_status`\n"
+        "- HELIOS Proposal: `helios_proposal`\n"
         "- VERITAS: `veritas_status`\n"
         "- SENTINEL: `sentinel_status`\n"
         "- Snapshot: `elite_systems_snapshot`"
@@ -284,6 +306,7 @@ def _run_streamlit(st: Any) -> None:
             "titan_status",
             "leviathan_status",
             "helios_status",
+            "helios_proposal",
             "veritas_status",
             "sentinel_status",
             "elite_systems_snapshot",

@@ -68,6 +68,7 @@ SUPPORTED_COMMANDS = frozenset({
     "titan_status",
     "leviathan_status",
     "helios_status",
+    "helios_proposal",
     "veritas_status",
     "sentinel_status",
     "elite_systems_snapshot",
@@ -1697,8 +1698,40 @@ def run_command(
                 live_regression=True,
             )
 
-            summary_line = f"helios_status={payload.get('helios_status')}; execution_gated={payload.get('execution_gated')}"
+            cp = payload.get("change_proposal") or {}
+            summary_line = (
+                f"helios_status={payload.get('helios_status')}; execution_gated={payload.get('execution_gated')}; "
+                f"proposal_recommended_path={cp.get('recommended_path')}; risk={cp.get('risk_level')}; "
+                f"target_area={cp.get('target_area')}"
+            )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "helios_proposal":
+        # Focused proposal packet only (no execution).
+        try:
+            from elite_layers.helios import build_helios_summary_safe
+
+            dashboard_summary = build_registry_dashboard_summary()
+            studio_coordination_summary = dashboard_summary.get("studio_coordination_summary") or {}
+            studio_driver_summary = dashboard_summary.get("studio_driver_summary") or {}
+            project_name = (
+                studio_coordination_summary.get("priority_project") or "jarvis"
+                if isinstance(studio_coordination_summary, dict)
+                else "jarvis"
+            )
+
+            helios_res = build_helios_summary_safe(
+                dashboard_summary=dashboard_summary,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                project_name=str(project_name),
+                live_regression=True,
+            )
+            proposal = helios_res.get("change_proposal") or {}
+            cp_summary_line = f"proposal_id={proposal.get('proposal_id')}; recommended_path={proposal.get('recommended_path')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=cp_summary_line, payload=proposal)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 
