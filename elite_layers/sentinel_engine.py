@@ -6,6 +6,16 @@ from NEXUS.production_guardrails import evaluate_guardrails_safe
 
 
 def _extract_pragmatic_aegis_decision(project_state: dict[str, Any]) -> dict[str, Any] | None:
+    last_aegis = project_state.get("last_aegis_decision")
+    if isinstance(last_aegis, dict):
+        aegis_decision = str(last_aegis.get("aegis_decision") or "").strip().lower()
+        if aegis_decision in ("allow", "deny", "approval_required", "error_fallback"):
+            return {
+                "aegis_decision": aegis_decision,
+                "aegis_reason": str(last_aegis.get("aegis_reason") or "").strip(),
+            }
+
+    # Legacy fallback: best-effort parsing from dispatch_result.
     dispatch_result = project_state.get("dispatch_result")
     if not isinstance(dispatch_result, dict):
         return None
@@ -115,7 +125,7 @@ def build_sentinel_engine_safe(
         aegis_decision = aegis_res.get("aegis_decision") or None
 
         # AEGIS denial is an immediate high-risk gate in this MVP.
-        aegis_high = aegis_decision == "deny"
+        aegis_high = aegis_decision in ("deny", "error_fallback")
         aegis_approval_required = aegis_decision == "approval_required"
 
         high_risk_detected = bool(
@@ -159,8 +169,10 @@ def build_sentinel_engine_safe(
 
         # Active warnings list (small and stable).
         active_warnings: list[str] = []
-        if aegis_high:
+        if aegis_decision == "deny":
             active_warnings.append("AEGIS deny: execution routed to stop/block.")
+        elif aegis_decision == "error_fallback":
+            active_warnings.append("AEGIS error_fallback: conservative gating applied.")
         elif aegis_approval_required:
             active_warnings.append("AEGIS approval_required: routing marker indicates human review.")
         if not launch_allowed or guard_status == "blocked":

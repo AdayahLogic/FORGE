@@ -1258,6 +1258,9 @@ def save_persistent_project_state_node(state: StudioState):
             autonomy_result=state.autonomy_result,
             guardrail_status=state.guardrail_status,
             guardrail_result=state.guardrail_result,
+            last_aegis_decision=(state.dispatch_result or {}).get("aegis")
+            if isinstance(state.dispatch_result, dict)
+            else {},
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"

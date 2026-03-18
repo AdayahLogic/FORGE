@@ -60,6 +60,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         }
 
     # AEGIS MVP (Phase 7): policy enforcement gate before any adapter call.
+    aegis_res: dict[str, Any] | None = None
     try:
         from AEGIS.aegis_core import evaluate_action_safe
 
@@ -79,7 +80,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         aegis_reason = str(aegis_res.get("aegis_reason") or "")
         aegis_scope = str(aegis_res.get("aegis_scope") or "runtime_dispatch_only").strip().lower()
 
-        if aegis_decision == "deny":
+        if aegis_decision in ("deny", "error_fallback"):
             blocked = build_runtime_execution_result(
                 runtime=runtime_target_id,
                 status="blocked",
@@ -90,6 +91,8 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 artifacts=[],
                 errors=[{"reason": f"{aegis_scope}: {aegis_reason or 'aegis_deny'}"}],
             )
+            if isinstance(blocked, dict):
+                blocked["aegis"] = aegis_res
             return {
                 "dispatch_status": "blocked",
                 "runtime_target": runtime_target_id,
@@ -107,6 +110,8 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 artifacts=[],
                 errors=[{"reason": f"{aegis_scope}: {aegis_reason or 'aegis_approval_required'}"}],
             )
+            if isinstance(queued, dict):
+                queued["aegis"] = aegis_res
             return {
                 "dispatch_status": "skipped",
                 "runtime_target": runtime_target_id,
@@ -124,6 +129,9 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 message="Adapter returned non-dict result.",
                 error=str(type(dispatch_result)),
             )
+        # Attach AEGIS outcome for persistence/consumption by downstream engines.
+        if isinstance(dispatch_result, dict) and isinstance(aegis_res, dict):
+            dispatch_result["aegis"] = aegis_res
         return {
             "dispatch_status": "accepted",
             "runtime_target": runtime_target_id,
@@ -135,6 +143,8 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             message="Dispatch adapter error.",
             error=str(e),
         )
+        if isinstance(err, dict) and isinstance(aegis_res, dict):
+            err["aegis"] = aegis_res
         return {
             "dispatch_status": "error",
             "runtime_target": runtime_target_id,

@@ -71,6 +71,10 @@ SUPPORTED_COMMANDS = frozenset({
     "veritas_status",
     "sentinel_status",
     "elite_systems_snapshot",
+    # GENESIS (Phase 10): idea generation/ranking evaluation-only.
+    "genesis_generate",
+    "genesis_refine",
+    "genesis_rank",
     "prism_evaluate",
     "prism_status",
     "project_onboard",
@@ -1846,6 +1850,100 @@ def run_command(
             scores = prism_result.get("scores") or {}
             summary_line = f"recommendation={recommendation}; success_estimate={(scores or {}).get('success_estimate')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=prism_result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in {"genesis_generate", "genesis_refine", "genesis_rank"}:
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+
+        try:
+            from elite_layers.genesis_engine import build_genesis_engine_safe
+
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+
+            project_name_for_genesis = str(loaded.get("active_project") or proj_name or "")
+            if not project_name_for_genesis:
+                project_name_for_genesis = proj_name or "project"
+
+            n_ideas = int(kwargs.get("n_ideas") or kwargs.get("n") or 4)
+            if n_ideas < 1:
+                n_ideas = 4
+
+            if cmd == "genesis_generate":
+                result = build_genesis_engine_safe(
+                    genesis_mode="generate",
+                    project_state=loaded,
+                    project_name=project_name_for_genesis,
+                    n_ideas=n_ideas,
+                )
+                summary_line = f"genesis_status={result.get('genesis_status')}; ideas={len(result.get('ideas') or [])}"
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+
+            if cmd == "genesis_refine":
+                idea_in: dict[str, Any] = {}
+                if isinstance(kwargs.get("idea"), dict):
+                    idea_in = kwargs.get("idea")  # type: ignore[assignment]
+                else:
+                    idea_json = kwargs.get("idea_json") or kwargs.get("idea")
+                    if isinstance(idea_json, str) and idea_json.strip():
+                        import json
+
+                        idea_in = json.loads(idea_json)
+                    elif idea_json is not None and not idea_in:
+                        # Best-effort: ignore malformed inputs.
+                        idea_in = {}
+
+                if not isinstance(idea_in, dict) or not idea_in:
+                    # Conservative fallback: refine from freshly generated candidate #1.
+                    gen = build_genesis_engine_safe(
+                        genesis_mode="generate",
+                        project_state=loaded,
+                        project_name=project_name_for_genesis,
+                        n_ideas=1,
+                    )
+                    ideas = gen.get("ideas") or []
+                    idea_in = ideas[0] if ideas else {}
+
+                result = build_genesis_engine_safe(
+                    genesis_mode="refine",
+                    project_state=loaded,
+                    project_name=project_name_for_genesis,
+                    idea=idea_in,
+                )
+                summary_line = f"genesis_status={result.get('genesis_status')}; refined_ideas={len(result.get('ideas') or [])}"
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+
+            if cmd == "genesis_rank":
+                ideas_in = kwargs.get("ideas")
+                if isinstance(ideas_in, str) and ideas_in.strip():
+                    import json
+
+                    ideas_in = json.loads(ideas_in)
+                if not isinstance(ideas_in, list):
+                    ideas_in = []
+
+                result = build_genesis_engine_safe(
+                    genesis_mode="rank",
+                    project_state=loaded,
+                    project_name=project_name_for_genesis,
+                    n_ideas=n_ideas,
+                    ideas=ideas_in,
+                )
+                ranking = result.get("ranking") or []
+                top_score = ranking[0].get("total_score") if ranking and isinstance(ranking[0], dict) else None
+                summary_line = f"genesis_status={result.get('genesis_status')}; top_total_score={top_score}"
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+
+            return _result(command=cmd, status="error", project_name=proj_name, summary="Unknown GENESIS mode.", payload={})
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 

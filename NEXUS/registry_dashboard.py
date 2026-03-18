@@ -492,6 +492,26 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             studio_coordination_summary=studio_coordination_summary,
             meta_engine_summary=meta_engine_summary,
         )
+
+        # GENESIS (Phase 10): lightweight dashboard visibility.
+        # Do not run GENESIS here; just expose the latest persisted signals.
+        try:
+            priority_project = (studio_coordination_summary.get("priority_project") or "").strip()
+            priority_state = states_by_project.get(priority_project) if priority_project else {}
+            prism_rec = (priority_state.get("prism_result") or {}) if isinstance(priority_state, dict) else {}
+            last_aegis = (priority_state.get("last_aegis_decision") or {}) if isinstance(priority_state, dict) else {}
+
+            genesis_summary = {
+                "genesis_status": "idle",
+                "signals": {
+                    "prism_recommendation": prism_rec.get("recommendation"),
+                    "aegis_decision": last_aegis.get("aegis_decision"),
+                    "veritas_status": veritas_summary.get("veritas_status") if isinstance(veritas_summary, dict) else None,
+                    "sentinel_status": sentinel_summary.get("sentinel_status") if isinstance(sentinel_summary, dict) else None,
+                },
+            }
+        except Exception:
+            genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
     except Exception:
         portfolio_summary = {
             "portfolio_status": "error_fallback",
@@ -560,6 +580,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "deployment_preflight": None,
             },
         }
+
+        genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
 
     return {
         "summary_generated_at": now,
@@ -644,6 +666,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "helios_summary": helios_summary,
         "veritas_summary": veritas_summary,
         "sentinel_summary": sentinel_summary,
+        # Phase 10 visibility.
+        "genesis_summary": genesis_summary,
         # PRISM v1 dashboard visibility (read-only persisted outputs).
         "prism_status_by_project": prism_status_by_project,
         "prism_recommendation_count": prism_recommendation_count,

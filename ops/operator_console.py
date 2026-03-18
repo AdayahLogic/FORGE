@@ -36,6 +36,7 @@ def _try_get_streamlit():
 def _text_console(snapshot: dict[str, Any]) -> None:
     studio_coord = snapshot.get("studio_coordination_summary") or {}
     driver = snapshot.get("studio_driver_summary") or {}
+    priority_project = studio_coord.get("priority_project") or driver.get("target_project") or "jarvis"
     registered_projects = snapshot.get("registered_projects") or snapshot.get("projects_table") or []
     scaffolded_unregistered_projects = snapshot.get("scaffolded_unregistered_projects") or []
     log_tail = snapshot.get("log_tail_records") or []
@@ -69,8 +70,6 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("\n=== PRISM v1 ===")
     try:
         from NEXUS.command_surface import run_command as _run_command
-
-        priority_project = studio_coord.get("priority_project") or driver.get("target_project") or "jarvis"
         prism = _run_command("prism_status", project_name=str(priority_project))
         payload = prism.get("payload") or {}
         scores = payload.get("scores") or {}
@@ -92,6 +91,7 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("project_onboard")
     print("self_improvement_backlog, improve_system")
     print("change_gate, regression_check")
+    print("genesis_generate, genesis_refine, genesis_rank")
 
     print("\n=== Elite Layers ===")
     print("titan_status, leviathan_status, helios_status")
@@ -136,6 +136,26 @@ def _text_console(snapshot: dict[str, Any]) -> None:
             print("Active warnings: (none)")
     except Exception:
         print("(SENTINEL unavailable)")
+
+    print("\n=== GENESIS ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        genesis = _run_command("genesis_rank", project_name=str(priority_project)).get("payload") or {}
+        print("Status:", genesis.get("genesis_status"))
+        ranking = genesis.get("ranking") or []
+        if ranking:
+            shown = ranking[:5]
+            for r in shown:
+                if isinstance(r, dict):
+                    print(
+                        f"- {r.get('idea_id')}: score={r.get('total_score')}; "
+                        f"prism={r.get('prism_recommendation')}"
+                    )
+        else:
+            print("Ranking: (none)")
+    except Exception:
+        print("(GENESIS unavailable)")
 
     print("\n=== PRISM Actions ===")
     print("prism_evaluate, prism_status")
@@ -242,6 +262,12 @@ def _run_streamlit(st: Any) -> None:
         "- Evaluate: `prism_evaluate`\n"
         "- Status: `prism_status`"
     )
+    st.sidebar.markdown(
+        "### GENESIS (Phase 10)\n"
+        "- Generate: `genesis_generate`\n"
+        "- Refine: `genesis_refine`\n"
+        "- Rank: `genesis_rank`"
+    )
 
     action = st.sidebar.selectbox(
         "Action",
@@ -264,6 +290,10 @@ def _run_streamlit(st: Any) -> None:
             # PRISM v1 (Phase 7)
             "prism_evaluate",
             "prism_status",
+            # GENESIS (Phase 10)
+            "genesis_generate",
+            "genesis_refine",
+            "genesis_rank",
             "runtime_route",
             "model_route",
             "deployment_preflight",

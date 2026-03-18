@@ -22,11 +22,20 @@ def _extract_prism_recommendation(project_state: dict[str, Any]) -> dict[str, An
 
 def _extract_aegis_decision(project_state: dict[str, Any]) -> dict[str, Any] | None:
     """
-    Best-effort derivation of AEGIS decision/result from persisted execution outputs.
-
-    We don't persist aegis_decision directly; runtime_dispatcher stores the outcome
-    inside dispatch_result + next_action/hints.
+    Primary AEGIS signal is persisted as `project_state["last_aegis_decision"]`
+    (standardized decision object). We keep a minimal legacy fallback for older
+    states that may not have this field yet.
     """
+    last_aegis = project_state.get("last_aegis_decision")
+    if isinstance(last_aegis, dict):
+        aegis_decision = str(last_aegis.get("aegis_decision") or "").strip().lower()
+        if aegis_decision in ("allow", "deny", "approval_required", "error_fallback"):
+            return {
+                "aegis_decision": aegis_decision,
+                "aegis_reason": str(last_aegis.get("aegis_reason") or "").strip(),
+            }
+
+    # Legacy fallback: best-effort parsing from dispatch_result fields/message.
     dispatch_result = project_state.get("dispatch_result")
     if not isinstance(dispatch_result, dict):
         return None
@@ -36,12 +45,12 @@ def _extract_aegis_decision(project_state: dict[str, Any]) -> dict[str, Any] | N
     next_action = str(dispatch_result.get("next_action") or "").strip().lower()
     msg = str(dispatch_result.get("message") or "").strip().lower()
 
-    if status == "blocked" or "aegis deny" in msg:
-        return {"aegis_decision": "deny", "aegis_reason": dispatch_result.get("message") or ""}
-
     # For approval_required, runtime_dispatcher uses status="skipped" + execution_status="queued".
     if execution_status == "queued" or next_action == "human_review" or "approval required" in msg:
         return {"aegis_decision": "approval_required", "aegis_reason": dispatch_result.get("message") or ""}
+
+    if status == "blocked" or "aegis deny" in msg:
+        return {"aegis_decision": "deny", "aegis_reason": dispatch_result.get("message") or ""}
 
     if status in ("accepted", "ok", "allowed") or msg == "":
         return {"aegis_decision": "allow", "aegis_reason": dispatch_result.get("message") or ""}
@@ -134,7 +143,7 @@ def build_veritas_engine_safe(
         assumption_review_required = bool(
             validation_status in ("blocked", "warning", "error_fallback")
             or guard_status in ("blocked", "warning", "error_fallback")
-            or aegis_decision in ("approval_required", "deny")
+            or aegis_decision in ("approval_required", "deny", "error_fallback")
             or prism_status in ("insufficient_input", "error_fallback", "unknown")
         )
 
@@ -142,7 +151,7 @@ def build_veritas_engine_safe(
         any_error_fallback = validation_status == "error_fallback" or guard_status == "error_fallback"
         if any_error_fallback:
             veritas_status = "error_fallback"
-        elif validation_status == "blocked" or guard_status == "blocked" or aegis_decision == "deny" or contradictions_detected:
+        elif validation_status == "blocked" or guard_status == "blocked" or aegis_decision in ("deny", "error_fallback") or contradictions_detected:
             # "deny" and hard contradictions are treated as review_required.
             veritas_status = "review_required"
         elif assumption_review_required:
@@ -176,8 +185,14 @@ def build_veritas_engine_safe(
             issues_out.append({"code": "guardrail_reason", "message": guard_reason, "severity": guard_status or "none"})
         if prism_rec and prism_status == "insufficient_input" and len(issues_out) < 5:
             issues_out.append({"code": "prism_insufficient_input", "message": "PRISM did not have enough inputs for a recommendation.", "severity": "warning"})
-        if aegis_decision in ("deny", "approval_required") and len(issues_out) < 5:
-            issues_out.append({"code": "aegis_gate", "message": f"AEGIS decision={aegis_decision}.", "severity": "blocked" if aegis_decision == "deny" else "warning"})
+        if aegis_decision in ("deny", "approval_required", "error_fallback") and len(issues_out) < 5:
+            issues_out.append(
+                {
+                    "code": "aegis_gate",
+                    "message": f"AEGIS decision={aegis_decision}.",
+                    "severity": "blocked" if aegis_decision in ("deny", "error_fallback") else "warning",
+                }
+            )
 
         # Source signals snapshot (stable keys).
         return {

@@ -129,6 +129,7 @@ def save_project_state(
     prism_status: str | None = None,
     prism_result: dict | None = None,
     last_prism_summary: dict | None = None,
+    last_aegis_decision: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -291,6 +292,7 @@ def save_project_state(
         "prism_status": prism_status,
         "prism_result": prism_result or {},
         "last_prism_summary": last_prism_summary or {},
+        "last_aegis_decision": last_aegis_decision or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,
