@@ -385,6 +385,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         from meta_engines.policy_engine import evaluate_policy_engine
         from meta_engines.cost_engine import evaluate_cost_engine
         from meta_engines.audit_engine import evaluate_audit_engine
+        from elite_layers.titan import build_titan_summary_safe
+        from elite_layers.leviathan import build_leviathan_summary_safe
+        from elite_layers.helios import build_helios_summary_safe
+        from elite_layers.veritas import build_veritas_summary_safe
+        from elite_layers.sentinel import build_sentinel_summary_safe
 
         portfolio_summary = build_portfolio_summary_safe(
             states_by_project=states_by_project,
@@ -442,6 +447,38 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             1 for v in meta_engine_summary.values()
             if isinstance(v, dict) and bool(v.get("review_required", False))
         )
+
+        # Elite capability layers (Phase 6): identity/visibility wrappers.
+        # Keep dashboard snapshot low-cost: for HELIOS we do not run live regression checks.
+        titan_summary = build_titan_summary_safe(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+        )
+        leviathan_summary = build_leviathan_summary_safe(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            portfolio_summary=portfolio_summary,
+        )
+        helios_summary = build_helios_summary_safe(
+            dashboard_summary={"guardrail_status_count": guardrail_status_count},
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            project_name=(portfolio_summary.get("priority_project") or "jarvis") if isinstance(portfolio_summary, dict) else "jarvis",
+            live_regression=False,
+        )
+        veritas_summary = build_veritas_summary_safe(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            meta_engine_summary=meta_engine_summary,
+        )
+        sentinel_summary = build_sentinel_summary_safe(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            meta_engine_summary=meta_engine_summary,
+        )
     except Exception:
         portfolio_summary = {
             "portfolio_status": "error_fallback",
@@ -459,6 +496,40 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         }
         meta_engine_summary = {}
         meta_engine_review_required_count = 0
+        titan_summary = {
+            "titan_status": "error_fallback",
+            "execution_mode": "idle",
+            "next_execution_action": "idle",
+            "execution_reason": "TITAN summary failed.",
+            "run_permitted": False,
+        }
+        leviathan_summary = {
+            "leviathan_status": "error_fallback",
+            "highest_leverage_project": None,
+            "highest_leverage_reason": "LEVIATHAN summary failed.",
+            "recommended_focus": "Review required.",
+            "defer_projects": [],
+        }
+        helios_summary = {
+            "helios_status": "error_fallback",
+            "selected_improvement": None,
+            "improvement_category": None,
+            "improvement_reason": "HELIOS summary failed.",
+            "execution_gated": True,
+        }
+        veritas_summary = {
+            "veritas_status": "error_fallback",
+            "truth_reason": "VERITAS summary failed.",
+            "contradictions_detected": False,
+            "assumption_review_required": True,
+            "issues": [],
+        }
+        sentinel_summary = {
+            "sentinel_status": "error_fallback",
+            "threat_reason": "SENTINEL summary failed.",
+            "high_risk_detected": False,
+            "review_required": True,
+        }
 
     return {
         "summary_generated_at": now,
@@ -537,5 +608,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "runtime_infrastructure_summary": runtime_infrastructure_summary,
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
+        # Phase 6 elite capability layers (summary-oriented).
+        "titan_summary": titan_summary,
+        "leviathan_summary": leviathan_summary,
+        "helios_summary": helios_summary,
+        "veritas_summary": veritas_summary,
+        "sentinel_summary": sentinel_summary,
         "regression_status": regression_status,
     }

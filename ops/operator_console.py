@@ -75,6 +75,10 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("self_improvement_backlog, improve_system")
     print("change_gate, regression_check")
 
+    print("\n=== Elite Layers ===")
+    print("titan_status, leviathan_status, helios_status")
+    print("veritas_status, sentinel_status, elite_systems_snapshot")
+
     print("\n=== Log Tail (forge_operations.jsonl) ===")
     if not log_tail:
         print("(no log tail available)")
@@ -139,6 +143,17 @@ def _run_streamlit(st: Any) -> None:
 
     st.set_page_config(page_title="NEXUS Operator Console", layout="wide")
     tail = st.sidebar.number_input("Log tail count", min_value=1, max_value=50, value=10, step=1)
+
+    st.sidebar.markdown(
+        "### Elite Layers (Phase 6)\n"
+        "- TITAN: `titan_status`\n"
+        "- LEVIATHAN: `leviathan_status`\n"
+        "- HELIOS: `helios_status`\n"
+        "- VERITAS: `veritas_status`\n"
+        "- SENTINEL: `sentinel_status`\n"
+        "- Snapshot: `elite_systems_snapshot`"
+    )
+
     action = st.sidebar.selectbox(
         "Action",
         [
@@ -150,6 +165,13 @@ def _run_streamlit(st: Any) -> None:
             "improve_system",
             "change_gate",
             "regression_check",
+            # Elite capability layers (Phase 6)
+            "titan_status",
+            "leviathan_status",
+            "helios_status",
+            "veritas_status",
+            "sentinel_status",
+            "elite_systems_snapshot",
             "runtime_route",
             "model_route",
             "deployment_preflight",

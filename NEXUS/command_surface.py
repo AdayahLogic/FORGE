@@ -65,6 +65,12 @@ SUPPORTED_COMMANDS = frozenset({
     "portfolio_status",
     "runtime_infrastructure",
     "meta_engine_status",
+    "titan_status",
+    "leviathan_status",
+    "helios_status",
+    "veritas_status",
+    "sentinel_status",
+    "elite_systems_snapshot",
     "project_onboard",
     "self_improvement_backlog",
     "improve_system",
@@ -1593,6 +1599,114 @@ def run_command(
                 "dashboard_summary": {},
             }
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=payload)
+
+    if cmd in {"titan_status", "leviathan_status", "veritas_status", "sentinel_status"}:
+        try:
+            dashboard_summary = build_registry_dashboard_summary()
+
+            field_map = {
+                "titan_status": "titan_summary",
+                "leviathan_status": "leviathan_summary",
+                "veritas_status": "veritas_summary",
+                "sentinel_status": "sentinel_summary",
+            }
+            payload_field = field_map.get(cmd) or ""
+
+            payload = dashboard_summary.get(payload_field) if isinstance(dashboard_summary, dict) else None
+            if not isinstance(payload, dict) or not payload:
+                payload = {
+                    "titan_status": {
+                        "titan_status": "error_fallback",
+                        "execution_mode": "idle",
+                        "next_execution_action": "idle",
+                        "execution_reason": "TITAN summary unavailable.",
+                        "run_permitted": False,
+                    },
+                    "leviathan_status": {
+                        "leviathan_status": "error_fallback",
+                        "highest_leverage_project": None,
+                        "highest_leverage_reason": "LEVIATHAN summary unavailable.",
+                        "recommended_focus": "Review required.",
+                        "defer_projects": [],
+                    },
+                    "veritas_status": {
+                        "veritas_status": "error_fallback",
+                        "truth_reason": "VERITAS summary unavailable.",
+                        "contradictions_detected": False,
+                        "assumption_review_required": True,
+                        "issues": [],
+                    },
+                    "sentinel_status": {
+                        "sentinel_status": "error_fallback",
+                        "threat_reason": "SENTINEL summary unavailable.",
+                        "high_risk_detected": False,
+                        "review_required": True,
+                    },
+                }.get(cmd, {})
+
+            if cmd == "titan_status":
+                summary_line = f"titan_status={payload.get('titan_status')}"
+            elif cmd == "leviathan_status":
+                summary_line = f"leviathan_status={payload.get('leviathan_status')}"
+            elif cmd == "veritas_status":
+                summary_line = f"veritas_status={payload.get('veritas_status')}"
+            else:
+                summary_line = f"sentinel_status={payload.get('sentinel_status')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={})
+
+    if cmd == "helios_status":
+        # HELIOS is planning/gating visibility; run live regression checks on demand.
+        try:
+            from elite_layers.helios import build_helios_summary_safe
+
+            dashboard_summary = build_registry_dashboard_summary()
+            studio_coordination_summary = dashboard_summary.get("studio_coordination_summary") or {}
+            studio_driver_summary = dashboard_summary.get("studio_driver_summary") or {}
+            project_name = (studio_coordination_summary.get("priority_project") or "jarvis") if isinstance(studio_coordination_summary, dict) else "jarvis"
+
+            payload = build_helios_summary_safe(
+                dashboard_summary=dashboard_summary,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                project_name=str(project_name),
+                live_regression=True,
+            )
+
+            summary_line = f"helios_status={payload.get('helios_status')}; execution_gated={payload.get('execution_gated')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "elite_systems_snapshot":
+        try:
+            from elite_layers.helios import build_helios_summary_safe
+
+            dashboard_summary = build_registry_dashboard_summary()
+            studio_coordination_summary = dashboard_summary.get("studio_coordination_summary") or {}
+            studio_driver_summary = dashboard_summary.get("studio_driver_summary") or {}
+            project_name = (studio_coordination_summary.get("priority_project") or "jarvis") if isinstance(studio_coordination_summary, dict) else "jarvis"
+
+            helios_live = build_helios_summary_safe(
+                dashboard_summary=dashboard_summary,
+                studio_coordination_summary=studio_coordination_summary,
+                studio_driver_summary=studio_driver_summary,
+                project_name=str(project_name),
+                live_regression=True,
+            )
+
+            payload = {
+                "titan_summary": dashboard_summary.get("titan_summary") if isinstance(dashboard_summary, dict) else {},
+                "leviathan_summary": dashboard_summary.get("leviathan_summary") if isinstance(dashboard_summary, dict) else {},
+                "helios_summary": helios_live,
+                "veritas_summary": dashboard_summary.get("veritas_summary") if isinstance(dashboard_summary, dict) else {},
+                "sentinel_summary": dashboard_summary.get("sentinel_summary") if isinstance(dashboard_summary, dict) else {},
+            }
+            summary_line = f"elite_snapshot: titan={payload.get('titan_summary', {}).get('titan_status')}; helios={payload.get('helios_summary', {}).get('helios_status')}; veritas={payload.get('veritas_summary', {}).get('veritas_status')}; sentinel={payload.get('sentinel_summary', {}).get('sentinel_status')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 
     if cmd == "project_onboard":
         # Requires project context (project_name). Creates project scaffold in projects/<name>.
