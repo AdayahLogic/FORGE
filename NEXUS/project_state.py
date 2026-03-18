@@ -126,6 +126,9 @@ def save_project_state(
     change_gate_result: dict | None = None,
     regression_status: str | None = None,
     regression_result: dict | None = None,
+    prism_status: str | None = None,
+    prism_result: dict | None = None,
+    last_prism_summary: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -142,6 +145,14 @@ def save_project_state(
         model_router_result = previous.get("model_router_result")
     if deployment_preflight_result is None and isinstance(previous.get("deployment_preflight_result"), dict):
         deployment_preflight_result = previous.get("deployment_preflight_result")
+
+    # Preserve PRISM fields across saves when not explicitly provided.
+    if prism_status is None and isinstance(previous.get("prism_status"), str):
+        prism_status = previous.get("prism_status")
+    if prism_result is None and isinstance(previous.get("prism_result"), dict):
+        prism_result = previous.get("prism_result")
+    if last_prism_summary is None and isinstance(previous.get("last_prism_summary"), dict):
+        last_prism_summary = previous.get("last_prism_summary")
 
     # Compact audit summaries (no history arrays; derived from existing results)
     lr = (launch_result or {}) if isinstance(launch_result, dict) else {}
@@ -276,6 +287,10 @@ def save_project_state(
         "change_gate_result": change_gate_result or {},
         "regression_status": regression_status,
         "regression_result": regression_result or {},
+        # PRISM v1 (product launch probability + friction analysis) persisted outputs.
+        "prism_status": prism_status,
+        "prism_result": prism_result or {},
+        "last_prism_summary": last_prism_summary or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,

@@ -169,6 +169,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     deployment_preflight_count: dict[str, int] = {}
     change_gate_status_count: dict[str, int] = {}
     regression_status_count: dict[str, int] = {}
+    prism_status_by_project: dict[str, str] = {}
+    prism_recommendation_count: dict[str, int] = {"go": 0, "revise": 0, "hold": 0}
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -308,6 +310,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
 
             rs = loaded.get("regression_status") or "none"
             regression_status_count[rs] = regression_status_count.get(rs, 0) + 1
+
+            # PRISM v1 (read-only persisted outputs).
+            prism_status_val = loaded.get("prism_status") or (loaded.get("prism_result") or {}).get("prism_status") if isinstance(loaded.get("prism_result"), dict) else None
+            prism_status_by_project[key] = str(prism_status_val or "none")
+            prism_rec = (loaded.get("prism_result") or {}).get("recommendation") if isinstance(loaded.get("prism_result"), dict) else None
+            if prism_rec in prism_recommendation_count:
+                prism_recommendation_count[prism_rec] += 1
         except Exception:
             continue
 
@@ -353,6 +362,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         regression_status = "passed"
     else:
         regression_status = "none"
+
+    prism_go_count = prism_recommendation_count.get("go", 0)
+    prism_revise_count = prism_recommendation_count.get("revise", 0)
+    prism_hold_count = prism_recommendation_count.get("hold", 0)
 
     dispatch_planning_summary: dict[str, Any] = {
         "dispatch_planning_status": "planned" if dispatch_by_project else "no_data",
@@ -614,5 +627,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "helios_summary": helios_summary,
         "veritas_summary": veritas_summary,
         "sentinel_summary": sentinel_summary,
+        # PRISM v1 dashboard visibility (read-only persisted outputs).
+        "prism_status_by_project": prism_status_by_project,
+        "prism_recommendation_count": prism_recommendation_count,
+        "prism_go_count": prism_go_count,
+        "prism_revise_count": prism_revise_count,
+        "prism_hold_count": prism_hold_count,
         "regression_status": regression_status,
     }

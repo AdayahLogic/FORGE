@@ -71,6 +71,8 @@ SUPPORTED_COMMANDS = frozenset({
     "veritas_status",
     "sentinel_status",
     "elite_systems_snapshot",
+    "prism_evaluate",
+    "prism_status",
     "project_onboard",
     "self_improvement_backlog",
     "improve_system",
@@ -1707,6 +1709,128 @@ def run_command(
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "prism_evaluate":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from PRISM.prism_engine import evaluate_prism_safe
+
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+
+            architect_plan = loaded.get("architect_plan") or {}
+            if not isinstance(architect_plan, dict):
+                architect_plan = {}
+
+            project_name_for_prism = str(loaded.get("active_project") or proj_name or "")
+
+            # Phase 1.5: pass CLI inputs + state inputs separately; merge inside PRISM engine.
+            cli_inputs: dict[str, Any] = {}
+            for k in (
+                "product_concept",
+                "problem_solved",
+                "target_audience",
+                "comparable_products",
+                "launch_angle",
+                "monetization_model",
+                "feature_list",
+                "notes",
+            ):
+                v = kwargs.get(k)
+                if v is not None:
+                    cli_inputs[k] = v
+
+            state_inputs: dict[str, Any] = {
+                "product_concept": architect_plan.get("objective") or loaded.get("notes") or "",
+                "problem_solved": architect_plan.get("problem_solved") or architect_plan.get("problem") or "",
+                "target_audience": architect_plan.get("target_audience") or architect_plan.get("audience") or "",
+                "comparable_products": architect_plan.get("comparable_products")
+                or architect_plan.get("comparables")
+                or [],
+                "launch_angle": architect_plan.get("launch_angle") or "",
+                "monetization_model": architect_plan.get("monetization_model") or "",
+                "feature_list": architect_plan.get("feature_list") or architect_plan.get("features") or [],
+                "notes": loaded.get("notes") or "",
+            }
+
+            result = evaluate_prism_safe(
+                project_name=project_name_for_prism,
+                cli_inputs=cli_inputs,
+                state_inputs=state_inputs,
+            )
+
+            last_prism_summary = {
+                "recommendation": result.get("recommendation"),
+                "success_estimate": (result.get("scores") or {}).get("success_estimate"),
+                "strongest_audience_segment": result.get("strongest_audience_segment"),
+                "strongest_launch_angle": result.get("strongest_launch_angle"),
+            }
+            update_project_state_fields(
+                path,
+                prism_status=result.get("prism_status"),
+                prism_result=result,
+                last_prism_summary=last_prism_summary,
+            )
+
+            scores = result.get("scores") or {}
+            summary_line = (
+                f"prism_status={result.get('prism_status')}; recommendation={result.get('recommendation')}; "
+                f"success_estimate={scores.get('success_estimate')}"
+            )
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "prism_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+
+            prism_result = loaded.get("prism_result") or {}
+            if not isinstance(prism_result, dict) or not prism_result:
+                # Return stable PRISM result shape with zeros.
+                prism_result = {
+                    "prism_status": "insufficient_input",
+                    "project_name": str(loaded.get("active_project") or proj_name or "") or None,
+                    "scores": {
+                        "novelty": 0,
+                        "clarity": 0,
+                        "emotional_pull": 0,
+                        "curiosity": 0,
+                        "virality_potential": 0,
+                        "monetization_potential": 0,
+                        "success_estimate": 0,
+                    },
+                    "strongest_audience_segment": None,
+                    "strongest_launch_angle": None,
+                    "audience_friction_points": [],
+                    "recommendation": "hold",
+                    "recommendation_reason": "No persisted PRISM evaluation found for this project.",
+                }
+
+            recommendation = prism_result.get("recommendation")
+            scores = prism_result.get("scores") or {}
+            summary_line = f"recommendation={recommendation}; success_estimate={(scores or {}).get('success_estimate')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=prism_result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "project_onboard":
         # Requires project context (project_name). Creates project scaffold in projects/<name>.

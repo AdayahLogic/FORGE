@@ -66,6 +66,24 @@ def _text_console(snapshot: dict[str, Any]) -> None:
             missing_note = f"missing={','.join(missing)}" if missing else "scaffolds_ok"
             print(f"- {row.get('project')}: {state_note}; {missing_note} (NOT in registry)")
 
+    print("\n=== PRISM v1 ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        priority_project = studio_coord.get("priority_project") or driver.get("target_project") or "jarvis"
+        prism = _run_command("prism_status", project_name=str(priority_project))
+        payload = prism.get("payload") or {}
+        scores = payload.get("scores") or {}
+        friction = payload.get("audience_friction_points") or []
+
+        print("Recommendation:", payload.get("recommendation"))
+        print("Success estimate:", scores.get("success_estimate"))
+        print("Strongest audience segment:", payload.get("strongest_audience_segment"))
+        print("Strongest launch angle:", payload.get("strongest_launch_angle"))
+        print("Audience friction points:", "; ".join([str(x) for x in friction[:6]]) if friction else "(none)")
+    except Exception:
+        print("(PRISM unavailable)")
+
     print("\n=== Action Panel (available commands) ===")
     print("complete_review, complete_approval")
     print("launch_next_cycle, autonomous_cycle")
@@ -78,6 +96,9 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("\n=== Elite Layers ===")
     print("titan_status, leviathan_status, helios_status")
     print("veritas_status, sentinel_status, elite_systems_snapshot")
+
+    print("\n=== PRISM Actions ===")
+    print("prism_evaluate, prism_status")
 
     print("\n=== Log Tail (forge_operations.jsonl) ===")
     if not log_tail:
@@ -154,6 +175,12 @@ def _run_streamlit(st: Any) -> None:
         "- Snapshot: `elite_systems_snapshot`"
     )
 
+    st.sidebar.markdown(
+        "### PRISM v1 (Phase 7)\n"
+        "- Evaluate: `prism_evaluate`\n"
+        "- Status: `prism_status`"
+    )
+
     action = st.sidebar.selectbox(
         "Action",
         [
@@ -172,6 +199,9 @@ def _run_streamlit(st: Any) -> None:
             "veritas_status",
             "sentinel_status",
             "elite_systems_snapshot",
+            # PRISM v1 (Phase 7)
+            "prism_evaluate",
+            "prism_status",
             "runtime_route",
             "model_route",
             "deployment_preflight",

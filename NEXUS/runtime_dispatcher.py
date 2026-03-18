@@ -13,6 +13,7 @@ from NEXUS.runtimes import RUNTIME_ADAPTERS
 from NEXUS.runtime_execution import (
     build_runtime_execution_error,
     build_runtime_execution_skipped,
+    build_runtime_execution_result,
 )
 
 
@@ -57,6 +58,62 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             "runtime_target": runtime_target_id,
             "dispatch_result": no_adapter,
         }
+
+    # AEGIS MVP (Phase 7): policy enforcement gate before any adapter call.
+    try:
+        from AEGIS.aegis_core import evaluate_action_safe
+
+        project_path = (dispatch_plan.get("project") or {}).get("project_path")
+        exec_block = (dispatch_plan or {}).get("execution") or {}
+
+        aegis_request = {
+            "project_name": (dispatch_plan.get("project") or {}).get("project_name"),
+            "project_path": project_path,
+            "runtime_target_id": runtime_target_id,
+            "requires_human_approval": bool(exec_block.get("requires_human_approval", False)),
+            "action": "adapter_dispatch_call",
+        }
+
+        aegis_res = evaluate_action_safe(request=aegis_request)
+        aegis_decision = str(aegis_res.get("aegis_decision") or "allow").strip().lower()
+        aegis_reason = str(aegis_res.get("aegis_reason") or "")
+
+        if aegis_decision == "deny":
+            blocked = build_runtime_execution_result(
+                runtime=runtime_target_id,
+                status="blocked",
+                message=f"AEGIS deny: {aegis_reason or 'Policy denied action.'}",
+                execution_status="blocked",
+                execution_mode="safe_simulation",
+                next_action="human_review",
+                artifacts=[],
+                errors=[{"reason": aegis_reason or "aegis_deny"}],
+            )
+            return {
+                "dispatch_status": "blocked",
+                "runtime_target": runtime_target_id,
+                "dispatch_result": blocked,
+            }
+
+        if aegis_decision == "approval_required":
+            queued = build_runtime_execution_result(
+                runtime=runtime_target_id,
+                status="skipped",
+                message=f"AEGIS approval required: {aegis_reason or 'Human approval required.'}",
+                execution_status="queued",
+                execution_mode="manual_only",
+                next_action="human_review",
+                artifacts=[],
+                errors=[{"reason": aegis_reason or "aegis_approval_required"}],
+            )
+            return {
+                "dispatch_status": "skipped",
+                "runtime_target": runtime_target_id,
+                "dispatch_result": queued,
+            }
+    except Exception:
+        # Fail-safe: if AEGIS fails, do not block execution.
+        pass
     try:
         dispatch_result = adapter(dispatch_plan)
         # Adapters already return normalized schema in Step 59; enforce minimal keys just in case.

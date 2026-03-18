@@ -164,6 +164,15 @@ if __name__ == "__main__":
         sensitivity = None
         review_context = None
         completion_type = None
+        # PRISM v1.5 optional inputs (evaluation-only).
+        product_concept = None
+        problem_solved = None
+        target_audience = None
+        comparable_products = None
+        launch_angle = None
+        monetization_model = None
+        feature_list = None
+        notes = None
         while i < len(args):
             if args[i] == "--project" and i + 1 < len(args):
                 project_name = args[i + 1]
@@ -228,6 +237,40 @@ if __name__ == "__main__":
                 core_files_touched = v in ("1", "true", "yes", "y")
                 i += 2
                 continue
+            if args[i] == "--product-concept" and i + 1 < len(args):
+                product_concept = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--problem-solved" and i + 1 < len(args):
+                problem_solved = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--target-audience" and i + 1 < len(args):
+                target_audience = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--comparable-products" and i + 1 < len(args):
+                raw = args[i + 1] or ""
+                comparable_products = [p.strip() for p in raw.split(",") if p.strip()]
+                i += 2
+                continue
+            if args[i] == "--launch-angle" and i + 1 < len(args):
+                launch_angle = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--monetization-model" and i + 1 < len(args):
+                monetization_model = args[i + 1]
+                i += 2
+                continue
+            if args[i] == "--feature-list" and i + 1 < len(args):
+                raw = args[i + 1] or ""
+                feature_list = [p.strip() for p in raw.split(",") if p.strip()]
+                i += 2
+                continue
+            if args[i] == "--notes" and i + 1 < len(args):
+                notes = args[i + 1]
+                i += 2
+                continue
             i += 1
         result = run_command(
             command=cmd,
@@ -245,6 +288,14 @@ if __name__ == "__main__":
             category=category,
             priority=priority,
             core_files_touched=core_files_touched,
+            product_concept=product_concept,
+            problem_solved=problem_solved,
+            target_audience=target_audience,
+            comparable_products=comparable_products,
+            launch_angle=launch_angle,
+            monetization_model=monetization_model,
+            feature_list=feature_list,
+            notes=notes,
         )
         print(json.dumps(result, indent=2))
     else:
