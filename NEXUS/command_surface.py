@@ -1636,13 +1636,30 @@ def run_command(
                         "truth_reason": "VERITAS summary unavailable.",
                         "contradictions_detected": False,
                         "assumption_review_required": True,
+                        "truth_confidence": "low",
                         "issues": [],
+                        "source_signals": {
+                            "state_validator": None,
+                            "guardrails": None,
+                            "prism_recommendation": None,
+                            "aegis_decision": None,
+                        },
                     },
                     "sentinel_status": {
                         "sentinel_status": "error_fallback",
                         "threat_reason": "SENTINEL summary unavailable.",
                         "high_risk_detected": False,
                         "review_required": True,
+                        "risk_level": "unknown",
+                        "active_warnings": [],
+                        "source_signals": {
+                            "safety_engine": None,
+                            "security_engine": None,
+                            "compliance_engine": None,
+                            "risk_engine": None,
+                            "aegis_decision": None,
+                            "deployment_preflight": None,
+                        },
                     },
                 }.get(cmd, {})
 

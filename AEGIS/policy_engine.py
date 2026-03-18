@@ -26,9 +26,19 @@ def evaluate_policy(request: dict[str, Any] | None = None, policy: dict[str, Any
     req = request or {}
     pol = policy or DEFAULT_POLICY
 
+    action_mode = str(req.get("action_mode") or "execution").strip().lower()
     project_path = req.get("project_path")
+
+    # Action-mode-aware missing project scope behavior:
+    # - evaluation: allow (do not auto-deny) because we may be doing inspection only
+    # - execution/mutation: deny by default to avoid unsafe workspace operations
     if pol.get("deny_when_missing_project_path", True) and not project_path:
-        return {"decision": "deny", "reason": "Missing project_path; refusing to scope workspace."}
+        if action_mode == "evaluation":
+            return {
+                "decision": "allow",
+                "reason": "AEGIS policy: missing project_path in evaluation mode; allowing evaluation without workspace scoping.",
+            }
+        return {"decision": "deny", "reason": "AEGIS policy: missing project_path; refusing to scope workspace for execution/mutation."}
 
     environment = str(req.get("environment") or "").strip().lower()
     runtime_target_id = str(req.get("runtime_target_id") or "").strip().lower()

@@ -97,6 +97,46 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("titan_status, leviathan_status, helios_status")
     print("veritas_status, sentinel_status, elite_systems_snapshot")
 
+    print("\n=== VERITAS ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        veritas = _run_command("veritas_status").get("payload") or {}
+        print("Status:", veritas.get("veritas_status"))
+        print("Truth confidence:", veritas.get("truth_confidence"))
+        print("Assumption review required:", veritas.get("assumption_review_required"))
+        print("Contradictions detected:", veritas.get("contradictions_detected"))
+        issues = veritas.get("issues") or []
+        if issues:
+            shown = []
+            for it in issues[:5]:
+                if isinstance(it, dict):
+                    shown.append(f"{it.get('code') or 'issue'}: {it.get('message') or ''}".strip(": "))
+                else:
+                    shown.append(str(it))
+            print("Issues:", "; ".join(shown))
+        else:
+            print("Issues: (none)")
+    except Exception:
+        print("(VERITAS unavailable)")
+
+    print("\n=== SENTINEL ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        sentinel = _run_command("sentinel_status").get("payload") or {}
+        print("Status:", sentinel.get("sentinel_status"))
+        print("Risk level:", sentinel.get("risk_level"))
+        print("High risk detected:", sentinel.get("high_risk_detected"))
+        print("Review required:", sentinel.get("review_required"))
+        warnings = sentinel.get("active_warnings") or []
+        if warnings:
+            print("Active warnings:", "; ".join([str(w) for w in warnings[:8]]))
+        else:
+            print("Active warnings: (none)")
+    except Exception:
+        print("(SENTINEL unavailable)")
+
     print("\n=== PRISM Actions ===")
     print("prism_evaluate, prism_status")
 
@@ -174,6 +214,28 @@ def _run_streamlit(st: Any) -> None:
         "- SENTINEL: `sentinel_status`\n"
         "- Snapshot: `elite_systems_snapshot`"
     )
+
+    # Lightweight operator visibility for the consolidated specialist layers.
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        veritas_payload = (_run_command("veritas_status").get("payload") or {}) if _run_command else {}
+        sentinel_payload = (_run_command("sentinel_status").get("payload") or {}) if _run_command else {}
+
+        st.sidebar.markdown(
+            "### VERITAS\n"
+            f"- Status: `{veritas_payload.get('veritas_status')}`\n"
+            f"- Truth confidence: `{veritas_payload.get('truth_confidence')}`\n"
+            f"- Review required: `{veritas_payload.get('assumption_review_required')}`"
+        )
+        st.sidebar.markdown(
+            "### SENTINEL\n"
+            f"- Status: `{sentinel_payload.get('sentinel_status')}`\n"
+            f"- Risk level: `{sentinel_payload.get('risk_level')}`\n"
+            f"- Review required: `{sentinel_payload.get('review_required')}`"
+        )
+    except Exception:
+        pass
 
     st.sidebar.markdown(
         "### PRISM v1 (Phase 7)\n"
