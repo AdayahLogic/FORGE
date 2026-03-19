@@ -1,10 +1,19 @@
 {
   "learning_summary_status": "ok",
-  "total_records": 1,
+  "total_records": 13,
   "recent_success_count": 1,
-  "recent_failure_count": 0,
+  "recent_failure_count": 1,
   "recent_warning_count": 0,
-  "prediction_accuracy": 1.0,
+  "prediction_accuracy": 0.9230769230769231,
   "recommended_caution_level": "low",
-  "top_error_signatures": []
+  "top_error_signatures": [
+    {
+      "signature": "approval_gate-requires_human_approval",
+      "count": 3
+    },
+    {
+      "signature": "planner-generated-structured",
+      "count": 1
+    }
+  ]
 }
