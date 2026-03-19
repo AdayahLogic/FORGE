@@ -117,6 +117,9 @@ def run_helix_pipeline(
             "stop_reason": stop_reason,
             "started_at": started_at,
             "finished_at": finished_at,
+            "approval_id_refs": [],
+            "autonomy_id_refs": [],
+            "product_id_refs": [],
         })
         append_helix_record_safe(project_path, record)
         return record
@@ -142,6 +145,9 @@ def run_helix_pipeline(
             "stop_reason": stop_reason,
             "started_at": started_at,
             "finished_at": finished_at,
+            "approval_id_refs": [],
+            "autonomy_id_refs": [],
+            "product_id_refs": [],
         })
         append_helix_record_safe(project_path, record)
         return record
@@ -149,16 +155,24 @@ def run_helix_pipeline(
     run_id = loaded.get("run_id") or ""
     context = load_project_context(project_path)
 
-    # Forward-compatible refs (populate from existing systems when available)
+    # Forward-compatible refs (populate when available; do not invent data)
     approval_id_refs: list[str] = []
+    autonomy_id_refs: list[str] = []
     product_id_refs: list[str] = []
     try:
         from NEXUS.approval_registry import read_approval_journal_tail
-        tail = read_approval_journal_tail(project_path=project_path, n=5)
-        for r in tail:
+        for r in read_approval_journal_tail(project_path=project_path, n=5):
             aid = r.get("approval_id")
             if aid:
                 approval_id_refs.append(str(aid))
+    except Exception:
+        pass
+    try:
+        from NEXUS.autonomy_registry import read_autonomy_journal_tail
+        for r in read_autonomy_journal_tail(project_path=project_path, n=5):
+            aid = r.get("autonomy_id")
+            if aid:
+                autonomy_id_refs.append(str(aid))
     except Exception:
         pass
     try:
@@ -272,24 +286,45 @@ def run_helix_pipeline(
         "started_at": started_at,
         "finished_at": finished_at,
         "approval_id_refs": approval_id_refs,
+        "autonomy_id_refs": autonomy_id_refs,
         "product_id_refs": product_id_refs,
     })
 
     append_helix_record_safe(project_path, record)
 
-    # Phase 15: record HELIX run for learning (honest, minimal)
+    # Phase 15/22: structured HELIX learning record (stage outcomes, stop_reason, surgeon, success/failure)
     try:
-        from NEXUS.learning_engine import build_outcome_learning_record_safe
         from NEXUS.learning_writer import append_learning_record_safe
 
-        state_like = {"run_id": run_id, "active_project": project_name, "project_name": project_name}
-        lr = build_outcome_learning_record_safe(
-            state=state_like,
-            workflow_stage="helix_pipeline_run",
-            decision_source="helix_pipeline",
-            decision_type="helix_pipeline_completed",
-            decision_summary=f"pipeline_status={pipeline_status}; stop_reason={stop_reason}; requires_surgeon={requires_surgeon}",
-        )
+        success_class = "success" if pipeline_status == "completed" and not requires_surgeon else ("partial" if pipeline_status == "completed" else "failure")
+        stage_outcomes = [{"stage": sr.get("stage"), "status": sr.get("stage_status")} for sr in stage_results]
+
+        lr = {
+            "record_type": "helix_pipeline_run",
+            "run_id": run_id,
+            "project_name": project_name,
+            "timestamp": finished_at,
+            "workflow_stage": "helix_pipeline_run",
+            "decision_source": "helix_pipeline",
+            "decision_type": "helix_pipeline_completed",
+            "decision_summary": f"pipeline_status={pipeline_status}; stop_reason={stop_reason}; requires_surgeon={requires_surgeon}",
+            "predicted_outcome": "unknown",
+            "predicted_confidence": 0.0,
+            "actual_outcome": success_class,
+            "actual_status": pipeline_status,
+            "error_summary": stop_reason if pipeline_status != "completed" else "",
+            "performance_impact": 0,
+            "human_review_required": requires_surgeon or approval_blocked,
+            "human_override": None,
+            "downstream_effects": {
+                "helix_id": helix_id,
+                "stage_outcomes": stage_outcomes,
+                "stop_reason": stop_reason,
+                "surgeon_required": requires_surgeon,
+                "success_failure_classification": success_class,
+            },
+            "tags": ["helix", pipeline_status, success_class],
+        }
         append_learning_record_safe(project_path=project_path, record=lr)
     except Exception:
         pass

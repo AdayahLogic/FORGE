@@ -20,6 +20,10 @@ HELIX_SUMMARY_KEYS = (
     "approval_blocked",
     "safety_blocked",
     "requires_surgeon",
+    "stage_distribution",
+    "surgeon_invocation_frequency",
+    "approval_blocked_frequency",
+    "autonomy_linkage_presence",
     "recent_runs",
     "per_project",
     "reason",
@@ -51,6 +55,11 @@ def build_helix_summary(
     approval_blocked = False
     safety_blocked = False
     requires_surgeon = False
+    stage_distribution: dict[str, int] = {}
+    surgeon_count = 0
+    approval_blocked_count = 0
+    autonomy_linkage_count = 0
+    total_runs = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -60,6 +69,18 @@ def build_helix_summary(
         tail = read_helix_journal_tail(project_path=path, n=n_recent)
         for r in tail:
             recent_runs.append({**r, "_project": proj_key})
+            total_runs += 1
+            if r.get("requires_surgeon"):
+                surgeon_count += 1
+            if r.get("approval_blocked"):
+                approval_blocked_count += 1
+            if r.get("autonomy_id_refs"):
+                autonomy_linkage_count += 1
+            for sr in r.get("stage_results") or []:
+                stage = sr.get("stage") or "unknown"
+                status = sr.get("stage_status") or "unknown"
+                key = f"{stage}:{status}"
+                stage_distribution[key] = stage_distribution.get(key, 0) + 1
         if tail:
             last = tail[-1]
             if last_helix_run is None or (last.get("finished_at") or "") > (last_helix_run.get("finished_at") or ""):
@@ -98,6 +119,10 @@ def build_helix_summary(
         posture = "idle"
         reason = "No recent HELIX runs."
 
+    surgeon_invocation_frequency = surgeon_count / total_runs if total_runs else 0.0
+    approval_blocked_frequency = approval_blocked_count / total_runs if total_runs else 0.0
+    autonomy_linkage_presence = autonomy_linkage_count / total_runs if total_runs else 0.0
+
     return {
         "helix_posture": posture,
         "last_helix_run": last_helix_run,
@@ -105,6 +130,10 @@ def build_helix_summary(
         "approval_blocked": approval_blocked,
         "safety_blocked": safety_blocked,
         "requires_surgeon": requires_surgeon,
+        "stage_distribution": stage_distribution,
+        "surgeon_invocation_frequency": round(surgeon_invocation_frequency, 2),
+        "approval_blocked_frequency": round(approval_blocked_frequency, 2),
+        "autonomy_linkage_presence": round(autonomy_linkage_presence, 2),
         "recent_runs": recent_runs,
         "per_project": per_project,
         "reason": reason,
@@ -126,6 +155,10 @@ def build_helix_summary_safe(
             "approval_blocked": False,
             "safety_blocked": False,
             "requires_surgeon": False,
+            "stage_distribution": {},
+            "surgeon_invocation_frequency": 0.0,
+            "approval_blocked_frequency": 0.0,
+            "autonomy_linkage_presence": 0.0,
             "recent_runs": [],
             "per_project": {},
             "reason": "HELIX summary failed.",

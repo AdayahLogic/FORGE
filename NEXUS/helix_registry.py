@@ -52,7 +52,9 @@ def normalize_helix_stage_result(result: dict[str, Any]) -> dict[str, Any]:
         "implementation_plan": r.get("implementation_plan"),
         "validation_result": r.get("validation_result"),
         "critique": str(r.get("critique") or ""),
+        "critique_evaluation": r.get("critique_evaluation") if isinstance(r.get("critique_evaluation"), dict) else {},
         "optimizations": list(r.get("optimizations") or []),
+        "optimization_suggestions": r.get("optimization_suggestions") if isinstance(r.get("optimization_suggestions"), dict) else {},
         "repair_recommended": bool(r.get("repair_recommended", False)),
         "repair_reason": str(r.get("repair_reason") or ""),
     }
@@ -80,6 +82,7 @@ def normalize_helix_record(record: dict[str, Any]) -> dict[str, Any]:
         "started_at": str(r.get("started_at") or ""),
         "finished_at": str(r.get("finished_at") or ""),
         "approval_id_refs": list(r.get("approval_id_refs") or []),
+        "autonomy_id_refs": list(r.get("autonomy_id_refs") or []),
         "product_id_refs": list(r.get("product_id_refs") or []),
     }
 
