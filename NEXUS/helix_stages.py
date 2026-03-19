@@ -291,10 +291,13 @@ def run_surgeon_stage(
     critic_result: dict[str, Any],
     inspector_result: dict[str, Any],
     requested_outcome: str,
+    *,
+    builder_result: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     HELIX Surgeon: invoked only when prior stages indicate repair is needed.
     Produces repair recommendation (structured); does NOT apply patches.
+    When repair recommended and builder has patch_request, includes repair_patch_proposal.
     Actual patch application goes through normal approval/patch flow.
     """
     repair_rec = critic_result.get("repair_recommended", False) or inspector_result.get("repair_recommended", False)
@@ -309,10 +312,23 @@ def run_surgeon_stage(
             "repair_reason": "",
         })
 
+    repair_patch_proposal = None
+    if builder_result:
+        impl_plan = builder_result.get("implementation_plan") or {}
+        patch_req = impl_plan.get("patch_request") if isinstance(impl_plan, dict) else None
+        if isinstance(patch_req, dict) and patch_req.get("target_relative_path") and patch_req.get("search_text"):
+            repair_patch_proposal = {
+                "target_relative_path": patch_req.get("target_relative_path"),
+                "search_text": str(patch_req.get("search_text", ""))[:500],
+                "replacement_text": str(patch_req.get("replacement_text", "")),
+                "replace_all": bool(patch_req.get("replace_all", False)),
+            }
+
     return normalize_helix_stage_result({
         "stage": "surgeon",
         "stage_status": "repair_recommended",
         "output_summary": f"Repair recommended: {repair_reason[:200]}",
         "repair_recommended": True,
         "repair_reason": repair_reason,
+        "repair_patch_proposal": repair_patch_proposal,
     })

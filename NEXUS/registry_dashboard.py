@@ -710,6 +710,22 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "per_project": {},
             "reason": "HELIX summary failed.",
         }
+        patch_proposal_summary = {
+            "patch_proposal_status": "error_fallback",
+            "pending_count": 0,
+            "proposed_count": 0,
+            "approval_required_count": 0,
+            "approved_pending_apply_count": 0,
+            "rejected_count": 0,
+            "blocked_count": 0,
+            "applied_count": 0,
+            "approval_blocked_count": 0,
+            "status_counts": {},
+            "by_project": {},
+            "recent_proposals": [],
+            "by_risk_level": {},
+            "reason": "Patch proposal summary failed.",
+        }
         meta_engine_summary = {}
         meta_engine_review_required_count = 0
         titan_summary = {

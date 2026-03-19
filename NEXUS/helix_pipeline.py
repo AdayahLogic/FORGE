@@ -247,6 +247,7 @@ def run_helix_pipeline(
             critic_result=critic_result,
             inspector_result=inspector_result,
             requested_outcome=requested_outcome,
+            builder_result=builder_result,
         )
         stage_results.append(surgeon_result)
         requires_surgeon = surgeon_result.get("repair_recommended", False)

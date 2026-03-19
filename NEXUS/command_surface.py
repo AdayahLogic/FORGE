@@ -112,6 +112,10 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 23: patch proposals
     "patch_proposals",
     "patch_proposal_details",
+    # Phase 24: approval resolution
+    "approve_patch_proposal",
+    "reject_patch_proposal",
+    "apply_patch_proposal",
 })
 
 
@@ -2809,8 +2813,14 @@ def run_command(
             fallback = {
                 "patch_proposal_status": "error_fallback",
                 "pending_count": 0,
-                "approval_blocked_count": 0,
+                "proposed_count": 0,
+                "approval_required_count": 0,
+                "approved_pending_apply_count": 0,
+                "rejected_count": 0,
+                "blocked_count": 0,
                 "applied_count": 0,
+                "approval_blocked_count": 0,
+                "status_counts": {},
                 "by_project": {},
                 "recent_proposals": [],
                 "by_risk_level": {},
@@ -2827,22 +2837,25 @@ def run_command(
                 key = str(proj_name).strip().lower()
                 if key in PROJECTS:
                     proj_path = PROJECTS[key].get("path")
-            from NEXUS.patch_proposal_registry import get_patch_proposal_by_id, read_patch_proposal_journal_tail
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, read_patch_proposal_journal_tail
             from NEXUS.patch_proposal_summary import build_patch_proposal_summary_safe
-            if patch_id and proj_path:
-                found = get_patch_proposal_by_id(project_path=proj_path, patch_id=patch_id)
-                if found:
-                    return _result(command=cmd, status="ok", project_name=proj_name, summary="patch_proposal_found", payload={"patch_proposal": found, "found_in_project": proj_name or "unknown"})
             if patch_id:
-                for proj_key in PROJECTS:
-                    p = PROJECTS[proj_key].get("path")
-                    if p:
-                        found = get_patch_proposal_by_id(project_path=p, patch_id=patch_id)
-                        if found:
-                            return _result(command=cmd, status="ok", project_name=proj_key, summary="patch_proposal_found", payload={"patch_proposal": found, "found_in_project": proj_key})
+                found, found_path, found_key = find_proposal_and_project(patch_id)
+                if found and found_path:
+                    effective_status, resolution = get_proposal_effective_status(project_path=found_path, patch_id=patch_id)
+                    payload = {
+                        "patch_proposal": {**found, "effective_status": effective_status},
+                        "found_in_project": found_key,
+                        "resolution": resolution,
+                    }
+                    return _result(command=cmd, status="ok", project_name=found_key, summary="patch_proposal_found", payload=payload)
             if proj_path:
                 tail = read_patch_proposal_journal_tail(project_path=proj_path, n=50)
-                payload = {"recent_proposals": tail[:20]}
+                enriched = []
+                for r in tail[:20]:
+                    es, _ = get_proposal_effective_status(proj_path, r.get("patch_id") or "")
+                    enriched.append({**r, "effective_status": es})
+                payload = {"recent_proposals": enriched}
                 return _result(command=cmd, status="ok", project_name=proj_name, summary=f"recent={len(payload['recent_proposals'])}", payload=payload)
             summary_data = build_patch_proposal_summary_safe(n_recent=30, n_tail=200)
             payload = {"recent_proposals": summary_data.get("recent_proposals", []), "patch_proposal_summary": summary_data}
@@ -2854,6 +2867,122 @@ def run_command(
                 "recent_proposals": [],
                 "error": str(e),
             }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "approve_patch_proposal":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            reason = (kwargs.get("reason") or "").strip() or ""
+            if not patch_id:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id required.", payload={"resolved": False, "error": "patch_id required."})
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, resolve_patch_proposal
+            found, found_path, found_key = find_proposal_and_project(patch_id)
+            if not found or not found_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Patch proposal not found.", payload={"resolved": False, "error": "Patch proposal not found.", "patch_id": patch_id})
+            result = resolve_patch_proposal(project_path=found_path, patch_id=patch_id, decision="approve", project_name=found_key or "", reason=reason)
+            if result.get("resolved"):
+                try:
+                    from NEXUS.learning_writer import append_learning_record_safe
+                    append_learning_record_safe(project_path=found_path, record={
+                        "record_type": "patch_proposal_approved",
+                        "project_name": found_key or "",
+                        "workflow_stage": "approval_resolution",
+                        "decision_source": "approve_patch_proposal",
+                        "decision_type": "approve",
+                        "decision_summary": f"patch_id={patch_id}; approval_id={result.get('approval_id')}",
+                        "downstream_effects": {"patch_id": patch_id, "approval_id": result.get("approval_id")},
+                        "tags": ["patch_proposal", "approval"],
+                    })
+                except Exception:
+                    pass
+            return _result(command=cmd, status="ok" if result.get("resolved") else "error", project_name=found_key, summary=result.get("reason") or result.get("error", ""), payload=result)
+        except Exception as e:
+            fallback = {"resolved": False, "patch_id": kwargs.get("patch_id", ""), "decision": "approve", "effective_status": "", "approval_id": "", "reason": "", "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "reject_patch_proposal":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            reason = (kwargs.get("reason") or "").strip() or ""
+            if not patch_id:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id required.", payload={"resolved": False, "error": "patch_id required."})
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, resolve_patch_proposal
+            found, found_path, found_key = find_proposal_and_project(patch_id)
+            if not found or not found_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Patch proposal not found.", payload={"resolved": False, "error": "Patch proposal not found.", "patch_id": patch_id})
+            result = resolve_patch_proposal(project_path=found_path, patch_id=patch_id, decision="reject", project_name=found_key or "", reason=reason)
+            if result.get("resolved"):
+                try:
+                    from NEXUS.learning_writer import append_learning_record_safe
+                    append_learning_record_safe(project_path=found_path, record={
+                        "record_type": "patch_proposal_rejected",
+                        "project_name": found_key or "",
+                        "workflow_stage": "approval_resolution",
+                        "decision_source": "reject_patch_proposal",
+                        "decision_type": "reject",
+                        "decision_summary": f"patch_id={patch_id}; approval_id={result.get('approval_id')}",
+                        "downstream_effects": {"patch_id": patch_id, "approval_id": result.get("approval_id")},
+                        "tags": ["patch_proposal", "approval"],
+                    })
+                except Exception:
+                    pass
+            return _result(command=cmd, status="ok" if result.get("resolved") else "error", project_name=found_key, summary=result.get("reason") or result.get("error", ""), payload=result)
+        except Exception as e:
+            fallback = {"resolved": False, "patch_id": kwargs.get("patch_id", ""), "decision": "reject", "effective_status": "", "approval_id": "", "reason": "", "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "apply_patch_proposal":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            if not patch_id:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id required.", payload={"applied": False, "error": "patch_id required.", "patch_applied": False})
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status
+            from NEXUS.diff_patch import apply_safe_patch, write_patch_report
+            found, found_path, found_key = find_proposal_and_project(patch_id)
+            if not found or not found_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Patch proposal not found.", payload={"applied": False, "error": "Patch proposal not found.", "patch_id": patch_id, "patch_applied": False})
+            effective_status, _ = get_proposal_effective_status(project_path=found_path, patch_id=patch_id)
+            if effective_status != "approved_pending_apply":
+                return _result(command=cmd, status="error", project_name=found_key, summary=f"Proposal must be approved_pending_apply; current={effective_status}.", payload={"applied": False, "error": f"Status={effective_status}", "effective_status": effective_status, "patch_applied": False})
+            change_type = str(found.get("change_type") or "").strip().lower()
+            if change_type != "diff_patch":
+                return _result(command=cmd, status="error", project_name=found_key, summary=f"Only diff_patch supported; change_type={change_type}.", payload={"applied": False, "error": f"change_type={change_type}", "patch_applied": False})
+            payload_data = found.get("patch_payload") or {}
+            target = payload_data.get("target_relative_path")
+            search_text = payload_data.get("search_text")
+            replacement_text = payload_data.get("replacement_text")
+            if not target or not isinstance(search_text, str) or not isinstance(replacement_text, str) or not search_text.strip():
+                return _result(command=cmd, status="error", project_name=found_key, summary="Invalid patch_payload.", payload={"applied": False, "error": "Invalid patch_payload", "patch_applied": False})
+            patch_request = {
+                "approved": True,
+                "target_relative_path": target,
+                "search_text": search_text,
+                "replacement_text": replacement_text,
+                "replace_all": bool(payload_data.get("replace_all", False)),
+            }
+            summary = apply_safe_patch(project_path=found_path, project_name=found_key or "", patch_request=patch_request)
+            patch_applied = bool(summary.get("patch_applied", False))
+            if patch_applied:
+                write_patch_report(found_path, found_key or "", summary, run_id=found.get("run_id"))
+                from NEXUS.patch_proposal_registry import append_patch_proposal_resolution
+                append_patch_proposal_resolution(found_path, patch_id, "apply", "applied", "", project_name=found_key or "", reason="Patch applied successfully.")
+                try:
+                    from NEXUS.learning_writer import append_learning_record_safe
+                    append_learning_record_safe(project_path=found_path, record={
+                        "record_type": "patch_proposal_applied",
+                        "project_name": found_key or "",
+                        "workflow_stage": "apply_patch_proposal",
+                        "decision_source": "apply_patch_proposal",
+                        "decision_type": "applied",
+                        "decision_summary": f"patch_id={patch_id}; target={target}",
+                        "downstream_effects": {"patch_id": patch_id, "target": target, "patch_applied": True},
+                        "tags": ["patch_proposal", "applied"],
+                    })
+                except Exception:
+                    pass
+            return _result(command=cmd, status="ok", project_name=found_key, summary=summary.get("reason", ""), payload={"applied": patch_applied, "patch_applied": patch_applied, "patch_summary": summary, "patch_id": patch_id})
+        except Exception as e:
+            fallback = {"applied": False, "patch_applied": False, "patch_id": kwargs.get("patch_id", ""), "error": str(e)}
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "health":
