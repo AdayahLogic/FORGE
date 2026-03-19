@@ -1,0 +1,10 @@
+{
+  "learning_summary_status": "ok",
+  "total_records": 1,
+  "recent_success_count": 1,
+  "recent_failure_count": 0,
+  "recent_warning_count": 0,
+  "prediction_accuracy": 1.0,
+  "recommended_caution_level": "low",
+  "top_error_signatures": []
+}
