@@ -107,6 +107,8 @@ SUPPORTED_COMMANDS = frozenset({
     "helix_status",
     "helix_run",
     "helix_trace",
+    # Hardening: integrity checker
+    "integrity_check",
 })
 
 
@@ -1977,6 +1979,27 @@ def run_command(
             }
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=payload)
 
+    if cmd == "integrity_check":
+        try:
+            from NEXUS.integrity_checker import run_integrity_check_safe
+            result = run_integrity_check_safe(project_path=path)
+            status = "ok" if result.get("all_valid", False) else "issues_detected"
+            summary_line = f"integrity_status={result.get('integrity_status')}; all_valid={result.get('all_valid')}"
+            return _result(command=cmd, status=status, project_name=None, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=None,
+                summary=str(e),
+                payload={
+                    "integrity_status": "error",
+                    "reason": str(e),
+                    "checks": [],
+                    "all_valid": False,
+                },
+            )
+
     if cmd in {"titan_status", "leviathan_status", "veritas_status", "sentinel_status"}:
         try:
             dashboard_summary = build_registry_dashboard_summary()
@@ -2652,7 +2675,16 @@ def run_command(
             summary_line = f"approval_status={payload.get('approval_status')}; pending_count={payload.get('pending_count_total')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
         except Exception as e:
-            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+            fallback = {
+                "approval_status": "error_fallback",
+                "pending_count_total": 0,
+                "pending_by_project": {},
+                "recent_approvals": [],
+                "approval_types": [],
+                "reason": str(e),
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "approval_details":
         try:
@@ -2689,7 +2721,13 @@ def run_command(
             payload = {"recent_approvals": summary_data.get("recent_approvals", []), "approval_summary": summary_data}
             return _result(command=cmd, status="ok", project_name=None, summary=f"recent={len(payload.get('recent_approvals', []))}", payload=payload)
         except Exception as e:
-            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+            fallback = {
+                "approval": None,
+                "found_in_project": None,
+                "recent_approvals": [],
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "product_manifest":
         try:
@@ -2711,7 +2749,17 @@ def run_command(
             summary_line = f"product_id={manifest.get('product_id')}; status={manifest.get('status')}; risk={manifest.get('risk_profile')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=manifest)
         except Exception as e:
-            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+            fallback = {
+                "product_id": "",
+                "project_name": proj_name or "",
+                "status": "error_fallback",
+                "approval_requirements": {},
+                "safety_summary": {},
+                "risk_profile": {},
+                "reason": str(e),
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "product_summary":
         try:
@@ -2721,7 +2769,21 @@ def run_command(
             summary_line = f"product_status={payload.get('product_status')}; draft={payload.get('draft_count')}; ready={payload.get('ready_count')}; restricted={payload.get('restricted_count')}"
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:
-            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+            fallback = {
+                "product_status": "error_fallback",
+                "draft_count": 0,
+                "ready_count": 0,
+                "restricted_count": 0,
+                "total_count": 0,
+                "products_by_project": {},
+                "safety_indicators": {"safety_issues": [], "restricted_count": 0},
+                "learning_linkage_present": False,
+                "approval_linkage_present": False,
+                "autonomy_linkage_present": False,
+                "reason": str(e),
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=fallback)
 
     if cmd == "health":
         try:

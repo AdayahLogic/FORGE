@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 
@@ -55,12 +56,16 @@ def normalize_learning_record(record: dict[str, Any]) -> dict[str, Any]:
     else:
         performance_impact_out = 0
 
+    timestamp = rec.get("timestamp")
+    if not timestamp:
+        timestamp = datetime.now().isoformat()
+
     return {
         "learning_contract_version": LEARNING_CONTRACT_VERSION,
         "record_type": _normalize_str(rec.get("record_type"), default="outcome_record"),
         "run_id": rec.get("run_id"),
         "project_name": _normalize_str(rec.get("project_name"), default=""),
-        "timestamp": rec.get("timestamp"),
+        "timestamp": timestamp,
         "workflow_stage": _normalize_str(rec.get("workflow_stage"), default=""),
         "decision_source": _normalize_str(rec.get("decision_source"), default=""),
         "decision_type": _normalize_str(rec.get("decision_type"), default="unknown"),

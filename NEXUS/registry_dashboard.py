@@ -672,6 +672,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "total_count": 0,
             "products_by_project": {},
             "safety_indicators": {"safety_issues": [], "restricted_count": 0},
+            "learning_linkage_present": False,
+            "approval_linkage_present": False,
+            "autonomy_linkage_present": False,
             "reason": "Product summary failed.",
         }
         autonomy_summary = {

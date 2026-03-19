@@ -61,6 +61,19 @@ def build_product_summary(
             draft_count += 1
 
     total = draft_count + ready_count + restricted_count
+
+    # Forward-compatibility: expose linkage presence (learning, approval, autonomy).
+    learning_linkage_present = False
+    approval_linkage_present = False
+    autonomy_linkage_present = False
+    for _proj, m in products_by_project.items():
+        if m.get("learning_insight_refs"):
+            learning_linkage_present = True
+        if m.get("approval_refs"):
+            approval_linkage_present = True
+        if m.get("autonomy_refs"):
+            autonomy_linkage_present = True
+
     if ready_count > 0 and restricted_count == 0:
         product_status = "ready"
         reason = f"{ready_count} product(s) ready; {draft_count} draft."
@@ -85,6 +98,9 @@ def build_product_summary(
             "safety_issues": list(set(safety_issues)),
             "restricted_count": restricted_count,
         },
+        "learning_linkage_present": learning_linkage_present,
+        "approval_linkage_present": approval_linkage_present,
+        "autonomy_linkage_present": autonomy_linkage_present,
         "reason": reason,
     }
 
@@ -105,5 +121,8 @@ def build_product_summary_safe(
             "total_count": 0,
             "products_by_project": {},
             "safety_indicators": {"safety_issues": [], "restricted_count": 0},
+            "learning_linkage_present": False,
+            "approval_linkage_present": False,
+            "autonomy_linkage_present": False,
             "reason": "Product summary evaluation failed.",
         }
