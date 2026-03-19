@@ -549,6 +549,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "loop_reason": "studio_loop_tick summary unavailable",
                 "execution_started": False,
                 "bounded_execution": True,
+                "executed_command": None,
+                "executed_result_summary": None,
                 "stop_reason": "Safe fallback; no execution performed.",
             }
 
@@ -579,15 +581,24 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             except Exception:
                 aegis_summary = {"aegis_decision": None, "aegis_scope": None, "action_mode": None, "approval_required": False}
             try:
-                from AEGIS.forgeshell import execute_forgeshell_command_safe
-                fs_res = execute_forgeshell_command_safe(command_family="shell_test", project_path=priority_path, timeout_seconds=8.0)
+                # Truthfulness fix (Phase 14): do NOT run live ForgeShell tests in dashboard generation.
+                from AEGIS.forgeshell import get_forgeshell_status_cached_safe
+                fs_res = get_forgeshell_status_cached_safe(project_path=priority_path)
                 forgeshell_summary = {
                     "forgeshell_status": fs_res.get("forgeshell_status"),
                     "exit_code": fs_res.get("exit_code"),
                     "timeout_hit": bool(fs_res.get("timeout_hit")),
+                    "forgeshell_security_level": fs_res.get("forgeshell_security_level"),
+                    "summary_reason": fs_res.get("summary_reason"),
                 }
             except Exception:
-                forgeshell_summary = {"forgeshell_status": "idle", "exit_code": None, "timeout_hit": False}
+                forgeshell_summary = {
+                    "forgeshell_status": "idle",
+                    "exit_code": None,
+                    "timeout_hit": False,
+                    "forgeshell_security_level": "allowlisted_wrapper",
+                    "summary_reason": "ForgeShell status unavailable.",
+                }
             try:
                 from AEGIS.tool_gateway import route_tool_request_safe
                 tg_res = route_tool_request_safe(tool_family="evaluation", project_path=priority_path, action_mode="evaluation")
@@ -672,7 +683,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
 
         genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
         aegis_summary = {"aegis_decision": None, "aegis_scope": None, "action_mode": None, "approval_required": False}
-        forgeshell_summary = {"forgeshell_status": "idle", "exit_code": None, "timeout_hit": False}
+        forgeshell_summary = {
+            "forgeshell_status": "idle",
+            "exit_code": None,
+            "timeout_hit": False,
+            "forgeshell_security_level": "allowlisted_wrapper",
+            "summary_reason": "ForgeShell idle (dashboard cache not available).",
+        }
         tool_gateway_summary = {"tool_gateway_status": "idle", "tool_family": None, "policy_decision": None}
         studio_loop_summary = {
             "studio_loop_status": "error_fallback",
@@ -681,6 +698,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "loop_reason": "studio_loop_tick summary unavailable",
             "execution_started": False,
             "bounded_execution": True,
+            "executed_command": None,
+            "executed_result_summary": None,
             "stop_reason": "Safe fallback; no execution performed.",
         }
         prism_result = {}

@@ -52,6 +52,10 @@ _BLOCKED_SEGMENTS = (
 )
 
 
+_FILE_GUARD_STRENGTH = "path_scope_only"
+_FILE_GUARD_POSTURE_REASON = "Deterministic path-scope checks only; not deep adversarial filesystem isolation."
+
+
 def evaluate_file_guard(
     *,
     project_path: str | None = None,
@@ -67,6 +71,8 @@ def evaluate_file_guard(
     {
       "file_guard_status": "allow" | "deny" | "review_required" | "error_fallback",
       "file_guard_reason": "...",
+      "file_guard_strength": "path_scope_only",
+      "file_guard_posture_reason": "...",
       "allowed_reads": [],
       "allowed_writes": [],
       "denied_matches": []
@@ -119,6 +125,8 @@ def evaluate_file_guard(
             return {
                 "file_guard_status": "allow",
                 "file_guard_reason": "Evaluation mode; no file paths to guard.",
+                "file_guard_strength": _FILE_GUARD_STRENGTH,
+                "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
                 "allowed_reads": [],
                 "allowed_writes": [],
                 "denied_matches": [],
@@ -127,6 +135,8 @@ def evaluate_file_guard(
             return {
                 "file_guard_status": "review_required",
                 "file_guard_reason": "Some paths matched blocked segments or scope.",
+                "file_guard_strength": _FILE_GUARD_STRENGTH,
+                "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
                 "allowed_reads": allowed_reads,
                 "allowed_writes": allowed_writes,
                 "denied_matches": denied_matches,
@@ -134,6 +144,8 @@ def evaluate_file_guard(
         return {
             "file_guard_status": "allow",
             "file_guard_reason": "Evaluation; paths within scope and not blocked.",
+            "file_guard_strength": _FILE_GUARD_STRENGTH,
+            "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
             "allowed_reads": allowed_reads,
             "allowed_writes": allowed_writes,
             "denied_matches": [],
@@ -143,6 +155,8 @@ def evaluate_file_guard(
         return {
             "file_guard_status": "deny",
             "file_guard_reason": "File access requires project_path for execution/mutation.",
+            "file_guard_strength": _FILE_GUARD_STRENGTH,
+            "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
             "allowed_reads": [],
             "allowed_writes": [],
             "denied_matches": list(reads) + list(writes),
@@ -152,6 +166,8 @@ def evaluate_file_guard(
         return {
             "file_guard_status": "deny",
             "file_guard_reason": "One or more paths denied by scope or blocked segments.",
+            "file_guard_strength": _FILE_GUARD_STRENGTH,
+            "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
             "allowed_reads": allowed_reads,
             "allowed_writes": allowed_writes,
             "denied_matches": denied_matches,
@@ -161,6 +177,8 @@ def evaluate_file_guard(
         return {
             "file_guard_status": "allow",
             "file_guard_reason": "Mutation paths within scope and not blocked.",
+            "file_guard_strength": _FILE_GUARD_STRENGTH,
+            "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
             "allowed_reads": allowed_reads,
             "allowed_writes": allowed_writes,
             "denied_matches": [],
@@ -169,6 +187,8 @@ def evaluate_file_guard(
     return {
         "file_guard_status": "allow",
         "file_guard_reason": "Paths within scope and not blocked.",
+        "file_guard_strength": _FILE_GUARD_STRENGTH,
+        "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
         "allowed_reads": allowed_reads,
         "allowed_writes": allowed_writes,
         "denied_matches": [],
@@ -183,6 +203,8 @@ def evaluate_file_guard_safe(**kwargs: Any) -> dict[str, Any]:
         return {
             "file_guard_status": "error_fallback",
             "file_guard_reason": str(e)[: 512],
+            "file_guard_strength": _FILE_GUARD_STRENGTH,
+            "file_guard_posture_reason": _FILE_GUARD_POSTURE_REASON,
             "allowed_reads": [],
             "allowed_writes": [],
             "denied_matches": [f"file_guard_error: {e}"],

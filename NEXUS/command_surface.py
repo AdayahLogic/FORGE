@@ -87,6 +87,7 @@ SUPPORTED_COMMANDS = frozenset({
     "regression_check",
     # AEGIS Phase 13
     "aegis_status",
+    "forgeshell_status",
     "forgeshell_test",
     "tool_gateway_status",
 })
@@ -1747,13 +1748,18 @@ def run_command(
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 
     if cmd == "studio_loop_tick":
-        # One bounded selection tick; no execution authority.
+        # One bounded studio loop tick: one path selected + one bounded follow-through step.
         try:
             from studio_loop import run_studio_loop_tick_safe
 
             dashboard_summary = build_registry_dashboard_summary()
             result = run_studio_loop_tick_safe(dashboard_summary=dashboard_summary)
-            summary_line = f"studio_loop_status={result.get('studio_loop_status')}; selected_path={result.get('selected_path')}"
+            summary_line = (
+                f"studio_loop_status={result.get('studio_loop_status')}; "
+                f"selected_path={result.get('selected_path')}; "
+                f"executed_command={result.get('executed_command')}; "
+                f"execution_started={result.get('execution_started')}"
+            )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=result)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
@@ -2224,6 +2230,17 @@ def run_command(
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
+    if cmd == "forgeshell_status":
+        try:
+            from AEGIS.forgeshell import get_forgeshell_status_cached_safe
+
+            payload = get_forgeshell_status_cached_safe(project_path=path)
+            status_key = payload.get("forgeshell_status")
+            summary = f"forgeshell_status={status_key}; security_level={payload.get('forgeshell_security_level')}; summary_reason={payload.get('summary_reason')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
     if cmd == "forgeshell_test":
         try:
             from AEGIS.forgeshell import execute_forgeshell_command_safe
@@ -2233,7 +2250,10 @@ def run_command(
                 timeout_seconds=15.0,
             )
             status_key = result.get("forgeshell_status")
-            summary = f"forgeshell_status={status_key}; exit_code={result.get('exit_code')}; timeout_hit={result.get('timeout_hit')}"
+            summary = (
+                f"forgeshell_status={status_key}; exit_code={result.get('exit_code')}; timeout_hit={result.get('timeout_hit')}; "
+                f"security_level={result.get('forgeshell_security_level')}; summary_reason={result.get('summary_reason')}"
+            )
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary, payload=result)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e), "forgeshell_status": "error_fallback"})

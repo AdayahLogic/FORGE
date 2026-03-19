@@ -9,6 +9,7 @@ AEGIS ForgeShell: secure shell wrapper for allowlisted command families only.
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,132 @@ _DANGEROUS_PATTERNS = (
 )
 
 
+_FORGESHELL_SECURITY_LEVEL = "allowlisted_wrapper"
+_FORGESHELL_POSTURE_REASON = "ForgeShell is an allowlisted wrapper, not a full sandbox (no adversarial filesystem isolation guarantees)."
+
+
+def _cache_file() -> Path:
+    # Per-project cached status is handled by keying on resolved project_path.
+    return Path(__file__).resolve().parent / "forgeshell_cache.json"
+
+
+def _cache_key(project_path: str | None) -> str:
+    if not project_path:
+        return "global"
+    try:
+        return str(Path(project_path).resolve())
+    except Exception:
+        return str(project_path)
+
+
+def _safe_read_json(p: Path) -> dict[str, Any]:
+    try:
+        if not p.exists():
+            return {}
+        raw = p.read_text(encoding="utf-8")
+        if not raw.strip():
+            return {}
+        data = json.loads(raw)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _safe_write_json(p: Path, payload: dict[str, Any]) -> None:
+    try:
+        p.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    except Exception:
+        # Never break execution due to cache writes.
+        pass
+
+
+def _cache_write(project_path: str | None, result: dict[str, Any]) -> None:
+    try:
+        key = _cache_key(project_path)
+        cache = _safe_read_json(_cache_file())
+        if not isinstance(cache.get("projects"), dict):
+            cache["projects"] = {}
+        cache["projects"][key] = {"result": result}
+        _safe_write_json(_cache_file(), cache)
+    except Exception:
+        pass
+
+
+def _cache_read(project_path: str | None) -> dict[str, Any] | None:
+    try:
+        key = _cache_key(project_path)
+        cache = _safe_read_json(_cache_file())
+        projects = cache.get("projects")
+        if not isinstance(projects, dict):
+            return None
+        entry = projects.get(key)
+        if not isinstance(entry, dict):
+            return None
+        res = entry.get("result")
+        if not isinstance(res, dict):
+            return None
+        return res
+    except Exception:
+        return None
+
+
+def get_forgeshell_status_cached(*, project_path: str | None = None) -> dict[str, Any]:
+    """
+    Return cached ForgeShell result if available.
+    Does NOT execute ForgeShell.
+    """
+    cached = _cache_read(project_path)
+    if isinstance(cached, dict) and cached:
+        out = dict(cached)
+        out.setdefault("forgeshell_security_level", _FORGESHELL_SECURITY_LEVEL)
+        out.setdefault("summary_reason", "Cached last ForgeShell result.")
+        out.setdefault("forgeshell_posture_reason", _FORGESHELL_POSTURE_REASON)
+        return out
+
+    if project_path:
+        return {
+            "forgeshell_status": "not_run_yet",
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+            "timeout_hit": False,
+            "blocked_reason": None,
+            "summary_reason": "ForgeShell has not been executed for this project yet.",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
+        }
+
+    return {
+        "forgeshell_status": "idle",
+        "stdout": "",
+        "stderr": "",
+        "exit_code": -1,
+        "timeout_hit": False,
+        "blocked_reason": None,
+        "summary_reason": "ForgeShell idle (no project scope provided).",
+        "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+        "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
+    }
+
+
+def get_forgeshell_status_cached_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return get_forgeshell_status_cached(**kwargs)
+    except Exception:
+        return {
+            "forgeshell_status": "error_fallback",
+            "stdout": "",
+            "stderr": "",
+            "exit_code": -1,
+            "timeout_hit": False,
+            "blocked_reason": None,
+            "summary_reason": "ForgeShell status cache read failed.",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
+        }
+
+
 def _blocked_reason(request: dict[str, Any]) -> str | None:
     """Return reason string if request is dangerous or invalid; else None."""
     raw = str(request.get("raw_command") or "").strip()
@@ -64,59 +191,82 @@ def execute_forgeshell_command(
     """
     Execute an allowlisted ForgeShell command in a scoped workspace.
 
-    Result shape:
+    Result shape (ForgeShell allowlisted wrapper; not a full sandbox):
     {
-      "forgeshell_status": "executed" | "blocked" | "error_fallback",
+      "forgeshell_status": "executed" | "blocked" | "error_fallback" | "idle" | "not_run_yet",
       "stdout": "...",
       "stderr": "...",
       "exit_code": 0,
       "timeout_hit": false,
-      "blocked_reason": null
+      "blocked_reason": null,
+      "summary_reason": "...",
+      "forgeshell_security_level": "allowlisted_wrapper",
+      "forgeshell_posture_reason": "..."
     }
     """
     req = request or {}
     family = str(command_family or req.get("command_family") or "").strip().lower()
     if not family or family not in _FAMILIES:
-        return {
+        out = {
             "forgeshell_status": "blocked",
             "stdout": "",
             "stderr": "",
             "exit_code": -1,
             "timeout_hit": False,
             "blocked_reason": f"Unsupported or missing command_family: {family!r}.",
+            "summary_reason": "ForgeShell request blocked (not an allowlisted wrapper family).",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
         }
+        _cache_write(project_path, out)
+        return out
     reason = _blocked_reason(req)
     if reason:
-        return {
+        out = {
             "forgeshell_status": "blocked",
             "stdout": "",
             "stderr": "",
             "exit_code": -1,
             "timeout_hit": False,
             "blocked_reason": reason,
+            "summary_reason": "ForgeShell request blocked by dangerous pattern/policy checks. Not a full sandbox.",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
         }
+        _cache_write(project_path, out)
+        return out
     cwd: Path | None = None
     if project_path:
         try:
             cwd = Path(project_path).resolve()
             if not cwd.is_dir():
-                return {
+                out = {
                     "forgeshell_status": "error_fallback",
                     "stdout": "",
                     "stderr": str(project_path),
                     "exit_code": -1,
                     "timeout_hit": False,
                     "blocked_reason": "project_path is not a directory.",
+                    "summary_reason": "ForgeShell failed due to invalid project_path. Not a full sandbox.",
+                    "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+                    "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
                 }
+                _cache_write(project_path, out)
+                return out
         except Exception as e:
-            return {
+            out = {
                 "forgeshell_status": "error_fallback",
                 "stdout": "",
                 "stderr": str(e),
                 "exit_code": -1,
                 "timeout_hit": False,
                 "blocked_reason": None,
+                "summary_reason": "ForgeShell failed to validate project_path. Not a full sandbox.",
+                "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+                "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
             }
+            _cache_write(project_path, out)
+            return out
     # Use first allowed argv for this family (MVP: no user-supplied args).
     argv_list = _FAMILIES[family]
     argv = list(argv_list[0]) if argv_list else ["python", "-c", "print('ok')"]
@@ -152,6 +302,10 @@ def execute_forgeshell_command(
             "timeout_hit": False,
             "blocked_reason": None,
         }
+        out["summary_reason"] = "ForgeShell executed via allowlisted wrapper (not a full sandbox)."
+        out["forgeshell_security_level"] = _FORGESHELL_SECURITY_LEVEL
+        out["forgeshell_posture_reason"] = _FORGESHELL_POSTURE_REASON
+        _cache_write(project_path, out)
         try:
             from NEXUS.logging_engine import log_system_event
             log_system_event(
@@ -178,14 +332,19 @@ def execute_forgeshell_command(
             )
         except Exception:
             pass
-        return {
+        out = {
             "forgeshell_status": "error_fallback",
             "stdout": "",
             "stderr": "Command timed out.",
             "exit_code": -1,
             "timeout_hit": True,
             "blocked_reason": None,
+            "summary_reason": "ForgeShell execution timed out; allowlisted wrapper did not complete. Not a full sandbox.",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
         }
+        _cache_write(project_path, out)
+        return out
     except Exception as e:
         try:
             from NEXUS.logging_engine import log_system_event
@@ -199,14 +358,19 @@ def execute_forgeshell_command(
             )
         except Exception:
             pass
-        return {
+        out = {
             "forgeshell_status": "error_fallback",
             "stdout": "",
             "stderr": str(e)[: 2048],
             "exit_code": -1,
             "timeout_hit": False,
             "blocked_reason": None,
+            "summary_reason": "ForgeShell execution failed; allowlisted wrapper not a full sandbox.",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
         }
+        _cache_write(project_path, out)
+        return out
 
 
 def execute_forgeshell_command_safe(**kwargs: Any) -> dict[str, Any]:
@@ -221,4 +385,7 @@ def execute_forgeshell_command_safe(**kwargs: Any) -> dict[str, Any]:
             "exit_code": -1,
             "timeout_hit": False,
             "blocked_reason": None,
+            "summary_reason": "ForgeShell failed unexpectedly; allowlisted wrapper not a full sandbox.",
+            "forgeshell_security_level": _FORGESHELL_SECURITY_LEVEL,
+            "forgeshell_posture_reason": _FORGESHELL_POSTURE_REASON,
         }

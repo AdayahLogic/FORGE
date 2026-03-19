@@ -93,7 +93,7 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("change_gate, regression_check")
     print("genesis_generate, genesis_refine, genesis_rank")
     print("helios_status, helios_proposal, studio_loop_tick")
-    print("aegis_status, forgeshell_test, tool_gateway_status")
+    print("aegis_status, forgeshell_status, forgeshell_test, tool_gateway_status")
 
     print("\n=== AEGIS / ForgeShell ===")
     try:
@@ -107,9 +107,12 @@ def _text_console(snapshot: dict[str, Any]) -> None:
         print("Approval signal only:", aegis.get("approval_signal_only"))
         print("Workspace valid:", aegis.get("workspace_valid"))
         print("File guard status:", aegis.get("file_guard_status"))
-        fs = _run_command("forgeshell_test", project_name=str(priority_project)).get("payload") or {}
-        print("ForgeShell test status:", fs.get("forgeshell_status"))
-        print("ForgeShell exit_code:", fs.get("exit_code"), "timeout_hit:", fs.get("timeout_hit"))
+        fs = _run_command("forgeshell_status", project_name=str(priority_project)).get("payload") or {}
+        print("ForgeShell cached status:", fs.get("forgeshell_status"))
+        print("ForgeShell security level:", fs.get("forgeshell_security_level"))
+        print("ForgeShell summary_reason:", fs.get("summary_reason"))
+        print("ForgeShell posture:", "allowlisted wrapper (not full sandbox; path/mutation is still guarded).")
+        print("File guard posture:", "path-scope-only (deterministic path checks; not deep adversarial FS isolation).")
     except Exception:
         print("(AEGIS/ForgeShell unavailable)")
 
@@ -211,6 +214,12 @@ def _text_console(snapshot: dict[str, Any]) -> None:
         print("Selected path:", loop.get("selected_path"))
         print("Selected project:", loop.get("selected_project"))
         print("Reason:", loop.get("loop_reason"))
+        print("Executed command:", loop.get("executed_command"))
+        print("Execution started:", loop.get("execution_started"))
+        print("Stop reason:", loop.get("stop_reason"))
+        exec_res = loop.get("executed_result_summary")
+        if isinstance(exec_res, dict) and exec_res:
+            print("Executed result summary:", exec_res)
     except Exception:
         print("(studio_loop_tick unavailable)")
 
@@ -333,7 +342,8 @@ def _run_streamlit(st: Any) -> None:
     st.sidebar.markdown(
         "### AEGIS / ForgeShell (Phase 13)\n"
         "- AEGIS status: `aegis_status`\n"
-        "- ForgeShell test: `forgeshell_test`\n"
+        "- ForgeShell status (cached): `forgeshell_status`\n"
+        "- ForgeShell test (exec): `forgeshell_test`\n"
         "- Tool gateway: `tool_gateway_status`"
     )
 
@@ -365,6 +375,7 @@ def _run_streamlit(st: Any) -> None:
             "genesis_rank",
             "studio_loop_tick",
             "aegis_status",
+            "forgeshell_status",
             "forgeshell_test",
             "tool_gateway_status",
             "runtime_route",
