@@ -400,6 +400,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         from NEXUS.execution_environment_summary import build_execution_environment_summary_safe
         from NEXUS.approval_summary import build_approval_summary_safe
         from NEXUS.product_summary import build_product_summary_safe
+        from NEXUS.autonomy_summary import build_autonomy_summary_safe
         from meta_engines.safety_engine import evaluate_safety_engine
         from meta_engines.security_engine import evaluate_security_engine
         from meta_engines.compliance_engine import evaluate_compliance_engine
@@ -424,6 +425,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         )
         approval_summary = build_approval_summary_safe(n_recent=20, n_tail=100)
         product_summary = build_product_summary_safe(use_cached=True)
+        autonomy_summary = build_autonomy_summary_safe(
+            n_recent=10,
+            execution_environment_summary=execution_environment_summary,
+        )
 
         meta_engine_summary = {
             "safety_engine": evaluate_safety_engine(
@@ -667,6 +672,22 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "safety_indicators": {"safety_issues": [], "restricted_count": 0},
             "reason": "Product summary failed.",
         }
+        autonomy_summary = {
+            "autonomy_posture": "error_fallback",
+            "last_autonomy_run": None,
+            "last_stop_reason": "",
+            "autonomy_capable": False,
+            "approval_blocked": False,
+            "recent_runs": [],
+            "per_project": {},
+            "execution_environment_posture": {
+                "execution_environment_status": "error_fallback",
+                "active_environments": [],
+                "planned_environments": [],
+                "reason": "",
+            },
+            "reason": "Autonomy summary failed.",
+        }
         meta_engine_summary = {}
         meta_engine_review_required_count = 0
         titan_summary = {
@@ -824,6 +845,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "execution_environment_summary": execution_environment_summary,
         "approval_summary": approval_summary,
         "product_summary": product_summary,
+        "autonomy_summary": autonomy_summary,
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).

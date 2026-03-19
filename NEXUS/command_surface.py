@@ -57,6 +57,8 @@ SUPPORTED_COMMANDS = frozenset({
     "autonomous_cycle",
     "autonomous_studio_cycle",
     "autonomy_status",
+    "autonomy_run",
+    "autonomy_trace",
     "guardrail_status",
     "runtime_route",
     "model_route",
@@ -1109,11 +1111,136 @@ def run_command(
                 "target_project": ar.get("target_project") or (loaded.get("active_project") or proj_name or ""),
                 "autonomous_run_started": bool(ar.get("autonomous_run_started", False)),
                 "bounded_operation": bool(ar.get("bounded_operation", True)),
+                "autonomy_mode": "bounded_multi_step",
+                "last_bounded_run": None,
+                "approval_blocked": False,
+                "safety_blocked": False,
             }
+            try:
+                from NEXUS.autonomy_registry import read_autonomy_journal_tail
+                tail = read_autonomy_journal_tail(project_path=path, n=1)
+                if tail:
+                    last = tail[-1]
+                    payload["last_bounded_run"] = last
+                    payload["approval_blocked"] = bool(last.get("approval_blocked"))
+                    payload["safety_blocked"] = bool(last.get("safety_blocked"))
+            except Exception:
+                pass
             summary_line = f"autonomy_status={payload.get('autonomy_status')}; autonomous_run_started={payload.get('autonomous_run_started')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
         except Exception as e:
-            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={
+                    "autonomy_status": "error",
+                    "autonomy_action": "none",
+                    "autonomy_reason": str(e),
+                    "target_project": proj_name or "",
+                    "autonomous_run_started": False,
+                    "bounded_operation": True,
+                    "autonomy_mode": "bounded_multi_step",
+                    "last_bounded_run": None,
+                    "approval_blocked": False,
+                    "safety_blocked": False,
+                    "error": str(e),
+                },
+            )
+
+    if cmd == "autonomy_run":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.bounded_autonomy_runner import run_bounded_autonomy
+            loaded = load_project_state(path)
+            project_key = next((k for k in PROJECTS if PROJECTS[k].get("path") == path), None) or (str(proj_name or loaded.get("active_project") or "jarvis").strip().lower())
+            if project_key not in PROJECTS:
+                project_key = "jarvis"
+            max_steps = int(kwargs.get("max_steps") or 3)
+            max_steps = max(1, min(10, max_steps))
+            result = run_bounded_autonomy(project_path=path, project_name=project_key, max_steps=max_steps)
+            summary_line = f"autonomy_status={result.get('autonomy_status')}; steps_attempted={result.get('steps_attempted')}; steps_completed={result.get('steps_completed')}; stop_reason={result.get('stop_reason')}"
+            log_system_event(
+                project=project_key,
+                subsystem="command_surface",
+                action="autonomy_run",
+                status=result.get("autonomy_status") or "ok",
+                reason=summary_line,
+            )
+            return _result(command=cmd, status="ok", project_name=project_key, summary=summary_line, payload=result)
+        except Exception as e:
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="autonomy_run",
+                status="error",
+                reason=str(e),
+            )
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={
+                    "autonomy_id": "",
+                    "run_id": "",
+                    "project_name": proj_name or "",
+                    "autonomy_status": "error",
+                    "autonomy_mode": "bounded_multi_step",
+                    "max_steps": 0,
+                    "steps_attempted": 0,
+                    "steps_completed": 0,
+                    "stop_reason": "error",
+                    "approval_blocked": False,
+                    "safety_blocked": False,
+                    "reached_limit": False,
+                    "step_results": [],
+                    "started_at": "",
+                    "finished_at": "",
+                    "error": str(e),
+                },
+            )
+
+    if cmd == "autonomy_trace":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.autonomy_registry import read_autonomy_journal_tail
+            trace = read_autonomy_journal_tail(project_path=path, n=50)
+            payload = {
+                "trace_count": len(trace),
+                "trace": trace,
+                "project_name": proj_name or "",
+            }
+            summary_line = f"trace_count={len(trace)}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={
+                    "trace_count": 0,
+                    "trace": [],
+                    "project_name": proj_name or "",
+                    "error": str(e),
+                },
+            )
 
     if cmd == "guardrail_status":
         if not path:
