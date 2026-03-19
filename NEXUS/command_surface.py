@@ -95,6 +95,9 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 18: approval system
     "pending_approvals",
     "approval_details",
+    # Phase 19: productization
+    "product_manifest",
+    "product_summary",
 })
 
 
@@ -2403,6 +2406,38 @@ def run_command(
             return _result(command=cmd, status="ok", project_name=None, summary=f"recent={len(payload.get('recent_approvals', []))}", payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "product_manifest":
+        try:
+            if not path and not proj_name:
+                return _result(command=cmd, status="error", project_name=None, summary="Project path or project_name required.", payload={})
+            proj_path = path
+            if not proj_path and proj_name:
+                key = str(proj_name).strip().lower()
+                if key in PROJECTS:
+                    proj_path = PROJECTS[key].get("path")
+            if not proj_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Project not found.", payload={})
+            from NEXUS.product_builder import build_product_manifest_safe
+            manifest = build_product_manifest_safe(
+                project_name=proj_name or "",
+                project_path=proj_path,
+                project_key=str(proj_name).strip().lower() if proj_name else None,
+            )
+            summary_line = f"product_id={manifest.get('product_id')}; status={manifest.get('status')}; risk={manifest.get('risk_profile')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=manifest)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "product_summary":
+        try:
+            from NEXUS.product_summary import build_product_summary_safe
+            summary_data = build_product_summary_safe(use_cached=True)
+            payload = summary_data
+            summary_line = f"product_status={payload.get('product_status')}; draft={payload.get('draft_count')}; ready={payload.get('ready_count')}; restricted={payload.get('restricted_count')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 
     if cmd == "health":
         try:
