@@ -59,6 +59,8 @@ def normalize_autonomy_record(record: dict[str, Any]) -> dict[str, Any]:
         "step_results": list(r.get("step_results") or []),
         "started_at": str(r.get("started_at") or ""),
         "finished_at": str(r.get("finished_at") or ""),
+        "approval_id_refs": list(r.get("approval_id_refs") or []),
+        "product_id_refs": list(r.get("product_id_refs") or []),
     }
 
 

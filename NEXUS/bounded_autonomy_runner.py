@@ -245,6 +245,25 @@ def run_bounded_autonomy(
     if not stop_reason and autonomy_status == "idle":
         stop_reason = "no_steps_attempted" if steps_attempted == 0 else "completed"
 
+    approval_id_refs: list[str] = []
+    product_id_refs: list[str] = []
+    try:
+        from NEXUS.approval_registry import read_approval_journal_tail
+        for r in read_approval_journal_tail(project_path=project_path, n=5):
+            aid = r.get("approval_id")
+            if aid:
+                approval_id_refs.append(str(aid))
+    except Exception:
+        pass
+    try:
+        from NEXUS.product_builder import build_product_manifest_safe
+        m = build_product_manifest_safe(project_name=project_name, project_path=project_path)
+        pid = m.get("product_id")
+        if pid:
+            product_id_refs.append(str(pid))
+    except Exception:
+        pass
+
     record = normalize_autonomy_record({
         "autonomy_id": autonomy_id,
         "run_id": loaded.get("run_id", ""),
@@ -261,6 +280,8 @@ def run_bounded_autonomy(
         "step_results": step_results,
         "started_at": started_at,
         "finished_at": finished_at,
+        "approval_id_refs": approval_id_refs,
+        "product_id_refs": product_id_refs,
     })
 
     append_autonomy_record_safe(project_path, record)

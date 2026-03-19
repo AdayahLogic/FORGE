@@ -59,6 +59,9 @@ SUPPORTED_COMMANDS = frozenset({
     "autonomy_status",
     "autonomy_run",
     "autonomy_trace",
+    "helix_status",
+    "helix_run",
+    "helix_trace",
     "guardrail_status",
     "runtime_route",
     "model_route",
@@ -100,6 +103,10 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 19: productization
     "product_manifest",
     "product_summary",
+    # Phase 21: HELIX pipeline
+    "helix_status",
+    "helix_run",
+    "helix_trace",
 })
 
 
@@ -1240,6 +1247,156 @@ def run_command(
                     "project_name": proj_name or "",
                     "error": str(e),
                 },
+            )
+
+    if cmd == "helix_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={
+                    "helix_posture": "error",
+                    "last_helix_run": None,
+                    "pipeline_status": "error",
+                    "approval_blocked": False,
+                    "safety_blocked": False,
+                    "requires_surgeon": False,
+                    "error": "Project path or project_name required.",
+                },
+            )
+        try:
+            from NEXUS.helix_registry import read_helix_journal_tail
+            tail = read_helix_journal_tail(project_path=path, n=1)
+            payload = {
+                "helix_posture": "idle",
+                "last_helix_run": None,
+                "pipeline_status": "idle",
+                "approval_blocked": False,
+                "safety_blocked": False,
+                "requires_surgeon": False,
+            }
+            if tail:
+                last = tail[-1]
+                payload["last_helix_run"] = last
+                payload["pipeline_status"] = last.get("pipeline_status") or "idle"
+                payload["approval_blocked"] = bool(last.get("approval_blocked"))
+                payload["safety_blocked"] = bool(last.get("safety_blocked"))
+                payload["requires_surgeon"] = bool(last.get("requires_surgeon"))
+                if last.get("approval_blocked"):
+                    payload["helix_posture"] = "approval_blocked"
+                elif last.get("safety_blocked"):
+                    payload["helix_posture"] = "safety_blocked"
+                elif last.get("pipeline_status") == "completed":
+                    payload["helix_posture"] = "capable"
+            summary_line = f"helix_posture={payload.get('helix_posture')}; pipeline_status={payload.get('pipeline_status')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={
+                    "helix_posture": "error",
+                    "last_helix_run": None,
+                    "pipeline_status": "error",
+                    "approval_blocked": False,
+                    "safety_blocked": False,
+                    "requires_surgeon": False,
+                    "error": str(e),
+                },
+            )
+
+    if cmd == "helix_run":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={
+                    "helix_id": "",
+                    "pipeline_status": "error",
+                    "stop_reason": "error",
+                    "approval_blocked": False,
+                    "safety_blocked": False,
+                    "requires_surgeon": False,
+                    "error": "Project path or project_name required.",
+                },
+            )
+        try:
+            from NEXUS.helix_pipeline import run_helix_pipeline
+            loaded = load_project_state(path)
+            project_key = next((k for k in PROJECTS if PROJECTS[k].get("path") == path), None) or (str(proj_name or loaded.get("active_project") or "jarvis").strip().lower())
+            if project_key not in PROJECTS:
+                project_key = "jarvis"
+            requested_outcome = str(kwargs.get("requested_outcome") or kwargs.get("outcome") or "Engineering task")
+            result = run_helix_pipeline(
+                project_path=path,
+                project_name=project_key,
+                requested_outcome=requested_outcome,
+            )
+            summary_line = f"pipeline_status={result.get('pipeline_status')}; stop_reason={result.get('stop_reason')}; requires_surgeon={result.get('requires_surgeon')}"
+            log_system_event(
+                project=project_key,
+                subsystem="command_surface",
+                action="helix_run",
+                status=result.get("pipeline_status") or "ok",
+                reason=summary_line,
+            )
+            return _result(command=cmd, status="ok", project_name=project_key, summary=summary_line, payload=result)
+        except Exception as e:
+            log_system_event(
+                project=proj_name,
+                subsystem="command_surface",
+                action="helix_run",
+                status="error",
+                reason=str(e),
+            )
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={
+                    "helix_id": "",
+                    "pipeline_status": "error",
+                    "stop_reason": "error",
+                    "approval_blocked": False,
+                    "safety_blocked": False,
+                    "requires_surgeon": False,
+                    "error": str(e),
+                },
+            )
+
+    if cmd == "helix_trace":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={"trace_count": 0, "trace": [], "project_name": "", "error": "Project path or project_name required."},
+            )
+        try:
+            from NEXUS.helix_registry import read_helix_journal_tail
+            trace = read_helix_journal_tail(project_path=path, n=50)
+            payload = {
+                "trace_count": len(trace),
+                "trace": trace,
+                "project_name": proj_name or "",
+            }
+            summary_line = f"trace_count={len(trace)}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={"trace_count": 0, "trace": [], "project_name": proj_name or "", "error": str(e)},
             )
 
     if cmd == "guardrail_status":

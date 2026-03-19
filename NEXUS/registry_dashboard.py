@@ -401,6 +401,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         from NEXUS.approval_summary import build_approval_summary_safe
         from NEXUS.product_summary import build_product_summary_safe
         from NEXUS.autonomy_summary import build_autonomy_summary_safe
+        from NEXUS.helix_summary import build_helix_summary_safe
         from meta_engines.safety_engine import evaluate_safety_engine
         from meta_engines.security_engine import evaluate_security_engine
         from meta_engines.compliance_engine import evaluate_compliance_engine
@@ -429,6 +430,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             n_recent=10,
             execution_environment_summary=execution_environment_summary,
         )
+        helix_summary = build_helix_summary_safe(n_recent=10)
 
         meta_engine_summary = {
             "safety_engine": evaluate_safety_engine(
@@ -688,6 +690,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             },
             "reason": "Autonomy summary failed.",
         }
+        helix_summary = {
+            "helix_posture": "error_fallback",
+            "last_helix_run": None,
+            "last_stop_reason": "",
+            "approval_blocked": False,
+            "safety_blocked": False,
+            "requires_surgeon": False,
+            "recent_runs": [],
+            "per_project": {},
+            "reason": "HELIX summary failed.",
+        }
         meta_engine_summary = {}
         meta_engine_review_required_count = 0
         titan_summary = {
@@ -846,6 +859,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "approval_summary": approval_summary,
         "product_summary": product_summary,
         "autonomy_summary": autonomy_summary,
+        "helix_summary": helix_summary,
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).

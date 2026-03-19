@@ -189,6 +189,9 @@ def build_product_manifest(
         "risk_profile": risk_profile,
         "safety_summary": safety,
         "notes": proj.get("description") or "",
+        "learning_insight_refs": [],
+        "approval_refs": approval_reqs.get("recent_approval_ids") or [],
+        "autonomy_refs": [],
     }
 
 
@@ -224,4 +227,7 @@ def build_product_manifest_safe(
             "risk_profile": "unknown",
             "safety_summary": {"critical_issues": ["build_failed"], "ready_for_distribution": False},
             "notes": "Product manifest build failed.",
+            "learning_insight_refs": [],
+            "approval_refs": [],
+            "autonomy_refs": [],
         }
