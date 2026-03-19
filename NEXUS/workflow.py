@@ -148,6 +148,27 @@ def architect_agent(state: StudioState):
 
     state.architect_plan = plan
     state.notes = "Planner generated structured plan."
+
+    # Phase 15: outcome-learning (passive observer; never breaks workflow).
+    try:
+        from NEXUS.learning_engine import build_outcome_learning_record_safe
+        from NEXUS.learning_writer import append_learning_record_safe
+
+        decision_summary = ""
+        if isinstance(plan, dict):
+            decision_summary = plan.get("objective") or plan.get("problem_solved") or plan.get("product_concept") or ""
+
+        record = build_outcome_learning_record_safe(
+            state=state,
+            workflow_stage="after_architect_plan",
+            decision_source="architect_agent",
+            decision_type="architect_plan",
+            decision_summary=str(decision_summary),
+        )
+        append_learning_record_safe(project_path=state.project_path, record=record)
+    except Exception:
+        pass
+
     return state
 
 
@@ -323,6 +344,25 @@ def runtime_dispatch_node(state: StudioState):
             "errors": [{"reason": "exception"}],
         }
         state.runtime_execution_status = "failed"
+
+    # Phase 15: outcome-learning after dispatch result (passive observer).
+    try:
+        from NEXUS.learning_engine import build_outcome_learning_record_safe
+        from NEXUS.learning_writer import append_learning_record_safe
+
+        dispatch_summary = ""
+        if isinstance(state.dispatch_result, dict):
+            dispatch_summary = state.dispatch_result.get("message") or state.dispatch_result.get("reason") or ""
+        record = build_outcome_learning_record_safe(
+            state=state,
+            workflow_stage="after_runtime_dispatch",
+            decision_source="runtime_dispatch_node",
+            decision_type="dispatch_result",
+            decision_summary=str(dispatch_summary),
+        )
+        append_learning_record_safe(project_path=state.project_path, record=record)
+    except Exception:
+        pass
     return state
 
 
@@ -396,6 +436,25 @@ def enforcement_layer_node(state: StudioState):
     )
     state.enforcement_result = result
     state.enforcement_status = result.get("enforcement_status")
+
+    # Phase 15: outcome-learning after governance + enforcement evaluation.
+    try:
+        from NEXUS.learning_engine import build_outcome_learning_record_safe
+        from NEXUS.learning_writer import append_learning_record_safe
+
+        en_summary = ""
+        if isinstance(result, dict):
+            en_summary = result.get("reason") or result.get("decision_reason") or ""
+        record = build_outcome_learning_record_safe(
+            state=state,
+            workflow_stage="after_governance_enforcement",
+            decision_source="enforcement_layer_node",
+            decision_type="enforcement_status",
+            decision_summary=str(en_summary),
+        )
+        append_learning_record_safe(project_path=state.project_path, record=record)
+    except Exception:
+        pass
     return state
 
 
@@ -1269,6 +1328,31 @@ def save_persistent_project_state_node(state: StudioState):
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"
+
+        # Phase 15: outcome-learning at final save stage (passive observer).
+        try:
+            from NEXUS.learning_engine import build_outcome_learning_record_safe
+            from NEXUS.learning_writer import append_learning_record_safe
+
+            sh = state.system_health_summary if isinstance(state.system_health_summary, dict) else {}
+            overall = sh.get("overall_status") or state.workflow_route_status or ""
+            record = build_outcome_learning_record_safe(
+                state=state,
+                workflow_stage="workflow_completed",
+                decision_source="save_persistent_project_state_node",
+                decision_type="workflow_completed",
+                decision_summary=str(overall),
+            )
+            append_learning_record_safe(project_path=state.project_path, record=record)
+            # Best-effort summary write; does not affect core workflow outputs.
+            try:
+                from NEXUS.learning_writer import write_learning_summary_safe
+
+                write_learning_summary_safe(project_path=state.project_path, last_n=50)
+            except Exception:
+                pass
+        except Exception:
+            pass
     except Exception as e:
         state.notes = f"Persistent state save failed: {e}"
         state.execution_session_summary = finalize_run_context(
@@ -1298,6 +1382,22 @@ def save_persistent_project_state_node(state: StudioState):
                 run_id=state.run_id,
                 payload={"run_id": state.run_id, "error": str(e)[:200]},
             )
+        except Exception:
+            pass
+
+        # Phase 15: record failure outcome (best-effort; never breaks workflow).
+        try:
+            from NEXUS.learning_engine import build_outcome_learning_record_safe
+            from NEXUS.learning_writer import append_learning_record_safe
+
+            record = build_outcome_learning_record_safe(
+                state=state,
+                workflow_stage="workflow_save_failed",
+                decision_source="save_persistent_project_state_node",
+                decision_type="workflow_save_failed",
+                decision_summary=str(e)[:2000],
+            )
+            append_learning_record_safe(project_path=state.project_path, record=record)
         except Exception:
             pass
 
