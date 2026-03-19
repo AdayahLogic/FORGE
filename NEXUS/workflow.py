@@ -1172,6 +1172,13 @@ def save_persistent_project_state_node(state: StudioState):
             run_id=state.run_id,
             payload={"run_id": state.run_id, "notes": (state.notes or "")[:200]},
         )
+
+        # Persist last_aegis_decision using the stable contract shape.
+        from AEGIS.aegis_contract import normalize_aegis_result
+
+        last_aegis_decision_normalized = normalize_aegis_result(
+            (state.dispatch_result or {}).get("aegis") if isinstance(state.dispatch_result, dict) else None
+        )
         saved_path = save_project_state(
             project_path=state.project_path,
             active_project=state.active_project,
@@ -1258,9 +1265,7 @@ def save_persistent_project_state_node(state: StudioState):
             autonomy_result=state.autonomy_result,
             guardrail_status=state.guardrail_status,
             guardrail_result=state.guardrail_result,
-            last_aegis_decision=(state.dispatch_result or {}).get("aegis")
-            if isinstance(state.dispatch_result, dict)
-            else {},
+            last_aegis_decision=last_aegis_decision_normalized,
         )
         state.persistent_state_path = saved_path
         state.notes = f"Persistent project state saved at: {saved_path}"

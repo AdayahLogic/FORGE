@@ -63,6 +63,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
     aegis_res: dict[str, Any] | None = None
     try:
         from AEGIS.aegis_core import evaluate_action_safe
+        from AEGIS.aegis_contract import normalize_aegis_result
 
         project_path = (dispatch_plan.get("project") or {}).get("project_path")
         exec_block = (dispatch_plan or {}).get("execution") or {}
@@ -75,7 +76,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             "action": "adapter_dispatch_call",
         }
 
-        aegis_res = evaluate_action_safe(request=aegis_request)
+        aegis_res = normalize_aegis_result(evaluate_action_safe(request=aegis_request))
         aegis_decision = str(aegis_res.get("aegis_decision") or "allow").strip().lower()
         aegis_reason = str(aegis_res.get("aegis_reason") or "")
         aegis_scope = str(aegis_res.get("aegis_scope") or "runtime_dispatch_only").strip().lower()

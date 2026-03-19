@@ -76,6 +76,8 @@ SUPPORTED_COMMANDS = frozenset({
     "genesis_generate",
     "genesis_refine",
     "genesis_rank",
+    # Controlled studio loop (Phase 12): bounded selection only.
+    "studio_loop_tick",
     "prism_evaluate",
     "prism_status",
     "project_onboard",
@@ -1696,13 +1698,14 @@ def run_command(
                 studio_driver_summary=studio_driver_summary,
                 project_name=str(project_name),
                 live_regression=True,
+                helios_evaluation_mode="live",
             )
 
             cp = payload.get("change_proposal") or {}
             summary_line = (
-                f"helios_status={payload.get('helios_status')}; execution_gated={payload.get('execution_gated')}; "
-                f"proposal_recommended_path={cp.get('recommended_path')}; risk={cp.get('risk_level')}; "
-                f"target_area={cp.get('target_area')}"
+                f"helios_status={payload.get('helios_status')}; helios_mode={payload.get('helios_evaluation_mode')}; "
+                f"execution_gated={payload.get('execution_gated')}; proposal_recommended_path={cp.get('recommended_path')}; "
+                f"risk={cp.get('risk_level')}; target_area={cp.get('target_area')}"
             )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:
@@ -1728,10 +1731,26 @@ def run_command(
                 studio_driver_summary=studio_driver_summary,
                 project_name=str(project_name),
                 live_regression=True,
+                helios_evaluation_mode="live",
             )
             proposal = helios_res.get("change_proposal") or {}
-            cp_summary_line = f"proposal_id={proposal.get('proposal_id')}; recommended_path={proposal.get('recommended_path')}"
+            cp_summary_line = (
+                f"proposal_id={proposal.get('proposal_id')}; recommended_path={proposal.get('recommended_path')}; "
+                f"helios_mode={helios_res.get('helios_evaluation_mode')}"
+            )
             return _result(command=cmd, status="ok", project_name=None, summary=cp_summary_line, payload=proposal)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "studio_loop_tick":
+        # One bounded selection tick; no execution authority.
+        try:
+            from studio_loop import run_studio_loop_tick_safe
+
+            dashboard_summary = build_registry_dashboard_summary()
+            result = run_studio_loop_tick_safe(dashboard_summary=dashboard_summary)
+            summary_line = f"studio_loop_status={result.get('studio_loop_status')}; selected_path={result.get('selected_path')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=result)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 
@@ -1973,7 +1992,14 @@ def run_command(
                 )
                 ranking = result.get("ranking") or []
                 top_score = ranking[0].get("total_score") if ranking and isinstance(ranking[0], dict) else None
-                summary_line = f"genesis_status={result.get('genesis_status')}; top_total_score={top_score}"
+                ranking_conf = result.get("ranking_confidence")
+                aegis_dec = result.get("aegis_decision")
+                gaps = result.get("context_gaps") or []
+                gaps_count = len(gaps) if isinstance(gaps, list) else 0
+                summary_line = (
+                    f"genesis_status={result.get('genesis_status')}; ranking_confidence={ranking_conf}; "
+                    f"aegis_decision={aegis_dec}; top_total_score={top_score}; context_gaps={gaps_count}"
+                )
                 return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=result)
 
             return _result(command=cmd, status="error", project_name=proj_name, summary="Unknown GENESIS mode.", payload={})

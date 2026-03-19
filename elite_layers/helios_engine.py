@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from AEGIS.aegis_contract import normalize_aegis_result
 from elite_layers.change_proposal import build_change_proposal_safe
 from NEXUS.change_safety_gate import evaluate_change_gate_safe
 from NEXUS.regression_checks import run_regression_checks_safe
@@ -104,6 +105,7 @@ def build_helios_expanded_summary(
     studio_driver_summary: dict[str, Any] | None = None,
     project_name: str | None = None,
     live_regression: bool = True,
+    helios_evaluation_mode: str | None = None,
     **kwargs: Any,
 ) -> dict[str, Any]:
     """
@@ -114,6 +116,7 @@ def build_helios_expanded_summary(
       "improvement_category": null,
       "improvement_reason": "...",
       "execution_gated": true,
+      "helios_evaluation_mode": "live" | "dashboard_cached",
       "change_proposal": { ... }
     }
     """
@@ -121,6 +124,9 @@ def build_helios_expanded_summary(
         coord = studio_coordination_summary or {}
         driver = studio_driver_summary or {}
         dash = dashboard_summary or {}
+
+        mode_in = (helios_evaluation_mode or "").strip().lower()
+        helios_mode = mode_in if mode_in in ("live", "dashboard_cached") else ("live" if live_regression else "dashboard_cached")
 
         priority_project = coord.get("priority_project")
         target_project = project_name or priority_project or "jarvis"
@@ -167,8 +173,55 @@ def build_helios_expanded_summary(
         sentinel_status = dash.get("sentinel_summary", {}).get("sentinel_status") if isinstance(dash.get("sentinel_summary"), dict) else None
         sentinel_risk_level = dash.get("sentinel_summary", {}).get("risk_level") if isinstance(dash.get("sentinel_summary"), dict) else None
 
+        prism_result = dash.get("prism_result") if isinstance(dash.get("prism_result"), dict) else {}
+        prism_status = str(prism_result.get("prism_status") or "").strip().lower()
+        prism_recommendation = str(prism_result.get("recommendation") or "").strip().lower()
+
+        last_aegis_decision = dash.get("last_aegis_decision")
+        if isinstance(last_aegis_decision, dict):
+            normalized_aegis = normalize_aegis_result(last_aegis_decision)
+        else:
+            normalized_aegis = normalize_aegis_result(None)
+        aegis_decision = normalized_aegis.get("aegis_decision")
+
         # Determine helios status.
-        if gate_status in ("blocked", "error_fallback") or regression_status in ("blocked", "error_fallback"):
+        effective_gate_status = gate_status
+        gate_review_required_effective = gate_review_required
+
+        # AEGIS is an enforcement layer: deny/error_fallback should push HELIOS to defer.
+        blocked_by: list[str] = []
+        if aegis_decision in ("deny", "error_fallback"):
+            effective_gate_status = "blocked"
+            gate_review_required_effective = True
+            blocked_by.append(f"aegis_decision={aegis_decision}")
+
+        # VERITAS/SENTINEL review posture should increase conservatism.
+        if veritas_status in ("error_fallback", "review_required"):
+            effective_gate_status = effective_gate_status if effective_gate_status != "blocked" else effective_gate_status
+            gate_review_required_effective = True
+            blocked_by.append(f"veritas={veritas_status}")
+        if sentinel_status in ("error_fallback", "review_required"):
+            gate_review_required_effective = True
+            blocked_by.append(f"sentinel={sentinel_status}")
+        if _safe_lower(sentinel_risk_level) == "high":
+            effective_gate_status = "blocked" if effective_gate_status != "blocked" else effective_gate_status
+            gate_review_required_effective = True
+            blocked_by.append("sentinel_risk=high")
+
+        # PRISM context is a planning/ideation signal; insufficient input should lower confidence and trigger review.
+        if prism_status and prism_status != "evaluated":
+            gate_review_required_effective = True
+            if effective_gate_status != "blocked":
+                effective_gate_status = "review_required"
+            blocked_by.append(f"prism={prism_status}")
+        elif prism_recommendation == "hold":
+            # Hold indicates potential creativity/context gaps: request review rather than deferring.
+            gate_review_required_effective = True
+            if effective_gate_status != "blocked":
+                effective_gate_status = "review_required"
+            blocked_by.append("prism_recommendation=hold")
+
+        if effective_gate_status in ("blocked", "error_fallback") or regression_status in ("blocked", "error_fallback"):
             helios_status = "deferred"
         elif execution_gated:
             helios_status = "gated"
@@ -185,12 +238,12 @@ def build_helios_expanded_summary(
                 target_area="none",
                 change_type="refactor",
                 selected_priority=None,
-                gate_status=gate_status,
-                gate_review_required=gate_review_required,
+                gate_status=effective_gate_status,
+                gate_review_required=gate_review_required_effective,
                 regression_status=regression_status,
                 execution_allowed=execution_allowed,
                 proposed_actions=[],
-                blocked_by=["no_candidate_selected"],
+                blocked_by=["no_candidate_selected"] + blocked_by,
             )
         else:
             selected_improvement = selected_item
@@ -215,27 +268,18 @@ def build_helios_expanded_summary(
 
             proposed_actions = _derive_proposed_actions_from_item(item=selected_item)
 
-            blocked_by: list[str] = []
             if not gate.get("execution_allowed", False):
-                blocked_by.append(f"change_gate={gate_status}")
+                blocked_by.append(f"change_gate={effective_gate_status}")
             if regression_status != "passed":
                 blocked_by.append(f"regression={regression_status}")
-
-            # Conservatively enrich risk blocking with other systems if present.
-            if veritas_status in ("error_fallback", "review_required"):
-                blocked_by.append(f"veritas={veritas_status}")
-            if sentinel_status in ("error_fallback", "review_required"):
-                blocked_by.append(f"sentinel={sentinel_status}")
-            if _safe_lower(sentinel_risk_level) == "high":
-                blocked_by.append("sentinel_risk=high")
 
             change_proposal = build_change_proposal_safe(
                 proposal_id=proposal_id,
                 target_area=target_area,
                 change_type=change_type,
                 selected_priority=priority,
-                gate_status=gate_status,
-                gate_review_required=gate_review_required,
+                gate_status=effective_gate_status,
+                gate_review_required=gate_review_required_effective,
                 regression_status=regression_status,
                 execution_allowed=execution_allowed,
                 proposed_actions=proposed_actions,
@@ -244,8 +288,10 @@ def build_helios_expanded_summary(
 
             improvement_reason = (
                 f"Selected item={selected_item.get('item_id')}; "
-                f"gate={gate_status} (review_required={gate_review_required}, execution_allowed={execution_allowed}); "
-                f"regression={regression_status}."
+                f"gate={effective_gate_status} (review_required={gate_review_required_effective}, execution_allowed={execution_allowed}); "
+                f"regression={regression_status}; veritas={veritas_status}; sentinel={sentinel_status}; "
+                f"aegis={aegis_decision}; prism={prism_status or 'none'}:{prism_recommendation or 'none'}; "
+                f"mode={helios_mode}."
             )
 
         return {
@@ -254,6 +300,7 @@ def build_helios_expanded_summary(
             "improvement_category": improvement_category,
             "improvement_reason": improvement_reason,
             "execution_gated": bool(execution_gated),
+            "helios_evaluation_mode": helios_mode,
             "change_proposal": change_proposal,
         }
     except Exception as e:
@@ -264,6 +311,7 @@ def build_helios_expanded_summary(
             "improvement_category": None,
             "improvement_reason": f"HELIOS expanded evaluation failed: {e}",
             "execution_gated": True,
+            "helios_evaluation_mode": (helios_evaluation_mode or "dashboard_cached"),
             "change_proposal": build_change_proposal_safe(
                 proposal_id="helios-change-proposal-error_fallback",
                 target_area="none",
@@ -290,6 +338,7 @@ def build_helios_expanded_summary_safe(**kwargs: Any) -> dict[str, Any]:
             "improvement_category": None,
             "improvement_reason": "HELIOS expanded evaluation failed.",
             "execution_gated": True,
+            "helios_evaluation_mode": kwargs.get("helios_evaluation_mode") or "dashboard_cached",
             "change_proposal": build_change_proposal_safe(
                 proposal_id="helios-change-proposal-error_fallback",
                 target_area="none",

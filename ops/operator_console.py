@@ -92,7 +92,7 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("self_improvement_backlog, improve_system")
     print("change_gate, regression_check")
     print("genesis_generate, genesis_refine, genesis_rank")
-    print("helios_status, helios_proposal")
+    print("helios_status, helios_proposal, studio_loop_tick")
 
     print("\n=== Elite Layers ===")
     print("titan_status, leviathan_status, helios_status")
@@ -107,6 +107,7 @@ def _text_console(snapshot: dict[str, Any]) -> None:
         selected = helios.get("selected_improvement") or {}
 
         print("Status:", helios.get("helios_status"))
+        print("HELIOS mode:", helios.get("helios_evaluation_mode"))
         print("Selected improvement:", selected.get("item_id") or "(none)")
         print("Improvement category:", helios.get("improvement_category"))
         print("Proposal target area:", proposal.get("target_area"))
@@ -164,6 +165,10 @@ def _text_console(snapshot: dict[str, Any]) -> None:
 
         genesis = _run_command("genesis_rank", project_name=str(priority_project)).get("payload") or {}
         print("Status:", genesis.get("genesis_status"))
+        print("Ranking confidence:", genesis.get("ranking_confidence"))
+        print("AEGIS decision:", genesis.get("aegis_decision"))
+        gaps = genesis.get("context_gaps") or []
+        print("Context gaps:", ", ".join([str(g) for g in gaps]) if isinstance(gaps, list) and gaps else "(none)")
         ranking = genesis.get("ranking") or []
         if ranking:
             shown = ranking[:5]
@@ -177,6 +182,18 @@ def _text_console(snapshot: dict[str, Any]) -> None:
             print("Ranking: (none)")
     except Exception:
         print("(GENESIS unavailable)")
+
+    print("\n=== Studio Loop (Bounded) ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        loop = _run_command("studio_loop_tick").get("payload") or {}
+        print("Status:", loop.get("studio_loop_status"))
+        print("Selected path:", loop.get("selected_path"))
+        print("Selected project:", loop.get("selected_project"))
+        print("Reason:", loop.get("loop_reason"))
+    except Exception:
+        print("(studio_loop_tick unavailable)")
 
     print("\n=== PRISM Actions ===")
     print("prism_evaluate, prism_status")
@@ -290,6 +307,10 @@ def _run_streamlit(st: Any) -> None:
         "- Refine: `genesis_refine`\n"
         "- Rank: `genesis_rank`"
     )
+    st.sidebar.markdown(
+        "### HELIOS Loop Control (Phase 12)\n"
+        "- Studio loop tick: `studio_loop_tick`"
+    )
 
     action = st.sidebar.selectbox(
         "Action",
@@ -317,6 +338,7 @@ def _run_streamlit(st: Any) -> None:
             "genesis_generate",
             "genesis_refine",
             "genesis_rank",
+            "studio_loop_tick",
             "runtime_route",
             "model_route",
             "deployment_preflight",

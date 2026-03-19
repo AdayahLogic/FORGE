@@ -4,6 +4,8 @@ from typing import Any
 
 from PRISM.prism_engine import evaluate_prism_safe
 
+from elite_layers.genesis_refinement import refine_idea_from_prism_safe
+
 
 def _clamp_0_100(n: float) -> int:
     if n < 0:
@@ -180,48 +182,8 @@ def genesis_refine(
         notes=notes,
     )
 
-    rec = str(prism_res.get("recommendation") or "hold").strip().lower()
-    scores = prism_res.get("scores") or {}
-
-    improved = False
-
-    # Especially refine when PRISM recommends "hold".
-    if rec in ("hold", "revise") or prism_res.get("prism_status") != "evaluated":
-        # Fill missing fields (deterministic, conservative).
-        if not target_audience:
-            target_audience = "Busy teams that need fast, reliable outcomes"
-            improved = True
-
-        if not monetization_model:
-            monetization_model = "subscription"
-            improved = True
-
-        if not feature_list:
-            feature_list = _safe_list(base.get("feature_list"))
-            if not feature_list:
-                feature_list = ["Guided workflow", "Clear inputs/outputs"]
-            improved = True
-
-        # Improve launch angle based on where PRISM is weakest.
-        clarity = int(scores.get("clarity") or 0)
-        if clarity < 55:
-            launch_angle = "Clear and specific value proposition (reduce confusion)."
-            improved = True
-        elif rec == "hold":
-            launch_angle = prism_res.get("strongest_launch_angle") or "Reduce friction and time-to-value."
-            improved = True
-
-        # Tighten product concept/promise when missing.
-        if not product_concept:
-            product_concept = f"{problem_solved or base.get('objective') or 'A useful product'} for {target_audience}"
-            improved = True
-
-        # Add a short specificity note when friction suggests insufficient clarity.
-        if improved:
-            extra_note = "Refined to reduce messaging friction and improve audience clarity."
-            notes = f"{(notes + ' | ') if notes else ''}{extra_note}".strip()
-
-    refined_idea = {
+    # Create a deterministic "filled" candidate idea first.
+    filled_idea = {
         **idea_in,
         "product_concept": product_concept,
         "problem_solved": problem_solved,
@@ -233,7 +195,28 @@ def genesis_refine(
         "notes": notes,
     }
 
-    return {"genesis_status": "refined" if improved else "refine_noop", "ideas": [refined_idea], "ranking": []}
+    # Mark conservatively: only call the refinement helper when PRISM is giving
+    # hold/revise signals or when the input isn't fully evaluated.
+    rec = str(prism_res.get("recommendation") or "hold").strip().lower()
+    prism_status = str(prism_res.get("prism_status") or "").strip().lower()
+    should_refine = rec in ("hold", "revise") or prism_status != "evaluated"
+
+    refined_idea = filled_idea
+    if should_refine:
+        # PRISM-score weak points => targeted deterministic refinements.
+        refined_idea = refine_idea_from_prism_safe(idea=filled_idea, prism_result=prism_res)
+
+        # If PRISM evaluated to insufficient input, avoid pretending: still
+        # apply minimal deterministic fill when fields are empty.
+        if not refined_idea.get("target_audience"):
+            refined_idea["target_audience"] = "Busy teams that need fast, reliable outcomes"
+        if not refined_idea.get("monetization_model"):
+            refined_idea["monetization_model"] = "subscription"
+        if not refined_idea.get("feature_list"):
+            refined_idea["feature_list"] = ["Guided workflow", "Clear inputs/outputs"]
+
+    genesis_status = "refined" if should_refine else "refine_noop"
+    return {"genesis_status": genesis_status, "ideas": [refined_idea], "ranking": []}
 
 
 def _extract_aegis_decision(project_state: dict[str, Any]) -> str | None:
@@ -308,6 +291,18 @@ def genesis_rank(
     sentinel_status = sentinel_res.get("sentinel_status")
     sentinel_risk_level = sentinel_res.get("risk_level")
 
+    context_gaps: list[str] = []
+    if not isinstance(project_state.get("last_aegis_decision"), dict):
+        context_gaps.append("last_aegis_decision_missing")
+    if veritas_status in (None, "", "error_fallback"):
+        context_gaps.append("veritas_unavailable")
+    if sentinel_status in (None, "", "error_fallback"):
+        context_gaps.append("sentinel_unavailable")
+    if not project_state.get("guardrail_result") and not project_state.get("guardrail_status"):
+        context_gaps.append("guardrail_signals_missing")
+
+    any_prism_insufficient_input = False
+
     ranked: list[dict[str, Any]] = []
     for idea in ideas:
         idea_in = dict(idea or {})
@@ -325,6 +320,10 @@ def genesis_rank(
             feature_list=idea_in.get("feature_list"),
             notes=idea_in.get("notes"),
         )
+
+        prism_status = str(prism_res.get("prism_status") or "").strip().lower()
+        if prism_status != "evaluated":
+            any_prism_insufficient_input = True
 
         scores = prism_res.get("scores") or {}
         success_estimate = float(scores.get("success_estimate") or 0)
@@ -355,6 +354,10 @@ def genesis_rank(
         )
         total_score = _clamp_0_100(adjusted)
 
+        # Honesty: if PRISM didn't fully evaluate the inputs, reduce trust in ranking.
+        if prism_status != "evaluated":
+            total_score = _clamp_0_100(total_score * 0.55)
+
         ranked.append(
             {
                 "idea_id": idea_id,
@@ -378,7 +381,32 @@ def genesis_rank(
     else:
         genesis_status = "ranked"
 
-    return {"genesis_status": genesis_status, "ideas": ideas, "ranking": ranked_sorted}
+    # Confidence and honesty signals:
+    # If AEGIS blocks OR PRISM lacked full inputs OR consolidated engines are unavailable,
+    # lower confidence instead of pretending.
+    aegis_decision_out = aegis_decision or "error_fallback"
+    if aegis_decision_out in ("deny", "error_fallback"):
+        ranking_confidence = "low"
+    elif "veritas_unavailable" in context_gaps or "sentinel_unavailable" in context_gaps:
+        ranking_confidence = "low" if any_prism_insufficient_input else "medium"
+    elif any_prism_insufficient_input:
+        ranking_confidence = "medium"
+    elif context_gaps:
+        ranking_confidence = "medium"
+    else:
+        ranking_confidence = "high"
+
+    if any_prism_insufficient_input and "prism_insufficient_input" not in context_gaps:
+        context_gaps.append("prism_insufficient_input")
+
+    return {
+        "genesis_status": genesis_status,
+        "ideas": ideas,
+        "ranking": ranked_sorted,
+        "ranking_confidence": ranking_confidence,
+        "aegis_decision": aegis_decision_out,
+        "context_gaps": context_gaps,
+    }
 
 
 def build_genesis_engine_safe(

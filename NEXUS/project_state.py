@@ -155,6 +155,11 @@ def save_project_state(
     if last_prism_summary is None and isinstance(previous.get("last_prism_summary"), dict):
         last_prism_summary = previous.get("last_prism_summary")
 
+    # Normalize AEGIS decision into the stable contract shape.
+    from AEGIS.aegis_contract import normalize_aegis_result
+
+    last_aegis_decision_normalized = normalize_aegis_result(last_aegis_decision)
+
     # Compact audit summaries (no history arrays; derived from existing results)
     lr = (launch_result or {}) if isinstance(launch_result, dict) else {}
     rr = (recovery_result or {}) if isinstance(recovery_result, dict) else {}
@@ -292,7 +297,7 @@ def save_project_state(
         "prism_status": prism_status,
         "prism_result": prism_result or {},
         "last_prism_summary": last_prism_summary or {},
-        "last_aegis_decision": last_aegis_decision or {},
+        "last_aegis_decision": last_aegis_decision_normalized,
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,

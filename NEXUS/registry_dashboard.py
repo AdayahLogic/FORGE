@@ -474,28 +474,6 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             studio_driver_summary=studio_driver_summary,
             portfolio_summary=portfolio_summary,
         )
-        helios_summary = build_helios_summary_safe(
-            dashboard_summary={"guardrail_status_count": guardrail_status_count},
-            studio_coordination_summary=studio_coordination_summary,
-            studio_driver_summary=studio_driver_summary,
-            project_name=(portfolio_summary.get("priority_project") or "jarvis") if isinstance(portfolio_summary, dict) else "jarvis",
-            live_regression=False,
-        )
-        # Phase 11: compact HELIOS proposal visibility.
-        try:
-            cp = helios_summary.get("change_proposal") if isinstance(helios_summary, dict) else {}
-            helios_proposal_summary = {
-                "proposal_id": (cp or {}).get("proposal_id"),
-                "target_area": (cp or {}).get("target_area"),
-                "change_type": (cp or {}).get("change_type"),
-                "scope_level": (cp or {}).get("scope_level"),
-                "risk_level": (cp or {}).get("risk_level"),
-                "requires_review": bool((cp or {}).get("requires_review", True)),
-                "requires_regression_check": bool((cp or {}).get("requires_regression_check", True)),
-                "recommended_path": (cp or {}).get("recommended_path"),
-            }
-        except Exception:
-            helios_proposal_summary = {"proposal_id": None}
         veritas_summary = build_veritas_summary_safe(
             states_by_project=states_by_project,
             studio_coordination_summary=studio_coordination_summary,
@@ -507,6 +485,72 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             studio_coordination_summary=studio_coordination_summary,
             meta_engine_summary=meta_engine_summary,
         )
+
+        # Phase 12: pass cross-intelligence context into HELIOS (cached mode).
+        # Do not run GENESIS/HELIOS as executors; this only improves proposal explainability.
+        try:
+            priority_project = (studio_coordination_summary.get("priority_project") or "").strip()
+            priority_state = states_by_project.get(priority_project) if priority_project else {}
+            prism_result = (priority_state.get("prism_result") or {}) if isinstance(priority_state, dict) else {}
+            last_aegis_decision = (priority_state.get("last_aegis_decision") or None) if isinstance(priority_state, dict) else None
+        except Exception:
+            prism_result = {}
+            last_aegis_decision = None
+
+        helios_summary = build_helios_summary_safe(
+            dashboard_summary={
+                "guardrail_status_count": guardrail_status_count,
+                "veritas_summary": veritas_summary,
+                "sentinel_summary": sentinel_summary,
+                "prism_result": prism_result,
+                "last_aegis_decision": last_aegis_decision,
+            },
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            project_name=(portfolio_summary.get("priority_project") or "jarvis") if isinstance(portfolio_summary, dict) else "jarvis",
+            live_regression=False,
+            helios_evaluation_mode="dashboard_cached",
+        )
+
+        # Phase 11/12: compact HELIOS proposal visibility.
+        try:
+            cp = helios_summary.get("change_proposal") if isinstance(helios_summary, dict) else {}
+            helios_proposal_summary = {
+                "proposal_id": (cp or {}).get("proposal_id"),
+                "target_area": (cp or {}).get("target_area"),
+                "change_type": (cp or {}).get("change_type"),
+                "scope_level": (cp or {}).get("scope_level"),
+                "risk_level": (cp or {}).get("risk_level"),
+                "requires_review": bool((cp or {}).get("requires_review", True)),
+                "requires_regression_check": bool((cp or {}).get("requires_regression_check", True)),
+                "recommended_path": (cp or {}).get("recommended_path"),
+                "helios_evaluation_mode": (helios_summary or {}).get("helios_evaluation_mode") if isinstance(helios_summary, dict) else None,
+            }
+        except Exception:
+            helios_proposal_summary = {"proposal_id": None}
+
+        # Phase 12: lightweight bounded studio loop summary (selection-only).
+        try:
+            from studio_loop import run_studio_loop_tick_safe
+
+            studio_loop_summary = run_studio_loop_tick_safe(
+                dashboard_summary={
+                    "studio_coordination_summary": studio_coordination_summary,
+                    "studio_driver_summary": studio_driver_summary,
+                    "portfolio_summary": portfolio_summary,
+                    "helios_summary": helios_summary,
+                }
+            )
+        except Exception:
+            studio_loop_summary = {
+                "studio_loop_status": "error_fallback",
+                "selected_path": "idle",
+                "selected_project": None,
+                "loop_reason": "studio_loop_tick summary unavailable",
+                "execution_started": False,
+                "bounded_execution": True,
+                "stop_reason": "Safe fallback; no execution performed.",
+            }
 
         # GENESIS (Phase 10): lightweight dashboard visibility.
         # Do not run GENESIS here; just expose the latest persisted signals.
@@ -598,6 +642,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         }
 
         genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
+        studio_loop_summary = {
+            "studio_loop_status": "error_fallback",
+            "selected_path": "idle",
+            "selected_project": None,
+            "loop_reason": "studio_loop_tick summary unavailable",
+            "execution_started": False,
+            "bounded_execution": True,
+            "stop_reason": "Safe fallback; no execution performed.",
+        }
+        prism_result = {}
+        last_aegis_decision = None
 
     return {
         "summary_generated_at": now,
@@ -685,6 +740,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "helios_proposal_summary": helios_proposal_summary,
         # Phase 10 visibility.
         "genesis_summary": genesis_summary,
+        # Phase 12: bounded studio loop (selection-only).
+        "studio_loop_summary": studio_loop_summary,
+        # Phase 12: priority-project signals for cross-intelligence (read-only).
+        "prism_result": prism_result,
+        "last_aegis_decision": last_aegis_decision,
         # PRISM v1 dashboard visibility (read-only persisted outputs).
         "prism_status_by_project": prism_status_by_project,
         "prism_recommendation_count": prism_recommendation_count,
