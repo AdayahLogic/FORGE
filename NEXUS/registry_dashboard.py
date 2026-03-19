@@ -402,6 +402,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         from NEXUS.product_summary import build_product_summary_safe
         from NEXUS.autonomy_summary import build_autonomy_summary_safe
         from NEXUS.helix_summary import build_helix_summary_safe
+        from NEXUS.patch_proposal_summary import build_patch_proposal_summary_safe
         from meta_engines.safety_engine import evaluate_safety_engine
         from meta_engines.security_engine import evaluate_security_engine
         from meta_engines.compliance_engine import evaluate_compliance_engine
@@ -431,6 +432,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             execution_environment_summary=execution_environment_summary,
         )
         helix_summary = build_helix_summary_safe(n_recent=10)
+        patch_proposal_summary = build_patch_proposal_summary_safe(n_recent=20, n_tail=100)
 
         meta_engine_summary = {
             "safety_engine": evaluate_safety_engine(
@@ -867,6 +869,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "product_summary": product_summary,
         "autonomy_summary": autonomy_summary,
         "helix_summary": helix_summary,
+        "patch_proposal_summary": patch_proposal_summary,
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).

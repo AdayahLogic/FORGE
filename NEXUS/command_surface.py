@@ -109,6 +109,9 @@ SUPPORTED_COMMANDS = frozenset({
     "helix_trace",
     # Hardening: integrity checker
     "integrity_check",
+    # Phase 23: patch proposals
+    "patch_proposals",
+    "patch_proposal_details",
 })
 
 
@@ -2784,6 +2787,74 @@ def run_command(
                 "error": str(e),
             }
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=fallback)
+
+    if cmd == "patch_proposals":
+        try:
+            from NEXUS.patch_proposal_summary import build_patch_proposal_summary_safe
+            summary_data = build_patch_proposal_summary_safe(n_recent=20, n_tail=100)
+            if path or proj_name:
+                proj_path = path
+                if not proj_path and proj_name:
+                    key = str(proj_name).strip().lower()
+                    if key in PROJECTS:
+                        proj_path = PROJECTS[key].get("path")
+                if proj_path:
+                    from NEXUS.patch_proposal_registry import read_patch_proposal_journal_tail
+                    tail = read_patch_proposal_journal_tail(project_path=proj_path, n=50)
+                    summary_data["proposals_for_project"] = tail[:20]
+            payload = summary_data
+            summary_line = f"patch_proposal_status={payload.get('patch_proposal_status')}; pending={payload.get('pending_count')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback = {
+                "patch_proposal_status": "error_fallback",
+                "pending_count": 0,
+                "approval_blocked_count": 0,
+                "applied_count": 0,
+                "by_project": {},
+                "recent_proposals": [],
+                "by_risk_level": {},
+                "reason": str(e),
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "patch_proposal_details":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            proj_path = path
+            if not proj_path and proj_name:
+                key = str(proj_name).strip().lower()
+                if key in PROJECTS:
+                    proj_path = PROJECTS[key].get("path")
+            from NEXUS.patch_proposal_registry import get_patch_proposal_by_id, read_patch_proposal_journal_tail
+            from NEXUS.patch_proposal_summary import build_patch_proposal_summary_safe
+            if patch_id and proj_path:
+                found = get_patch_proposal_by_id(project_path=proj_path, patch_id=patch_id)
+                if found:
+                    return _result(command=cmd, status="ok", project_name=proj_name, summary="patch_proposal_found", payload={"patch_proposal": found, "found_in_project": proj_name or "unknown"})
+            if patch_id:
+                for proj_key in PROJECTS:
+                    p = PROJECTS[proj_key].get("path")
+                    if p:
+                        found = get_patch_proposal_by_id(project_path=p, patch_id=patch_id)
+                        if found:
+                            return _result(command=cmd, status="ok", project_name=proj_key, summary="patch_proposal_found", payload={"patch_proposal": found, "found_in_project": proj_key})
+            if proj_path:
+                tail = read_patch_proposal_journal_tail(project_path=proj_path, n=50)
+                payload = {"recent_proposals": tail[:20]}
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"recent={len(payload['recent_proposals'])}", payload=payload)
+            summary_data = build_patch_proposal_summary_safe(n_recent=30, n_tail=200)
+            payload = {"recent_proposals": summary_data.get("recent_proposals", []), "patch_proposal_summary": summary_data}
+            return _result(command=cmd, status="ok", project_name=None, summary=f"recent={len(payload.get('recent_proposals', []))}", payload=payload)
+        except Exception as e:
+            fallback = {
+                "patch_proposal": None,
+                "found_in_project": None,
+                "recent_proposals": [],
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "health":
         try:

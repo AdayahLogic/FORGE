@@ -58,6 +58,16 @@ HELIX_SUMMARY_KEYS = (
     "reason",
 )
 REF_KEYS = ("approval_id_refs", "autonomy_id_refs", "product_id_refs")
+PATCH_PROPOSAL_SUMMARY_KEYS = (
+    "patch_proposal_status",
+    "pending_count",
+    "approval_blocked_count",
+    "applied_count",
+    "by_project",
+    "recent_proposals",
+    "by_risk_level",
+    "reason",
+)
 
 
 def _check_keys(payload: dict[str, Any], required: tuple[str, ...]) -> list[str]:
@@ -116,6 +126,16 @@ def check_helix_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
         "valid": len(missing) == 0,
         "missing_keys": missing,
         "payload_type": "helix_summary",
+    }
+
+
+def check_patch_proposal_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
+    """Check patch proposal summary has required keys. Read-only."""
+    missing = _check_keys(payload, PATCH_PROPOSAL_SUMMARY_KEYS)
+    return {
+        "valid": len(missing) == 0,
+        "missing_keys": missing,
+        "payload_type": "patch_proposal_summary",
     }
 
 
@@ -205,6 +225,14 @@ def run_integrity_check(
     # HELIX summary
     helix = dash.get("helix_summary") or {}
     r = check_helix_summary_shape(helix)
+    r["source"] = "dashboard"
+    results.append(r)
+    if not r["valid"]:
+        all_valid = False
+
+    # Patch proposal summary (Phase 23)
+    patch_proposal = dash.get("patch_proposal_summary") or {}
+    r = check_patch_proposal_summary_shape(patch_proposal)
     r["source"] = "dashboard"
     results.append(r)
     if not r["valid"]:
