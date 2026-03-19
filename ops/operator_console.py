@@ -93,6 +93,25 @@ def _text_console(snapshot: dict[str, Any]) -> None:
     print("change_gate, regression_check")
     print("genesis_generate, genesis_refine, genesis_rank")
     print("helios_status, helios_proposal, studio_loop_tick")
+    print("aegis_status, forgeshell_test, tool_gateway_status")
+
+    print("\n=== AEGIS / ForgeShell ===")
+    try:
+        from NEXUS.command_surface import run_command as _run_command
+
+        aegis = _run_command("aegis_status", project_name=str(priority_project)).get("payload") or {}
+        print("AEGIS decision:", aegis.get("aegis_decision"))
+        print("Action mode:", aegis.get("action_mode"))
+        print("Scope:", aegis.get("aegis_scope"))
+        print("Approval required:", aegis.get("approval_required"))
+        print("Approval signal only:", aegis.get("approval_signal_only"))
+        print("Workspace valid:", aegis.get("workspace_valid"))
+        print("File guard status:", aegis.get("file_guard_status"))
+        fs = _run_command("forgeshell_test", project_name=str(priority_project)).get("payload") or {}
+        print("ForgeShell test status:", fs.get("forgeshell_status"))
+        print("ForgeShell exit_code:", fs.get("exit_code"), "timeout_hit:", fs.get("timeout_hit"))
+    except Exception:
+        print("(AEGIS/ForgeShell unavailable)")
 
     print("\n=== Elite Layers ===")
     print("titan_status, leviathan_status, helios_status")
@@ -311,6 +330,12 @@ def _run_streamlit(st: Any) -> None:
         "### HELIOS Loop Control (Phase 12)\n"
         "- Studio loop tick: `studio_loop_tick`"
     )
+    st.sidebar.markdown(
+        "### AEGIS / ForgeShell (Phase 13)\n"
+        "- AEGIS status: `aegis_status`\n"
+        "- ForgeShell test: `forgeshell_test`\n"
+        "- Tool gateway: `tool_gateway_status`"
+    )
 
     action = st.sidebar.selectbox(
         "Action",
@@ -339,6 +364,9 @@ def _run_streamlit(st: Any) -> None:
             "genesis_refine",
             "genesis_rank",
             "studio_loop_tick",
+            "aegis_status",
+            "forgeshell_test",
+            "tool_gateway_status",
             "runtime_route",
             "model_route",
             "deployment_preflight",

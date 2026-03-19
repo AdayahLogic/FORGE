@@ -25,6 +25,11 @@ def validate_workspace(request: dict[str, Any] | None = None) -> dict[str, Any]:
     project_path = _to_path(req.get("project_path"))
     if not project_path:
         return {"ok": False, "reason": "project_path missing or invalid."}
+    # Phase 13: stronger workspace control — project_path must exist and be a directory.
+    if not project_path.exists():
+        return {"ok": False, "reason": "project_path does not exist."}
+    if not project_path.is_dir():
+        return {"ok": False, "reason": "project_path is not a directory."}
 
     candidate_paths = req.get("candidate_paths") or []
     if not isinstance(candidate_paths, list) or not candidate_paths:

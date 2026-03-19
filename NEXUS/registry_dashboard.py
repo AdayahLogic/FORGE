@@ -569,6 +569,35 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                     "sentinel_status": sentinel_summary.get("sentinel_status") if isinstance(sentinel_summary, dict) else None,
                 },
             }
+
+            # Phase 13: AEGIS / ForgeShell / tool gateway lightweight summaries.
+            priority_path = (PROJECTS.get(priority_project) or {}).get("path") if priority_project else None
+            try:
+                from AEGIS.aegis_contract import normalize_aegis_result
+                aegis_normalized = normalize_aegis_result(last_aegis) if isinstance(last_aegis, dict) else normalize_aegis_result(None)
+                aegis_summary = {k: aegis_normalized.get(k) for k in ("aegis_decision", "aegis_scope", "action_mode", "approval_required", "approval_signal_only", "workspace_valid", "file_guard_status")}
+            except Exception:
+                aegis_summary = {"aegis_decision": None, "aegis_scope": None, "action_mode": None, "approval_required": False}
+            try:
+                from AEGIS.forgeshell import execute_forgeshell_command_safe
+                fs_res = execute_forgeshell_command_safe(command_family="shell_test", project_path=priority_path, timeout_seconds=8.0)
+                forgeshell_summary = {
+                    "forgeshell_status": fs_res.get("forgeshell_status"),
+                    "exit_code": fs_res.get("exit_code"),
+                    "timeout_hit": bool(fs_res.get("timeout_hit")),
+                }
+            except Exception:
+                forgeshell_summary = {"forgeshell_status": "idle", "exit_code": None, "timeout_hit": False}
+            try:
+                from AEGIS.tool_gateway import route_tool_request_safe
+                tg_res = route_tool_request_safe(tool_family="evaluation", project_path=priority_path, action_mode="evaluation")
+                tool_gateway_summary = {
+                    "tool_gateway_status": tg_res.get("tool_gateway_status"),
+                    "tool_family": tg_res.get("tool_family"),
+                    "policy_decision": tg_res.get("policy_decision"),
+                }
+            except Exception:
+                tool_gateway_summary = {"tool_gateway_status": "idle", "tool_family": None, "policy_decision": None}
         except Exception:
             genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
     except Exception:
@@ -642,6 +671,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         }
 
         genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
+        aegis_summary = {"aegis_decision": None, "aegis_scope": None, "action_mode": None, "approval_required": False}
+        forgeshell_summary = {"forgeshell_status": "idle", "exit_code": None, "timeout_hit": False}
+        tool_gateway_summary = {"tool_gateway_status": "idle", "tool_family": None, "policy_decision": None}
         studio_loop_summary = {
             "studio_loop_status": "error_fallback",
             "selected_path": "idle",
@@ -745,6 +777,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         # Phase 12: priority-project signals for cross-intelligence (read-only).
         "prism_result": prism_result,
         "last_aegis_decision": last_aegis_decision,
+        # Phase 13: AEGIS / ForgeShell / tool gateway.
+        "aegis_summary": aegis_summary,
+        "forgeshell_summary": forgeshell_summary,
+        "tool_gateway_summary": tool_gateway_summary,
         # PRISM v1 dashboard visibility (read-only persisted outputs).
         "prism_status_by_project": prism_status_by_project,
         "prism_recommendation_count": prism_recommendation_count,

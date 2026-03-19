@@ -85,6 +85,10 @@ SUPPORTED_COMMANDS = frozenset({
     "improve_system",
     "change_gate",
     "regression_check",
+    # AEGIS Phase 13
+    "aegis_status",
+    "forgeshell_test",
+    "tool_gateway_status",
 })
 
 
@@ -2200,6 +2204,50 @@ def run_command(
                 )
             payload = regression
             return _result(command=cmd, status="ok", project_name=proj_name, summary=f"regression_status={payload.get('regression_status')}", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "aegis_status":
+        try:
+            from AEGIS.aegis_contract import normalize_aegis_result
+            from AEGIS.aegis_core import evaluate_action_safe
+            if path:
+                loaded = load_project_state(path)
+                aegis_raw = (loaded.get("last_aegis_decision") or {}) if isinstance(loaded.get("last_aegis_decision"), dict) else None
+                if not aegis_raw:
+                    aegis_raw = evaluate_action_safe(request={"project_name": proj_name, "project_path": path, "action_mode": "evaluation"})
+                payload = normalize_aegis_result(aegis_raw)
+            else:
+                payload = normalize_aegis_result(evaluate_action_safe(request={"project_name": proj_name, "action_mode": "evaluation"}))
+            summary = f"aegis_decision={payload.get('aegis_decision')}; scope={payload.get('aegis_scope')}; approval_required={payload.get('approval_required')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "forgeshell_test":
+        try:
+            from AEGIS.forgeshell import execute_forgeshell_command_safe
+            result = execute_forgeshell_command_safe(
+                command_family="shell_test",
+                project_path=path,
+                timeout_seconds=15.0,
+            )
+            status_key = result.get("forgeshell_status")
+            summary = f"forgeshell_status={status_key}; exit_code={result.get('exit_code')}; timeout_hit={result.get('timeout_hit')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e), "forgeshell_status": "error_fallback"})
+
+    if cmd == "tool_gateway_status":
+        try:
+            from AEGIS.tool_gateway import route_tool_request_safe
+            result = route_tool_request_safe(
+                tool_family="evaluation",
+                project_path=path,
+                action_mode="evaluation",
+            )
+            summary = f"tool_gateway_status={result.get('tool_gateway_status')}; tool_family={result.get('tool_family')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary, payload=result)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 

@@ -32,11 +32,15 @@ def evaluate_action(request: dict[str, Any]) -> dict[str, Any]:
         else:
             action_mode = "evaluation"
 
+    tool_family = str(req.get("tool_family") or "").strip() or None
+
     # Environment is used by policy rules.
     req_env = dict(req)
     req_env["environment"] = environment_controller.determine_environment(req_env)
     req_env["action_mode"] = action_mode
     req_env["aegis_scope"] = aegis_scope
+    if tool_family:
+        req_env["tool_family"] = tool_family
 
     # 1) policy_engine
     policy_res = policy_engine.evaluate_policy(req_env)
@@ -50,16 +54,46 @@ def evaluate_action(request: dict[str, Any]) -> dict[str, Any]:
 
     # 2) workspace_manager (skip in evaluation mode when project_path is missing)
     project_path = req_env.get("project_path")
+    workspace_valid: bool | None = None
     if not (action_mode == "evaluation" and not project_path):
         ws_res = workspace_manager.validate_workspace(req_env)
-        if not ws_res.get("ok", False):
+        workspace_valid = bool(ws_res.get("ok", False))
+        if not workspace_valid:
             decision = "deny"
             reason = ws_res.get("reason") or "Workspace validation failed."
 
+    # 2b) file_guard for mutation/file paths when candidate paths provided (Phase 13)
+    file_guard_status: str | None = None
+    if decision == "allow" and (action_mode == "mutation" or tool_family in ("file_read", "file_write")):
+        candidate_paths = req.get("candidate_paths") or req.get("requested_writes") or req.get("requested_reads")
+        if candidate_paths:
+            try:
+                from AEGIS.file_guard import evaluate_file_guard_safe
+                fg = evaluate_file_guard_safe(
+                    project_path=project_path,
+                    action_mode=action_mode,
+                    requested_reads=req.get("requested_reads") or (candidate_paths if tool_family == "file_read" else []),
+                    requested_writes=req.get("requested_writes") or (candidate_paths if action_mode == "mutation" or tool_family == "file_write" else []),
+                )
+                file_guard_status = fg.get("file_guard_status")
+                if file_guard_status in ("deny", "error_fallback"):
+                    decision = "deny"
+                    reason = fg.get("file_guard_reason") or "File guard denied."
+            except Exception:
+                file_guard_status = "error_fallback"
+                decision = "deny"
+                reason = "File guard evaluation failed."
+
     # 3) approval_gateway (only for approval_required)
     approval_route: dict[str, Any] | None = None
+    approval_signal_only: bool = True
+    approval_reason: str | None = None
+    approval_scope: str | None = None
     if decision == "approval_required":
         approval_route = approval_gateway.route_to_approval(req_env)
+        approval_signal_only = bool(approval_route.get("approval_signal_only", True))
+        approval_reason = approval_route.get("approval_reason")
+        approval_scope = approval_route.get("approval_scope")
         # Honest marker wording for downstream display.
         reason = f"{reason} (routing marker only; not a full approval service)."
 
@@ -81,6 +115,13 @@ def evaluate_action(request: dict[str, Any]) -> dict[str, Any]:
         project_name=req.get("project_name"),
         project_path=req.get("project_path"),
         requires_human_review=requires_human_review,
+        approval_required=(decision == "approval_required"),
+        approval_signal_only=approval_signal_only,
+        approval_reason=approval_reason,
+        approval_scope=approval_scope,
+        tool_family=tool_family,
+        workspace_valid=workspace_valid,
+        file_guard_status=file_guard_status,
     )
 
 
