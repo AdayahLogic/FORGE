@@ -398,6 +398,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         from portfolio_manager import build_portfolio_summary_safe
         from runtime_infrastructure import build_runtime_infrastructure_summary_safe
         from NEXUS.execution_environment_summary import build_execution_environment_summary_safe
+        from NEXUS.approval_summary import build_approval_summary_safe
         from meta_engines.safety_engine import evaluate_safety_engine
         from meta_engines.security_engine import evaluate_security_engine
         from meta_engines.compliance_engine import evaluate_compliance_engine
@@ -420,6 +421,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         execution_environment_summary = build_execution_environment_summary_safe(
             runtime_target_summary=get_runtime_target_summary(),
         )
+        approval_summary = build_approval_summary_safe(n_recent=20, n_tail=100)
 
         meta_engine_summary = {
             "safety_engine": evaluate_safety_engine(
@@ -645,6 +647,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "per_project_summaries": {},
             "reason": "Execution environment summary failed.",
         }
+        approval_summary = {
+            "approval_status": "error_fallback",
+            "pending_count_total": 0,
+            "pending_by_project": {},
+            "recent_approvals": [],
+            "approval_types": [],
+            "reason": "Approval summary failed.",
+        }
         meta_engine_summary = {}
         meta_engine_review_required_count = 0
         titan_summary = {
@@ -800,6 +810,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "portfolio_summary": portfolio_summary,
         "runtime_infrastructure_summary": runtime_infrastructure_summary,
         "execution_environment_summary": execution_environment_summary,
+        "approval_summary": approval_summary,
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).

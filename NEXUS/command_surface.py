@@ -92,6 +92,9 @@ SUPPORTED_COMMANDS = frozenset({
     "forgeshell_status",
     "forgeshell_test",
     "tool_gateway_status",
+    # Phase 18: approval system
+    "pending_approvals",
+    "approval_details",
 })
 
 
@@ -1480,6 +1483,7 @@ def run_command(
                 "planned_environments": [],
                 "runtime_target_mapping": [],
                 "environments": [],
+                "per_project_summaries": {},
                 "reason": "Execution environment summary unavailable.",
             }
             payload = dashboard_summary.get("execution_environment_summary") if isinstance(dashboard_summary, dict) else None
@@ -1512,6 +1516,7 @@ def run_command(
                     "planned_environments": [],
                     "runtime_target_mapping": [],
                     "environments": [],
+                    "per_project_summaries": {},
                     "reason": "Execution environment summary failed.",
                     "error": str(e),
                 },
@@ -2339,6 +2344,63 @@ def run_command(
             )
             summary = f"tool_gateway_status={result.get('tool_gateway_status')}; tool_family={result.get('tool_family')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "pending_approvals":
+        try:
+            from NEXUS.approval_summary import build_approval_summary_safe
+            summary_data = build_approval_summary_safe(n_recent=20, n_tail=100)
+            if path or proj_name:
+                proj_path = path
+                if not proj_path and proj_name:
+                    key = str(proj_name).strip().lower()
+                    if key in PROJECTS:
+                        proj_path = PROJECTS[key].get("path")
+                if proj_path:
+                    from NEXUS.approval_registry import get_pending_approvals
+                    pending = get_pending_approvals(project_path=proj_path, n=50)
+                    summary_data["pending_for_project"] = pending
+            payload = summary_data
+            summary_line = f"approval_status={payload.get('approval_status')}; pending_count={payload.get('pending_count_total')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "approval_details":
+        try:
+            approval_id = (kwargs.get("approval_id") or "").strip() or None
+            proj_path = path
+            if not proj_path and proj_name:
+                key = str(proj_name).strip().lower()
+                if key in PROJECTS:
+                    proj_path = PROJECTS[key].get("path")
+            from NEXUS.approval_registry import read_approval_journal_tail
+            from NEXUS.approval_summary import build_approval_summary_safe
+            if approval_id:
+                found = None
+                found_project = None
+                for proj_key in PROJECTS:
+                    p = PROJECTS[proj_key].get("path")
+                    if p:
+                        tail = read_approval_journal_tail(project_path=p, n=200)
+                        for r in tail:
+                            if r.get("approval_id") == approval_id:
+                                found = r
+                                found_project = proj_key
+                                break
+                    if found:
+                        break
+                payload = {"approval": found, "found_in_project": found_project}
+                summary_line = "approval_found" if found else "approval_not_found"
+                return _result(command=cmd, status="ok", project_name=found_project, summary=summary_line, payload=payload)
+            if proj_path:
+                tail = read_approval_journal_tail(project_path=proj_path, n=50)
+                payload = {"recent_approvals": tail[:20]}
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"recent={len(payload['recent_approvals'])}", payload=payload)
+            summary_data = build_approval_summary_safe(n_recent=30, n_tail=200)
+            payload = {"recent_approvals": summary_data.get("recent_approvals", []), "approval_summary": summary_data}
+            return _result(command=cmd, status="ok", project_name=None, summary=f"recent={len(payload.get('recent_approvals', []))}", payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 

@@ -101,6 +101,21 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             }
 
         if aegis_decision == "approval_required":
+            # Phase 18: create approval record and persist before blocking
+            try:
+                from NEXUS.approval_builder import build_approval_record
+                from NEXUS.approval_registry import append_approval_record_safe
+
+                approval_record = build_approval_record(
+                    dispatch_plan=dispatch_plan,
+                    aegis_result=aegis_res,
+                    approval_type="aegis_policy",
+                    reason=aegis_reason or "Human approval required.",
+                )
+                append_approval_record_safe(project_path=project_path, record=approval_record)
+                approval_id = approval_record.get("approval_id")
+            except Exception:
+                approval_id = None
             queued = build_runtime_execution_result(
                 runtime=runtime_target_id,
                 status="skipped",
@@ -113,10 +128,50 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             )
             if isinstance(queued, dict):
                 queued["aegis"] = aegis_res
+                if approval_id:
+                    queued["approval_id"] = approval_id
+                    queued["approval_required"] = True
             return {
                 "dispatch_status": "skipped",
                 "runtime_target": runtime_target_id,
                 "dispatch_result": queued,
+            }
+
+        # Phase 18: when AEGIS allows but dispatch plan requires human approval, gate before execution
+        if aegis_decision == "allow" and bool(exec_block.get("requires_human_approval")):
+            try:
+                from NEXUS.approval_builder import build_approval_record
+                from NEXUS.approval_registry import append_approval_record_safe
+
+                approval_record = build_approval_record(
+                    dispatch_plan=dispatch_plan,
+                    aegis_result=aegis_res,
+                    approval_type="dispatch_plan",
+                    reason="Dispatch plan requires human approval before execution.",
+                )
+                append_approval_record_safe(project_path=project_path, record=approval_record)
+                approval_id = approval_record.get("approval_id")
+            except Exception:
+                approval_id = None
+            gated = build_runtime_execution_result(
+                runtime=runtime_target_id,
+                status="skipped",
+                message="Approval required: dispatch plan requires human approval before execution.",
+                execution_status="queued",
+                execution_mode="manual_only",
+                next_action="human_review",
+                artifacts=[],
+                errors=[{"reason": "approval_gate: requires_human_approval"}],
+            )
+            if isinstance(gated, dict):
+                gated["aegis"] = aegis_res
+                if approval_id:
+                    gated["approval_id"] = approval_id
+                    gated["approval_required"] = True
+            return {
+                "dispatch_status": "skipped",
+                "runtime_target": runtime_target_id,
+                "dispatch_result": gated,
             }
     except Exception:
         # Fail-safe: if AEGIS fails, do not block execution.
