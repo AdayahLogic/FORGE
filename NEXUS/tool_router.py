@@ -72,6 +72,13 @@ def route_tool(agent_name: str, tool_name: str) -> dict[str, Any]:
     review_required = is_tool_review_required_for_agent(agent, tool)
     human_review = meta.get("human_review_recommended", True) or review_required
 
+    sensitivity = meta.get("sensitivity") or None
+    risk_level = meta.get("risk_level") or None
+    external_internal = meta.get("external_internal") or None
+    allowed_actions = meta.get("allowed_actions") if isinstance(meta.get("allowed_actions"), list) else []
+    tool_family = meta.get("tool_family") or None
+    tool_gateway_families = meta.get("tool_gateway_families") if isinstance(meta.get("tool_gateway_families"), list) else []
+
     return {
         "allowed": True,
         "tool_name": tool_name,
@@ -81,4 +88,10 @@ def route_tool(agent_name: str, tool_name: str) -> dict[str, Any]:
         "review_required": review_required,
         "status": "allowed",
         "category": meta.get("category"),
+        "tool_family": tool_family,
+        "external_internal": external_internal,
+        "sensitivity": sensitivity,
+        "risk_level": risk_level,
+        "allowed_actions": allowed_actions,
+        "tool_gateway_families": tool_gateway_families,
     }

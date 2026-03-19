@@ -17,7 +17,7 @@ from NEXUS.agent_identity_registry import (
 )
 from NEXUS.agent_policy_registry import AGENT_POLICY_REGISTRY
 from NEXUS.agent_registry import get_runtime_routable_agents
-from NEXUS.tool_registry import list_active_tools, list_planned_tools
+from NEXUS.tool_registry import TOOL_REGISTRY, TOOL_CONTRACT_VERSION, list_active_tools, list_planned_tools
 from NEXUS.engine_registry import list_active_engines, list_planned_engines
 from NEXUS.capability_registry import list_active_capabilities, list_planned_capabilities
 from NEXUS.runtime_target_registry import get_runtime_target_summary
@@ -78,11 +78,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     # Tools
     tools_active = list_active_tools()
     tools_planned = list_planned_tools()
+    sensitivity_counts: dict[str, int] = {}
+    for _name, meta in TOOL_REGISTRY.items():
+        s = meta.get("sensitivity") or "unknown"
+        sensitivity_counts[s] = sensitivity_counts.get(s, 0) + 1
     tool_summary: dict[str, Any] = {
         "active_count": len(tools_active),
         "planned_count": len(tools_planned),
         "active_names": tools_active,
         "planned_names": tools_planned,
+        "tool_contract_version": TOOL_CONTRACT_VERSION,
+        "sensitivity_counts": sensitivity_counts,
     }
 
     # Engines
