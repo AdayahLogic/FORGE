@@ -21,6 +21,7 @@ from NEXUS.capability_registry import list_active_capabilities, list_planned_cap
 from NEXUS.registry_dashboard import build_registry_dashboard_summary
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import select_runtime_target
+from NEXUS.execution_environment_summary import build_per_project_environment_summary
 
 from NEXUS.logging_engine import log_system_event
 
@@ -64,6 +65,7 @@ SUPPORTED_COMMANDS = frozenset({
     "forge_os_snapshot",
     "portfolio_status",
     "runtime_infrastructure",
+    "execution_environment",
     "meta_engine_status",
     "titan_status",
     "leviathan_status",
@@ -1469,6 +1471,52 @@ def run_command(
                 },
             )
 
+    if cmd == "execution_environment":
+        try:
+            dashboard_summary = build_registry_dashboard_summary()
+            fallback = {
+                "execution_environment_status": "error_fallback",
+                "active_environments": [],
+                "planned_environments": [],
+                "runtime_target_mapping": [],
+                "environments": [],
+                "reason": "Execution environment summary unavailable.",
+            }
+            payload = dashboard_summary.get("execution_environment_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(payload, dict) or not payload:
+                payload = dict(fallback)
+            else:
+                payload = dict(payload)
+            if path or proj_name:
+                per_project = build_per_project_environment_summary(
+                    project_name=proj_name,
+                    project_path=path,
+                    active_runtime_target="local",
+                )
+                payload["per_project_environment_summary"] = per_project
+            summary_line = (
+                f"execution_environment_status={payload.get('execution_environment_status')}; "
+                f"active={len(payload.get('active_environments') or [])}; "
+                f"planned={len(payload.get('planned_environments') or [])}"
+            )
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=None,
+                summary=str(e),
+                payload={
+                    "execution_environment_status": "error_fallback",
+                    "active_environments": [],
+                    "planned_environments": [],
+                    "runtime_target_mapping": [],
+                    "environments": [],
+                    "reason": "Execution environment summary failed.",
+                    "error": str(e),
+                },
+            )
+
     if cmd == "meta_engine_status":
         try:
             dashboard_summary = build_registry_dashboard_summary()
@@ -1525,6 +1573,14 @@ def run_command(
                 "future_runtimes": [],
                 "reason": "Forge runtime infrastructure summary unavailable.",
             }
+            fallback_exec_env = {
+                "execution_environment_status": "error_fallback",
+                "active_environments": [],
+                "planned_environments": [],
+                "runtime_target_mapping": [],
+                "environments": [],
+                "reason": "Execution environment summary unavailable.",
+            }
             fallback_engine = {
                 "engine_status": "error_fallback",
                 "engine_reason": "Meta engine evaluation unavailable.",
@@ -1548,6 +1604,10 @@ def run_command(
             if not isinstance(runtime_infrastructure_summary, dict) or not runtime_infrastructure_summary:
                 runtime_infrastructure_summary = fallback_runtime
 
+            execution_environment_summary = dashboard_summary.get("execution_environment_summary") if isinstance(dashboard_summary, dict) else None
+            if not isinstance(execution_environment_summary, dict) or not execution_environment_summary:
+                execution_environment_summary = fallback_exec_env
+
             meta_engine_summary = dashboard_summary.get("meta_engine_summary") if isinstance(dashboard_summary, dict) else None
             if not isinstance(meta_engine_summary, dict) or not meta_engine_summary:
                 meta_engine_summary = fallback_meta
@@ -1563,6 +1623,7 @@ def run_command(
             payload = {
                 "portfolio_summary": portfolio_summary,
                 "runtime_infrastructure_summary": runtime_infrastructure_summary,
+                "execution_environment_summary": execution_environment_summary,
                 "meta_engine_summary": meta_engine_summary,
                 "studio_coordination_summary": studio_coordination_summary,
                 "studio_driver_summary": studio_driver_summary,
@@ -1572,6 +1633,7 @@ def run_command(
             summary_line = (
                 f"forge_os_status={payload.get('portfolio_summary', {}).get('portfolio_status')}; "
                 f"runtime_status={payload.get('runtime_infrastructure_summary', {}).get('runtime_infrastructure_status')}; "
+                f"exec_env_status={payload.get('execution_environment_summary', {}).get('execution_environment_status')}; "
                 f"meta_review_required={sum(1 for v in (payload.get('meta_engine_summary') or {}).values() if isinstance(v, dict) and bool(v.get('review_required')))}"
             )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
@@ -1604,9 +1666,18 @@ def run_command(
                 "cost_engine": fallback_engine,
                 "audit_engine": fallback_engine,
             }
+            fallback_exec_env = {
+                "execution_environment_status": "error_fallback",
+                "active_environments": [],
+                "planned_environments": [],
+                "runtime_target_mapping": [],
+                "environments": [],
+                "reason": "Execution environment summary unavailable.",
+            }
             payload = {
                 "portfolio_summary": fallback_portfolio,
                 "runtime_infrastructure_summary": fallback_runtime,
+                "execution_environment_summary": fallback_exec_env,
                 "meta_engine_summary": fallback_meta,
                 "studio_coordination_summary": {},
                 "studio_driver_summary": {},

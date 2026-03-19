@@ -397,6 +397,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     try:
         from portfolio_manager import build_portfolio_summary_safe
         from runtime_infrastructure import build_runtime_infrastructure_summary_safe
+        from NEXUS.execution_environment_summary import build_execution_environment_summary_safe
         from meta_engines.safety_engine import evaluate_safety_engine
         from meta_engines.security_engine import evaluate_security_engine
         from meta_engines.compliance_engine import evaluate_compliance_engine
@@ -416,6 +417,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             studio_driver_summary=studio_driver_summary,
         )
         runtime_infrastructure_summary = build_runtime_infrastructure_summary_safe()
+        execution_environment_summary = build_execution_environment_summary_safe(
+            runtime_target_summary=get_runtime_target_summary(),
+        )
 
         meta_engine_summary = {
             "safety_engine": evaluate_safety_engine(
@@ -632,6 +636,15 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "future_runtimes": [],
             "reason": "Forge runtime infrastructure summary failed.",
         }
+        execution_environment_summary = {
+            "execution_environment_status": "error_fallback",
+            "active_environments": [],
+            "planned_environments": [],
+            "runtime_target_mapping": [],
+            "environments": [],
+            "per_project_summaries": {},
+            "reason": "Execution environment summary failed.",
+        }
         meta_engine_summary = {}
         meta_engine_review_required_count = 0
         titan_summary = {
@@ -786,6 +799,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         # Forge OS Sprint 5 additions (summary-only).
         "portfolio_summary": portfolio_summary,
         "runtime_infrastructure_summary": runtime_infrastructure_summary,
+        "execution_environment_summary": execution_environment_summary,
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).
