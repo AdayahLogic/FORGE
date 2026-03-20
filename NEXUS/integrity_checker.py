@@ -16,6 +16,8 @@ APPROVAL_SUMMARY_KEYS = (
     "pending_by_project",
     "recent_approvals",
     "approval_types",
+    "stale_count",
+    "approved_pending_apply_count",
     "reason",
 )
 PRODUCT_SUMMARY_KEYS = (
@@ -64,6 +66,7 @@ PATCH_PROPOSAL_SUMMARY_KEYS = (
     "proposed_count",
     "approval_required_count",
     "approved_pending_apply_count",
+    "approved_pending_apply_stale_count",
     "rejected_count",
     "blocked_count",
     "applied_count",

@@ -116,6 +116,9 @@ SUPPORTED_COMMANDS = frozenset({
     "approve_patch_proposal",
     "reject_patch_proposal",
     "apply_patch_proposal",
+    # Phase 25: approval maturity
+    "retry_patch_proposal",
+    "approval_trace",
 })
 
 
@@ -2688,6 +2691,8 @@ def run_command(
                 "pending_by_project": {},
                 "recent_approvals": [],
                 "approval_types": [],
+                "stale_count": 0,
+                "approved_pending_apply_count": 0,
                 "reason": str(e),
                 "error": str(e),
             }
@@ -2712,8 +2717,18 @@ def run_command(
                         tail = read_approval_journal_tail(project_path=p, n=200)
                         for r in tail:
                             if r.get("approval_id") == approval_id:
-                                found = r
+                                found = {**r, "_project": proj_key}
                                 found_project = proj_key
+                                ctx = r.get("context") or {}
+                                if ctx.get("patch_id"):
+                                    found["patch_id_ref"] = ctx.get("patch_id")
+                                try:
+                                    from NEXUS.approval_staleness import evaluate_approval_staleness
+                                    is_stale, hours = evaluate_approval_staleness(r)
+                                    found["_stale"] = is_stale
+                                    found["_hours_since_decision"] = round(hours, 1)
+                                except Exception:
+                                    pass
                                 break
                     if found:
                         break
@@ -2816,6 +2831,7 @@ def run_command(
                 "proposed_count": 0,
                 "approval_required_count": 0,
                 "approved_pending_apply_count": 0,
+                "approved_pending_apply_stale_count": 0,
                 "rejected_count": 0,
                 "blocked_count": 0,
                 "applied_count": 0,
@@ -2941,9 +2957,24 @@ def run_command(
             found, found_path, found_key = find_proposal_and_project(patch_id)
             if not found or not found_path:
                 return _result(command=cmd, status="error", project_name=proj_name, summary="Patch proposal not found.", payload={"applied": False, "error": "Patch proposal not found.", "patch_id": patch_id, "patch_applied": False})
-            effective_status, _ = get_proposal_effective_status(project_path=found_path, patch_id=patch_id)
+            effective_status, resolution = get_proposal_effective_status(project_path=found_path, patch_id=patch_id)
             if effective_status != "approved_pending_apply":
                 return _result(command=cmd, status="error", project_name=found_key, summary=f"Proposal must be approved_pending_apply; current={effective_status}.", payload={"applied": False, "error": f"Status={effective_status}", "effective_status": effective_status, "patch_applied": False})
+            from NEXUS.approval_staleness import is_proposal_approval_stale
+            is_stale, hours_since, _ = is_proposal_approval_stale(found_path, patch_id)
+            if is_stale:
+                try:
+                    from NEXUS.learning_writer import append_learning_record_safe
+                    append_learning_record_safe(project_path=found_path, record={
+                        "record_type": "patch_apply_blocked_stale",
+                        "project_name": found_key or "",
+                        "decision_source": "apply_patch_proposal",
+                        "decision_summary": f"patch_id={patch_id}; blocked: approval stale ({hours_since:.1f}h)",
+                        "tags": ["patch_proposal", "stale"],
+                    })
+                except Exception:
+                    pass
+                return _result(command=cmd, status="error", project_name=found_key, summary=f"Approval expired; {hours_since:.1f}h since approval. Re-approve required.", payload={"applied": False, "error": "approval_stale", "hours_since_approval": round(hours_since, 1), "patch_applied": False})
             change_type = str(found.get("change_type") or "").strip().lower()
             if change_type != "diff_patch":
                 return _result(command=cmd, status="error", project_name=found_key, summary=f"Only diff_patch supported; change_type={change_type}.", payload={"applied": False, "error": f"change_type={change_type}", "patch_applied": False})
@@ -2983,6 +3014,104 @@ def run_command(
             return _result(command=cmd, status="ok", project_name=found_key, summary=summary.get("reason", ""), payload={"applied": patch_applied, "patch_applied": patch_applied, "patch_summary": summary, "patch_id": patch_id})
         except Exception as e:
             fallback = {"applied": False, "patch_applied": False, "patch_id": kwargs.get("patch_id", ""), "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "retry_patch_proposal":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            if not patch_id:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id required.", payload={"ready_for_apply": False, "error": "patch_id required.", "patch_id": ""})
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status
+            from NEXUS.approval_staleness import is_proposal_approval_stale, APPROVAL_STALENESS_HOURS
+            found, found_path, found_key = find_proposal_and_project(patch_id)
+            if not found or not found_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Patch proposal not found.", payload={"ready_for_apply": False, "error": "Patch proposal not found.", "patch_id": patch_id})
+            effective_status, resolution = get_proposal_effective_status(project_path=found_path, patch_id=patch_id)
+            if effective_status != "approved_pending_apply":
+                return _result(command=cmd, status="error", project_name=found_key, summary=f"Proposal must be approved_pending_apply; current={effective_status}.", payload={"ready_for_apply": False, "error": f"status={effective_status}", "effective_status": effective_status, "patch_id": patch_id})
+            is_stale, hours_since, _ = is_proposal_approval_stale(found_path, patch_id)
+            if is_stale:
+                try:
+                    from NEXUS.learning_writer import append_learning_record_safe
+                    append_learning_record_safe(project_path=found_path, record={
+                        "record_type": "retry_checked_stale",
+                        "project_name": found_key or "",
+                        "decision_source": "retry_patch_proposal",
+                        "decision_summary": f"patch_id={patch_id}; retry checked: approval stale ({hours_since:.1f}h)",
+                        "tags": ["patch_proposal", "retry", "stale"],
+                    })
+                except Exception:
+                    pass
+                return _result(command=cmd, status="error", project_name=found_key, summary=f"Approval expired; {hours_since:.1f}h since approval. Re-approve required.", payload={"ready_for_apply": False, "error": "approval_stale", "hours_since_approval": round(hours_since, 1), "patch_id": patch_id, "staleness_hours": APPROVAL_STALENESS_HOURS})
+            change_type = str(found.get("change_type") or "").strip().lower()
+            payload_ok = change_type == "diff_patch" and found.get("patch_payload", {}).get("target_relative_path") and found.get("patch_payload", {}).get("search_text")
+            return _result(command=cmd, status="ok", project_name=found_key, summary="Ready for apply.", payload={"ready_for_apply": True, "patch_id": patch_id, "effective_status": effective_status, "hours_since_approval": round(hours_since, 1), "patch_payload_valid": payload_ok, "patch_proposal": {k: v for k, v in found.items() if k != "patch_payload"}})
+        except Exception as e:
+            fallback = {"ready_for_apply": False, "patch_id": kwargs.get("patch_id", ""), "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "approval_trace":
+        try:
+            approval_id = (kwargs.get("approval_id") or "").strip() or None
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            from NEXUS.approval_registry import read_approval_journal_tail
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch, read_patch_proposal_resolution_tail
+            from NEXUS.approval_staleness import evaluate_approval_staleness, evaluate_proposal_approval_staleness
+            from NEXUS.registry import PROJECTS
+            trace: dict[str, Any] = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "hours_since": 0.0}
+            if approval_id:
+                for proj_key in PROJECTS:
+                    p = PROJECTS[proj_key].get("path")
+                    if p:
+                        tail = read_approval_journal_tail(project_path=p, n=200)
+                        for r in tail:
+                            if r.get("approval_id") == approval_id:
+                                trace["approval"] = {**r, "_project": proj_key}
+                                is_stale, hours = evaluate_approval_staleness(r)
+                                trace["is_stale"] = is_stale
+                                trace["hours_since"] = hours
+                                ctx = r.get("context") or {}
+                                pid = ctx.get("patch_id")
+                                if pid:
+                                    prop, prop_path, prop_key = find_proposal_and_project(pid)
+                                    if prop and prop_path:
+                                        trace["patch_proposal"] = {**prop, "_project": prop_key}
+                                        trace["resolution"] = get_latest_resolution_for_patch(prop_path, pid)
+                                        if trace["resolution"]:
+                                            ps, ph = evaluate_proposal_approval_staleness(trace["resolution"])
+                                            trace["proposal_stale"] = ps
+                                            trace["proposal_hours_since"] = ph
+                                break
+                    if trace["approval"]:
+                        break
+                return _result(command=cmd, status="ok", project_name=trace.get("approval", {}).get("_project"), summary="approval_trace" if trace["approval"] else "approval_not_found", payload=trace)
+            if patch_id:
+                prop, prop_path, prop_key = find_proposal_and_project(patch_id)
+                if prop and prop_path:
+                    trace["patch_proposal"] = {**prop, "_project": prop_key}
+                    trace["resolution"] = get_latest_resolution_for_patch(prop_path, patch_id)
+                    effective_status, _ = get_proposal_effective_status(prop_path, patch_id)
+                    trace["effective_status"] = effective_status
+                    if trace["resolution"]:
+                        is_stale, hours = evaluate_proposal_approval_staleness(trace["resolution"])
+                        trace["is_stale"] = is_stale
+                        trace["hours_since"] = hours
+                    aid = trace["resolution"].get("approval_id") if trace["resolution"] else None
+                    if aid:
+                        for proj_key in PROJECTS:
+                            p = PROJECTS[proj_key].get("path")
+                            if p:
+                                atail = read_approval_journal_tail(project_path=p, n=100)
+                                for ar in atail:
+                                    if ar.get("approval_id") == aid:
+                                        trace["approval"] = {**ar, "_project": proj_key}
+                                        break
+                            if trace["approval"]:
+                                break
+                return _result(command=cmd, status="ok", project_name=prop_key if prop else None, summary="patch_trace" if prop else "patch_not_found", payload=trace)
+            return _result(command=cmd, status="error", project_name=None, summary="approval_id or patch_id required.", payload={"error": "approval_id or patch_id required."})
+        except Exception as e:
+            fallback = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "error": str(e)}
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "health":

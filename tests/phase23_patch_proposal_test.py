@@ -123,6 +123,7 @@ def test_integrity_checker_patch_proposal():
         "proposed_count": 0,
         "approval_required_count": 0,
         "approved_pending_apply_count": 0,
+        "approved_pending_apply_stale_count": 0,
         "rejected_count": 0,
         "blocked_count": 0,
         "applied_count": 0,

@@ -3,6 +3,7 @@ NEXUS approval summary layer (Phase 18).
 
 Builds approval visibility for dashboard and command surface.
 Read-only; no approval decisions.
+Phase 25: adds stale count, approved_pending_apply visibility.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from NEXUS.approval_registry import (
     get_pending_approvals,
     read_approval_journal_tail,
 )
+from NEXUS.approval_staleness import evaluate_approval_staleness
 from NEXUS.registry import PROJECTS
 
 
@@ -36,6 +38,8 @@ def build_approval_summary(
     pending_by_project: dict[str, int] = {}
     recent_approvals: list[dict[str, Any]] = []
     approval_types_seen: set[str] = set()
+    stale_count = 0
+    approved_pending_apply_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -45,10 +49,16 @@ def build_approval_summary(
             pending_by_project[proj_key] = count
             tail = read_approval_journal_tail(project_path=path, n=n_recent)
             for r in tail:
-                recent_approvals.append({
-                    **r,
-                    "_project": proj_key,
-                })
+                enriched = {**r, "_project": proj_key}
+                if str(r.get("status") or "").strip().lower() == "approved":
+                    ctx = r.get("context") or {}
+                    if ctx.get("new_status") == "approved_pending_apply":
+                        approved_pending_apply_count += 1
+                    is_stale, _ = evaluate_approval_staleness(r)
+                    if is_stale:
+                        stale_count += 1
+                        enriched["_stale"] = True
+                recent_approvals.append(enriched)
                 at = r.get("approval_type")
                 if at:
                     approval_types_seen.add(str(at))
@@ -60,6 +70,9 @@ def build_approval_summary(
     if pending_count_total > 0:
         status = "pending"
         reason = f"{pending_count_total} approval(s) pending across projects."
+    elif stale_count > 0:
+        status = "clear"
+        reason = f"No pending approvals; {stale_count} stale."
     else:
         status = "clear"
         reason = "No pending approvals."
@@ -70,6 +83,8 @@ def build_approval_summary(
         "pending_by_project": pending_by_project,
         "recent_approvals": recent_approvals,
         "approval_types": sorted(approval_types_seen),
+        "stale_count": stale_count,
+        "approved_pending_apply_count": approved_pending_apply_count,
         "reason": reason,
     }
 
@@ -89,5 +104,7 @@ def build_approval_summary_safe(
             "pending_by_project": {},
             "recent_approvals": [],
             "approval_types": [],
+            "stale_count": 0,
+            "approved_pending_apply_count": 0,
             "reason": "Approval summary evaluation failed.",
         }

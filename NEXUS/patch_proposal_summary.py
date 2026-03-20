@@ -13,6 +13,7 @@ from NEXUS.patch_proposal_registry import (
     read_patch_proposal_journal_tail,
     get_proposal_effective_status,
 )
+from NEXUS.approval_staleness import evaluate_proposal_approval_staleness
 from NEXUS.registry import PROJECTS
 
 
@@ -28,6 +29,7 @@ def build_patch_proposal_summary(
     proposed_count = 0
     approval_required_count = 0
     approved_pending_apply_count = 0
+    approved_pending_apply_stale_count = 0
     rejected_count = 0
     blocked_count = 0
     applied_count = 0
@@ -44,8 +46,13 @@ def build_patch_proposal_summary(
         tail = read_patch_proposal_journal_tail(project_path=path, n=n_tail)
         for r in tail:
             patch_id = r.get("patch_id")
-            effective_status, _ = get_proposal_effective_status(project_path=path, patch_id=patch_id or "")
-            r_with_proj = {**r, "_project": proj_key, "effective_status": effective_status}
+            effective_status, resolution = get_proposal_effective_status(project_path=path, patch_id=patch_id or "")
+            is_stale = False
+            if effective_status == "approved_pending_apply" and resolution:
+                is_stale, _ = evaluate_proposal_approval_staleness(resolution)
+                if is_stale:
+                    approved_pending_apply_stale_count += 1
+            r_with_proj = {**r, "_project": proj_key, "effective_status": effective_status, "_stale": is_stale}
             recent_proposals.append(r_with_proj)
             status_counts[effective_status] = status_counts.get(effective_status, 0) + 1
             if effective_status == "proposed":
@@ -98,6 +105,7 @@ def build_patch_proposal_summary(
         "proposed_count": proposed_count,
         "approval_required_count": approval_required_count,
         "approved_pending_apply_count": approved_pending_apply_count,
+        "approved_pending_apply_stale_count": approved_pending_apply_stale_count,
         "rejected_count": rejected_count,
         "blocked_count": blocked_count,
         "applied_count": applied_count,
@@ -125,6 +133,7 @@ def build_patch_proposal_summary_safe(
             "proposed_count": 0,
             "approval_required_count": 0,
             "approved_pending_apply_count": 0,
+            "approved_pending_apply_stale_count": 0,
             "rejected_count": 0,
             "blocked_count": 0,
             "applied_count": 0,

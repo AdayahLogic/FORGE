@@ -664,6 +664,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "pending_by_project": {},
             "recent_approvals": [],
             "approval_types": [],
+            "stale_count": 0,
+            "approved_pending_apply_count": 0,
             "reason": "Approval summary failed.",
         }
         product_summary = {
@@ -716,6 +718,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "proposed_count": 0,
             "approval_required_count": 0,
             "approved_pending_apply_count": 0,
+            "approved_pending_apply_stale_count": 0,
             "rejected_count": 0,
             "blocked_count": 0,
             "applied_count": 0,

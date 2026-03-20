@@ -34,6 +34,8 @@ def test_integrity_checker_approval_shape():
         "pending_by_project": {},
         "recent_approvals": [],
         "approval_types": [],
+        "stale_count": 0,
+        "approved_pending_apply_count": 0,
         "reason": "ok",
     }
     r = check_approval_summary_shape(valid)

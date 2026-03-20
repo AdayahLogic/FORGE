@@ -58,6 +58,7 @@ def normalize_helix_stage_result(result: dict[str, Any]) -> dict[str, Any]:
         "repair_recommended": bool(r.get("repair_recommended", False)),
         "repair_reason": str(r.get("repair_reason") or ""),
         "repair_patch_proposal": r.get("repair_patch_proposal") if isinstance(r.get("repair_patch_proposal"), dict) else None,
+        "repair_metadata": r.get("repair_metadata") if isinstance(r.get("repair_metadata"), dict) else None,
     }
 
 

@@ -324,6 +324,24 @@ def run_surgeon_stage(
                 "replace_all": bool(patch_req.get("replace_all", False)),
             }
 
+    val_result = inspector_result.get("validation_result") or {}
+    target_hint = ""
+    if isinstance(val_result, dict):
+        reg_reason = str(val_result.get("regression_reason") or "")
+        if reg_reason:
+            target_hint = reg_reason[:200]
+    crit_eval = critic_result.get("critique_evaluation") or {}
+    severity = "medium"
+    if isinstance(crit_eval, dict) and crit_eval.get("correctness_risk") == "high":
+        severity = "high"
+
+    repair_metadata = {
+        "repair_reason": repair_reason[:500],
+        "severity": severity,
+        "target_hint": target_hint,
+        "has_patch_payload": repair_patch_proposal is not None,
+    }
+
     return normalize_helix_stage_result({
         "stage": "surgeon",
         "stage_status": "repair_recommended",
@@ -331,4 +349,5 @@ def run_surgeon_stage(
         "repair_recommended": True,
         "repair_reason": repair_reason,
         "repair_patch_proposal": repair_patch_proposal,
+        "repair_metadata": repair_metadata,
     })
