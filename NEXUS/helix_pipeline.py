@@ -352,9 +352,10 @@ def run_helix_pipeline(
     except Exception:
         pass
 
-    # Phase 15/22/30: structured HELIX learning record (stage outcomes, quality signals)
+    # Phase 15/22/30/31: structured HELIX learning record (stage outcomes, quality signals)
     try:
         from NEXUS.learning_writer import append_learning_record_safe
+        from NEXUS.helix_quality_signals import compute_overall_helix_quality_signal
 
         success_class = "success" if pipeline_status == "completed" and not requires_surgeon else ("partial" if pipeline_status == "completed" else "failure")
         stage_outcomes = [{"stage": sr.get("stage"), "status": sr.get("stage_status")} for sr in stage_results]
@@ -362,10 +363,45 @@ def run_helix_pipeline(
         architect_result = next((sr for sr in stage_results if sr.get("stage") == "architect"), {})
         critic_result = next((sr for sr in stage_results if sr.get("stage") == "critic"), {})
         surgeon_result = next((sr for sr in stage_results if sr.get("stage") == "surgeon"), {})
+        optimizer_result = next((sr for sr in stage_results if sr.get("stage") == "optimizer"), {})
         architect_approach_count = architect_result.get("multi_approach_count") or len(architect_result.get("approaches") or [])
         critic_repair_recommended = critic_result.get("repair_recommended", False)
         repair_metadata = surgeon_result.get("repair_metadata") or {}
         repair_strategy = repair_metadata.get("repair_strategy_category", "unknown")
+
+        # Phase 31: quality signals for learning (append-only, no feedback loops)
+        quality_signals: dict[str, Any] = {}
+        try:
+            qs = compute_overall_helix_quality_signal(stage_results)
+            quality_signals = {
+                "overall_helix_quality_signal": qs.get("overall_helix_quality_signal"),
+                "architect_output_quality": qs.get("architect_output_quality"),
+                "critic_output_quality": qs.get("critic_output_quality"),
+                "optimizer_output_quality": qs.get("optimizer_output_quality"),
+            }
+        except Exception:
+            pass
+
+        crit_ev = critic_result.get("critique_evaluation") or {}
+        critique_severity_high = (crit_ev.get("severity") or "").lower() == "high"
+        optimizer_actionable = len(optimizer_result.get("suggestions_with_priority") or []) > 0
+
+        downstream = {
+            "helix_id": helix_id,
+            "stage_outcomes": stage_outcomes,
+            "stop_reason": stop_reason,
+            "surgeon_required": requires_surgeon,
+            "success_failure_classification": success_class,
+            "architect_approach_count": architect_approach_count,
+            "critic_repair_recommended": critic_repair_recommended,
+            "repair_strategy_category": repair_strategy,
+            "has_patch_payload": repair_metadata.get("has_patch_payload", False),
+        }
+        if quality_signals:
+            downstream["quality_signals"] = quality_signals
+            downstream["high_confidence_output"] = bool(architect_approach_count >= 2 and not critique_severity_high)
+            downstream["critique_severity_high"] = critique_severity_high
+            downstream["optimizer_actionable"] = optimizer_actionable
 
         lr = {
             "record_type": "helix_pipeline_run",
@@ -384,17 +420,7 @@ def run_helix_pipeline(
             "performance_impact": 0,
             "human_review_required": requires_surgeon or approval_blocked,
             "human_override": None,
-            "downstream_effects": {
-                "helix_id": helix_id,
-                "stage_outcomes": stage_outcomes,
-                "stop_reason": stop_reason,
-                "surgeon_required": requires_surgeon,
-                "success_failure_classification": success_class,
-                "architect_approach_count": architect_approach_count,
-                "critic_repair_recommended": critic_repair_recommended,
-                "repair_strategy_category": repair_strategy,
-                "has_patch_payload": repair_metadata.get("has_patch_payload", False),
-            },
+            "downstream_effects": downstream,
             "helix_id_refs": [helix_id],
             "approval_id_refs": approval_id_refs[:5],
             "autonomy_id_refs": autonomy_id_refs[:5],

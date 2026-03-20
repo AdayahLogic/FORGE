@@ -43,9 +43,9 @@ def get_helix_journal_path(project_path: str | None) -> str | None:
 
 
 def normalize_helix_stage_result(result: dict[str, Any]) -> dict[str, Any]:
-    """Normalize stage result to contract shape. Phase 30: selection_rationale, multi_approach_count, extended critique/optimizer/surgeon."""
+    """Normalize stage result to contract shape. Phase 30/31: selection_rationale, multi_approach_count, extended critique/optimizer/surgeon, suggestions_with_priority."""
     r = result or {}
-    return {
+    out: dict[str, Any] = {
         "stage": str(r.get("stage") or ""),
         "stage_status": str(r.get("stage_status") or "skipped").strip().lower(),
         "output_summary": str(r.get("output_summary") or ""),
@@ -65,6 +65,13 @@ def normalize_helix_stage_result(result: dict[str, Any]) -> dict[str, Any]:
         "repair_patch_proposal": r.get("repair_patch_proposal") if isinstance(r.get("repair_patch_proposal"), dict) else None,
         "repair_metadata": r.get("repair_metadata") if isinstance(r.get("repair_metadata"), dict) else None,
     }
+    # Phase 31: suggestions_with_priority
+    swp = r.get("suggestions_with_priority")
+    if isinstance(swp, list):
+        out["suggestions_with_priority"] = [x for x in swp if isinstance(x, dict)][:15]
+    else:
+        out["suggestions_with_priority"] = []
+    return out
 
 
 def normalize_helix_record(record: dict[str, Any]) -> dict[str, Any]:

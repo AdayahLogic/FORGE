@@ -3,6 +3,7 @@ NEXUS HELIX summary layer (Phase 21).
 
 Builds HELIX pipeline visibility for dashboard and command surface.
 Read-only; no execution capability.
+Phase 31: quality signals, stage quality distribution, critique severity, optimizer actionability.
 """
 
 from __future__ import annotations
@@ -10,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.helix_registry import read_helix_journal_tail
+from NEXUS.helix_quality_signals import compute_overall_helix_quality_signal
 from NEXUS.registry import PROJECTS
 
 
@@ -24,6 +26,9 @@ HELIX_SUMMARY_KEYS = (
     "surgeon_invocation_frequency",
     "approval_blocked_frequency",
     "autonomy_linkage_presence",
+    "multi_approach_success_rate",
+    "repair_artifact_quality",
+    "helix_quality_signals",
     "recent_runs",
     "per_project",
     "reason",
@@ -133,6 +138,36 @@ def build_helix_summary(
     surgeon_invocation_frequency = surgeon_count / total_runs if total_runs else 0.0
     approval_blocked_frequency = approval_blocked_count / total_runs if total_runs else 0.0
     autonomy_linkage_presence = autonomy_linkage_count / total_runs if total_runs else 0.0
+    multi_approach_success_rate = multi_approach_count / total_runs if total_runs else 0.0
+    repair_artifact_quality = {
+        "repair_with_patch_count": repair_with_patch_count,
+        "repair_without_patch_count": repair_without_patch_count,
+        "repair_total": repair_with_patch_count + repair_without_patch_count,
+    }
+
+    # Phase 31: quality signals from last run (or aggregate from recent)
+    helix_quality_signals: dict[str, Any] = {}
+    critique_severity_patterns: dict[str, int] = {}
+    optimizer_actionability_count = 0
+    if last_helix_run:
+        stage_results = last_helix_run.get("stage_results") or []
+        try:
+            qs = compute_overall_helix_quality_signal(stage_results)
+            helix_quality_signals = {
+                "overall_helix_quality_signal": qs.get("overall_helix_quality_signal", 0.0),
+                "architect_output_quality": qs.get("architect_output_quality", 0.0),
+                "critic_output_quality": qs.get("critic_output_quality", 0.0),
+                "optimizer_output_quality": qs.get("optimizer_output_quality", 0.0),
+            }
+            critic_result = next((sr for sr in stage_results if sr.get("stage") == "critic"), {})
+            ev = critic_result.get("critique_evaluation") or {}
+            sev = ev.get("severity") or "unknown"
+            critique_severity_patterns[sev] = critique_severity_patterns.get(sev, 0) + 1
+            opt_result = next((sr for sr in stage_results if sr.get("stage") == "optimizer"), {})
+            swp = opt_result.get("suggestions_with_priority") or []
+            optimizer_actionability_count = len([x for x in swp if isinstance(x, dict) and x.get("priority")])
+        except Exception:
+            helix_quality_signals = {"overall_helix_quality_signal": 0.0, "architect_output_quality": 0.0, "critic_output_quality": 0.0, "optimizer_output_quality": 0.0}
 
     return {
         "helix_posture": posture,
@@ -147,6 +182,9 @@ def build_helix_summary(
         "autonomy_linkage_presence": round(autonomy_linkage_presence, 2),
         "multi_approach_success_rate": round(multi_approach_success_rate, 2),
         "repair_artifact_quality": repair_artifact_quality,
+        "helix_quality_signals": helix_quality_signals,
+        "critique_severity_patterns": critique_severity_patterns,
+        "optimizer_actionability_count": optimizer_actionability_count,
         "recent_runs": recent_runs,
         "per_project": per_project,
         "reason": reason,
@@ -174,6 +212,9 @@ def build_helix_summary_safe(
             "autonomy_linkage_presence": 0.0,
             "multi_approach_success_rate": 0.0,
             "repair_artifact_quality": {"repair_with_patch_count": 0, "repair_without_patch_count": 0, "repair_total": 0},
+            "helix_quality_signals": {},
+            "critique_severity_patterns": {},
+            "optimizer_actionability_count": 0,
             "recent_runs": [],
             "per_project": {},
             "reason": "HELIX summary failed.",

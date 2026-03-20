@@ -12,22 +12,55 @@ from typing import Any
 from NEXUS.helix_registry import normalize_helix_stage_result
 
 
+def _score_approach_for_comparison(a: dict[str, Any]) -> float:
+    """Phase 31: deterministic comparative score from risk_level, complexity, pros/cons."""
+    risk = str(a.get("risk_level") or "medium").strip().lower()
+    complexity = str(a.get("complexity") or "medium").strip().lower()
+    pros = len(a.get("pros") or [])
+    cons = len(a.get("cons") or [])
+    risk_score = 0.9 if risk == "low" else (0.6 if risk == "medium" else 0.3)
+    complexity_score = 0.9 if complexity == "low" else (0.6 if complexity == "medium" else 0.3)
+    balance = 0.5 + 0.1 * (min(4, pros) - min(4, cons))
+    return round(min(1.0, max(0.0, (risk_score * 0.4 + complexity_score * 0.4 + balance * 0.2))), 2)
+
+
 def _normalize_approach(a: dict[str, Any], idx: int) -> dict[str, Any]:
-    """Normalize approach to Phase 30 contract: approach_id, summary, pros, cons, risk_level, scalability, complexity, implementation_cost, recommended_when."""
+    """Normalize approach to Phase 30/31 contract: approach_id, summary, pros, cons, risk_level, scalability, complexity, implementation_cost, recommended_when, comparative_score, confidence, recommended_rank, rejection_reasons, fit_for_constraints, operator_notes."""
     if not isinstance(a, dict):
         return {}
     aid = str(a.get("approach_id") or a.get("name") or chr(65 + idx))[:1]
+    risk_level = str(a.get("risk_level") or "medium").strip().lower()[:20]
+    pros = list(a.get("pros") or [])[:10]
+    cons = list(a.get("cons") or [])[:10]
+    complexity = str(a.get("complexity") or "")[:100]
+    # Phase 31: derived comparative fields (deterministic, no fake intelligence)
+    comparative_score = a.get("comparative_score")
+    if comparative_score is None:
+        comparative_score = _score_approach_for_comparison(a)
+    confidence = str(a.get("confidence") or "medium").strip().lower()[:20]
+    if confidence not in ("low", "medium", "high"):
+        confidence = "medium"
+    fit_for_constraints = a.get("fit_for_constraints")
+    if fit_for_constraints is None:
+        fit_for_constraints = risk_level != "high"
+    rejection_reasons = list(a.get("rejection_reasons") or [])[:5]
+    operator_notes = str(a.get("operator_notes") or "")[:300]
     return {
         "approach_id": aid,
         "summary": str(a.get("summary") or a.get("name") or "")[:500],
-        "pros": list(a.get("pros") or [])[:10],
-        "cons": list(a.get("cons") or [])[:10],
-        "risk_level": str(a.get("risk_level") or "medium").strip().lower()[:20],
+        "pros": pros,
+        "cons": cons,
+        "risk_level": risk_level,
         "scalability": str(a.get("scalability") or "")[:200],
-        "complexity": str(a.get("complexity") or "")[:100],
+        "complexity": complexity,
         "implementation_cost": str(a.get("implementation_cost") or "")[:100],
         "recommended_when": str(a.get("recommended_when") or "")[:200],
         "tradeoffs": a.get("tradeoffs") if isinstance(a.get("tradeoffs"), dict) else {},
+        "comparative_score": comparative_score,
+        "confidence": confidence,
+        "fit_for_constraints": bool(fit_for_constraints),
+        "rejection_reasons": rejection_reasons,
+        "operator_notes": operator_notes,
     }
 
 
@@ -102,8 +135,16 @@ Return ONLY a JSON array, no markdown.
                 _normalize_approach({"approach_id": "B", "summary": f"Alternative for {objective[:100]}", "pros": ["flexible"], "cons": ["more work"], "risk_level": "medium", "scalability": "TBD"}, 1),
             ]
 
+        # Phase 31: assign recommended_rank by comparative_score (desc)
+        sorted_by_score = sorted(approaches, key=lambda x: x.get("comparative_score") or 0.0, reverse=True)
+        rank_map = {a.get("approach_id"): i + 1 for i, a in enumerate(sorted_by_score)}
+        for a in approaches:
+            a["recommended_rank"] = rank_map.get(a.get("approach_id"), 0)
+
         tradeoffs = [a.get("tradeoffs") for a in approaches if a.get("tradeoffs")]
-        selection_rationale = f"Generated {len(approaches)} approach(es); compare complexity, risk_level, recommended_when for selection." if len(approaches) >= 2 else "Single approach; consider alternatives if needed."
+        top = sorted_by_score[0] if sorted_by_score else {}
+        why_note = f"Approach {top.get('approach_id', '?')} ranked first (comparative_score={top.get('comparative_score', 0):.2f}); compare recommended_rank, fit_for_constraints."
+        selection_rationale = f"Generated {len(approaches)} approach(es); {why_note}" if len(approaches) >= 2 else "Single approach; consider alternatives if needed."
 
         return normalize_helix_stage_result({
             "stage": "architect",
@@ -232,6 +273,24 @@ def run_critic_stage(
     if len(steps) > 3:
         testing_gaps.append("Consider unit tests per step.")
 
+    # Phase 31: issue_categories, severity, confidence, remediation_priority
+    issue_categories: list[str] = []
+    if repair_rec:
+        issue_categories.append("correctness")
+    if hidden_failure_points:
+        issue_categories.append("hidden_failure_points")
+    if testing_gaps:
+        issue_categories.append("testing_gaps")
+    if compatibility_risk != "low":
+        issue_categories.append("compatibility")
+    if maintainability in ("low", "medium"):
+        issue_categories.append("maintainability")
+    issue_categories = list(dict.fromkeys(issue_categories))[:8]
+
+    severity = "high" if correctness_risk == "high" or repair_rec else ("medium" if correctness_risk == "medium" else "low")
+    confidence = "high" if repair_rec or len(hidden_failure_points) + len(testing_gaps) > 2 else ("medium" if hidden_failure_points or testing_gaps else "low")
+    remediation_priority = "high" if severity == "high" else ("medium" if severity == "medium" else "low")
+
     critique_evaluation = {
         "correctness_risk": correctness_risk,
         "maintainability": maintainability,
@@ -239,6 +298,10 @@ def run_critic_stage(
         "hidden_failure_points": hidden_failure_points[:5],
         "testing_gaps": testing_gaps[:5],
         "compatibility_risk": compatibility_risk,
+        "issue_categories": issue_categories,
+        "severity": severity,
+        "confidence": confidence,
+        "remediation_priority": remediation_priority,
     }
 
     critique = ""
@@ -258,6 +321,23 @@ def run_critic_stage(
     })
 
 
+def _make_suggestion_with_metadata(
+    text: str,
+    category: str,
+    priority: str,
+    expected_benefit: str,
+    sequencing_group: int,
+) -> dict[str, Any]:
+    """Phase 31: wrap suggestion with priority, expected_benefit, recommendation_category, sequencing_group."""
+    return {
+        "suggestion": text,
+        "priority": priority,
+        "expected_benefit": expected_benefit,
+        "recommendation_category": category,
+        "sequencing_group": sequencing_group,
+    }
+
+
 def run_optimizer_stage(
     critic_result: dict[str, Any],
     builder_result: dict[str, Any],
@@ -265,6 +345,7 @@ def run_optimizer_stage(
     """
     HELIX Optimizer: concrete improvements categorized by performance, structure,
     safety, readability. Structured output only; no execution.
+    Phase 31: priority, expected_benefit, recommendation_category, sequencing_group.
     """
     impl_plan = builder_result.get("implementation_plan") or {}
     steps = impl_plan.get("implementation_steps") or []
@@ -304,6 +385,22 @@ def run_optimizer_stage(
         performance + structure + safety + readability + implementation_sequencing
     )[:10]
 
+    # Phase 31: suggestions_with_metadata (priority, expected_benefit, recommendation_category, sequencing_group)
+    suggestions_with_priority: list[dict[str, Any]] = []
+    seq = 0
+    for cat, items in [
+        ("safety", safety[:5]),
+        ("structure", structure[:5]),
+        ("performance", performance[:5]),
+        ("readability", readability[:5]),
+        ("implementation_sequencing", implementation_sequencing[:5]),
+    ]:
+        seq += 1
+        prio = "high" if cat == "safety" else ("medium" if cat in ("structure", "implementation_sequencing") else "low")
+        benefit = "risk_reduction" if cat == "safety" else ("maintainability" if cat == "structure" else "quality")
+        for t in items:
+            suggestions_with_priority.append(_make_suggestion_with_metadata(t, cat, prio, benefit, seq))
+
     return normalize_helix_stage_result({
         "stage": "optimizer",
         "stage_status": "completed",
@@ -311,6 +408,7 @@ def run_optimizer_stage(
         "optimizations": optimizations,
         "optimization_suggestions": optimization_suggestions,
         "implementation_sequencing": implementation_sequencing[:5],
+        "suggestions_with_priority": suggestions_with_priority[:15],
     })
 
 
