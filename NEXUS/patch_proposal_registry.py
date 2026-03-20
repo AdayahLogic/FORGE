@@ -108,6 +108,21 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
     out["draft_source"] = str(r.get("draft_source") or source)[:50]
     out["missing_information_flags"] = list(r.get("missing_information_flags") or [])[:10]
     out["requires_followup_before_apply"] = bool(r.get("requires_followup_before_apply", proposal_readiness != "fully_ready"))
+    # Phase 34: refinement fields (from patch_payload or top-level)
+    pp = out.get("patch_payload") or {}
+    out["refinement_status"] = str(r.get("refinement_status") or pp.get("refinement_status") or "not_refinable").strip().lower()
+    if out["refinement_status"] not in ("not_refinable", "partially_refined", "draft_ready"):
+        out["refinement_status"] = "not_refinable"
+    out["draft_candidate_quality"] = str(r.get("draft_candidate_quality") or pp.get("draft_candidate_quality") or "low").strip().lower()
+    if out["draft_candidate_quality"] not in ("low", "medium", "high"):
+        out["draft_candidate_quality"] = "low"
+    out["candidate_change_scope"] = str(r.get("candidate_change_scope") or pp.get("candidate_change_scope") or "unknown").strip().lower()
+    rhr = r.get("requires_human_reconstruction")
+    if rhr is None:
+        rhr = pp.get("requires_human_reconstruction")
+    if rhr is None:
+        rhr = proposal_readiness != "fully_ready"
+    out["requires_human_reconstruction"] = bool(rhr)
     return out
 
 

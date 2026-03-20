@@ -590,12 +590,30 @@ def run_surgeon_stage(
         candidate_target_files = target_files_candidate[:10]
         candidate_search_anchors = [target_hint[:150]] if target_hint else []
         candidate_replacement_intent = repair_reason[:200]
+    repair_metadata_pre = {
+        "patch_draftability": patch_draftability,
+        "candidate_target_files": candidate_target_files,
+        "candidate_search_anchors": candidate_search_anchors,
+        "candidate_replacement_intent": candidate_replacement_intent,
+        "suspected_root_causes": suspected_root_causes,
+        "target_hint": target_hint,
+        "validation_recommendations": validation_recommendations,
+        "missing_information_flags": missing_information_flags,
+    }
+    try:
+        from NEXUS.helix_patch_refinement import refine_patch_draft
+        refinement = refine_patch_draft(builder_result, repair_metadata_pre, has_patch)
+        refinement_status = refinement.get("refinement_status", "not_refinable")
+    except Exception:
+        refinement = {}
+        refinement_status = "not_refinable"
+
     if has_patch and repair_patch_proposal:
-        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Draftability: high."
+        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Draftability: high. Refinement: {refinement_status}."
     elif patch_readiness == "medium":
-        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Strategy: guided_patch_followup. Human validation required before apply."
+        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Strategy: guided_patch_followup. Refinement: {refinement_status}. Human validation required before apply."
     else:
-        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Advisory only; review recommended_next_actions."
+        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Refinement: {refinement_status}. Advisory only; review candidate_followup_actions."
 
     repair_metadata = {
         "repair_reason": repair_reason[:500],
@@ -623,6 +641,16 @@ def run_surgeon_stage(
         "candidate_replacement_intent": candidate_replacement_intent[:300],
         "human_validation_required": human_followup_required,
     }
+
+    repair_metadata["refinement_status"] = refinement.get("refinement_status", "not_refinable")
+    repair_metadata["refinement_reason"] = refinement.get("refinement_reason", "")[:300]
+    repair_metadata["refinement_inputs_present"] = refinement.get("refinement_inputs_present", [])[:10]
+    repair_metadata["refinement_inputs_missing"] = refinement.get("refinement_inputs_missing", [])[:10]
+    repair_metadata["draft_candidate_quality"] = refinement.get("draft_candidate_quality", "low")
+    repair_metadata["candidate_change_scope"] = refinement.get("candidate_change_scope", "unknown")
+    repair_metadata["candidate_validation_steps"] = refinement.get("candidate_validation_steps", [])[:5]
+    repair_metadata["candidate_followup_actions"] = refinement.get("candidate_followup_actions", [])[:5]
+    repair_metadata["requires_human_reconstruction"] = refinement.get("requires_human_reconstruction", True)
 
     return normalize_helix_stage_result({
         "stage": "surgeon",

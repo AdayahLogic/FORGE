@@ -76,6 +76,9 @@ def build_helix_summary(
     draftability_high_count = 0
     draftability_medium_count = 0
     draftability_low_count = 0
+    refinement_draft_ready_count = 0
+    refinement_partially_refined_count = 0
+    refinement_not_refinable_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -117,6 +120,13 @@ def build_helix_summary(
                             common_missing_info_patterns[k] = common_missing_info_patterns.get(k, 0) + 1
                     if meta.get("patch_readiness") in ("high", "medium") or meta.get("has_patch_payload"):
                         repair_artifact_actionable_count += 1
+                    rs = (meta.get("refinement_status") or "not_refinable").strip().lower()
+                    if rs == "draft_ready":
+                        refinement_draft_ready_count += 1
+                    elif rs == "partially_refined":
+                        refinement_partially_refined_count += 1
+                    else:
+                        refinement_not_refinable_count += 1
         if tail:
             last = tail[-1]
             if last_helix_run is None or (last.get("finished_at") or "") > (last_helix_run.get("finished_at") or ""):
@@ -177,6 +187,11 @@ def build_helix_summary(
             "high": draftability_high_count,
             "medium": draftability_medium_count,
             "low": draftability_low_count,
+        },
+        "refinement_distribution": {
+            "draft_ready": refinement_draft_ready_count,
+            "partially_refined": refinement_partially_refined_count,
+            "not_refinable": refinement_not_refinable_count,
         },
     }
 
@@ -254,6 +269,7 @@ def build_helix_summary_safe(
                 "common_missing_info_patterns": {},
                 "actionable_count": 0,
                 "draftability_distribution": {"high": 0, "medium": 0, "low": 0},
+                "refinement_distribution": {"draft_ready": 0, "partially_refined": 0, "not_refinable": 0},
             },
             "helix_quality_signals": {},
             "critique_severity_patterns": {},

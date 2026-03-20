@@ -100,6 +100,7 @@ VALID_ISSUE_SCOPE = ("single_file", "multi_file", "unknown")
 VALID_PATCH_DRAFTABILITY = ("low", "medium", "high")
 VALID_CANDIDATE_PATCH_STRATEGY = ("direct_diff", "guided_patch_followup", "advisory_only")
 VALID_PROPOSAL_READINESS = ("fully_ready", "draft_followup", "advisory_only")
+VALID_REFINEMENT_STATUS = ("not_refinable", "partially_refined", "draft_ready")
 
 # Phase 27: cross-artifact trace summary
 TRACE_SUMMARY_KEYS = (
@@ -235,6 +236,10 @@ def check_repair_metadata_shape(meta: dict[str, Any] | None) -> dict[str, Any]:
     cps = meta.get("candidate_patch_strategy")
     if cps is not None and str(cps).strip().lower() not in VALID_CANDIDATE_PATCH_STRATEGY:
         issues.append(f"candidate_patch_strategy must be one of {VALID_CANDIDATE_PATCH_STRATEGY}, got {cps!r}")
+    # Phase 34: refinement fields
+    rfs = meta.get("refinement_status")
+    if rfs is not None and str(rfs).strip().lower() not in VALID_REFINEMENT_STATUS:
+        issues.append(f"refinement_status must be one of {VALID_REFINEMENT_STATUS}, got {rfs!r}")
     return {
         "valid": len(issues) == 0,
         "issues": issues,

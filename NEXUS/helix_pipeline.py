@@ -341,6 +341,8 @@ def run_helix_pipeline(
             if not target_files and repair_meta.get("target_hint"):
                 target_files = []
             summary = f"HELIX surgeon draft-followup: {repair_meta.get('repair_reason', '')[:80]}"
+            refinement_status = repair_meta.get("refinement_status", "not_refinable")
+            proposal_completeness = "partial" if refinement_status == "partially_refined" else "advisory"
             proposal = {
                 "project_name": project_name,
                 "run_id": run_id,
@@ -362,9 +364,15 @@ def run_helix_pipeline(
                     "candidate_search_anchors": repair_meta.get("candidate_search_anchors", [])[:5],
                     "candidate_replacement_intent": repair_meta.get("candidate_replacement_intent", "")[:300],
                     "suspected_root_causes": repair_meta.get("suspected_root_causes", [])[:5],
+                    "refinement_status": refinement_status,
+                    "draft_candidate_quality": repair_meta.get("draft_candidate_quality", "low"),
+                    "candidate_change_scope": repair_meta.get("candidate_change_scope", "unknown"),
+                    "candidate_validation_steps": repair_meta.get("candidate_validation_steps", [])[:5],
+                    "candidate_followup_actions": repair_meta.get("candidate_followup_actions", [])[:5],
+                    "requires_human_reconstruction": repair_meta.get("requires_human_reconstruction", True),
                 },
                 "proposal_readiness": "draft_followup",
-                "proposal_completeness": "partial",
+                "proposal_completeness": proposal_completeness,
                 "draft_source": "surgeon",
                 "missing_information_flags": repair_meta.get("missing_information_flags", [])[:5],
                 "requires_followup_before_apply": True,
@@ -455,6 +463,10 @@ def run_helix_pipeline(
             downstream["repair_artifact_missing_info_count"] = len(mif)
             downstream["patch_draftability"] = repair_metadata.get("patch_draftability", "unknown")
             downstream["candidate_patch_strategy"] = repair_metadata.get("candidate_patch_strategy", "advisory_only")
+            downstream["refinement_status"] = repair_metadata.get("refinement_status", "unknown")
+            downstream["draft_candidate_quality"] = repair_metadata.get("draft_candidate_quality", "unknown")
+            downstream["candidate_change_scope"] = repair_metadata.get("candidate_change_scope", "unknown")
+            downstream["requires_human_reconstruction"] = repair_metadata.get("requires_human_reconstruction", True)
         if quality_signals:
             downstream["quality_signals"] = quality_signals
             downstream["high_confidence_output"] = bool(architect_approach_count >= 2 and not critique_severity_high)
