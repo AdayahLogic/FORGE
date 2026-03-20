@@ -60,6 +60,9 @@ def build_helix_summary(
     approval_blocked_count = 0
     autonomy_linkage_count = 0
     total_runs = 0
+    multi_approach_count = 0
+    repair_with_patch_count = 0
+    repair_without_patch_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -81,6 +84,14 @@ def build_helix_summary(
                 status = sr.get("stage_status") or "unknown"
                 key = f"{stage}:{status}"
                 stage_distribution[key] = stage_distribution.get(key, 0) + 1
+                if stage == "architect" and (sr.get("multi_approach_count") or len(sr.get("approaches") or [])) >= 2:
+                    multi_approach_count += 1
+                if stage == "surgeon" and sr.get("repair_recommended"):
+                    meta = sr.get("repair_metadata") or {}
+                    if meta.get("has_patch_payload"):
+                        repair_with_patch_count += 1
+                    else:
+                        repair_without_patch_count += 1
         if tail:
             last = tail[-1]
             if last_helix_run is None or (last.get("finished_at") or "") > (last_helix_run.get("finished_at") or ""):
@@ -134,6 +145,8 @@ def build_helix_summary(
         "surgeon_invocation_frequency": round(surgeon_invocation_frequency, 2),
         "approval_blocked_frequency": round(approval_blocked_frequency, 2),
         "autonomy_linkage_presence": round(autonomy_linkage_presence, 2),
+        "multi_approach_success_rate": round(multi_approach_success_rate, 2),
+        "repair_artifact_quality": repair_artifact_quality,
         "recent_runs": recent_runs,
         "per_project": per_project,
         "reason": reason,
@@ -159,6 +172,8 @@ def build_helix_summary_safe(
             "surgeon_invocation_frequency": 0.0,
             "approval_blocked_frequency": 0.0,
             "autonomy_linkage_presence": 0.0,
+            "multi_approach_success_rate": 0.0,
+            "repair_artifact_quality": {"repair_with_patch_count": 0, "repair_without_patch_count": 0, "repair_total": 0},
             "recent_runs": [],
             "per_project": {},
             "reason": "HELIX summary failed.",

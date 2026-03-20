@@ -66,6 +66,8 @@ HELIX_SUMMARY_KEYS = (
     "surgeon_invocation_frequency",
     "approval_blocked_frequency",
     "autonomy_linkage_presence",
+    "multi_approach_success_rate",
+    "repair_artifact_quality",
     "recent_runs",
     "per_project",
     "reason",

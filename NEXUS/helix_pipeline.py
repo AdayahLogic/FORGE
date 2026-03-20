@@ -352,12 +352,20 @@ def run_helix_pipeline(
     except Exception:
         pass
 
-    # Phase 15/22: structured HELIX learning record (stage outcomes, stop_reason, surgeon, success/failure)
+    # Phase 15/22/30: structured HELIX learning record (stage outcomes, quality signals)
     try:
         from NEXUS.learning_writer import append_learning_record_safe
 
         success_class = "success" if pipeline_status == "completed" and not requires_surgeon else ("partial" if pipeline_status == "completed" else "failure")
         stage_outcomes = [{"stage": sr.get("stage"), "status": sr.get("stage_status")} for sr in stage_results]
+
+        architect_result = next((sr for sr in stage_results if sr.get("stage") == "architect"), {})
+        critic_result = next((sr for sr in stage_results if sr.get("stage") == "critic"), {})
+        surgeon_result = next((sr for sr in stage_results if sr.get("stage") == "surgeon"), {})
+        architect_approach_count = architect_result.get("multi_approach_count") or len(architect_result.get("approaches") or [])
+        critic_repair_recommended = critic_result.get("repair_recommended", False)
+        repair_metadata = surgeon_result.get("repair_metadata") or {}
+        repair_strategy = repair_metadata.get("repair_strategy_category", "unknown")
 
         lr = {
             "record_type": "helix_pipeline_run",
@@ -367,7 +375,7 @@ def run_helix_pipeline(
             "workflow_stage": "helix_pipeline_run",
             "decision_source": "helix_pipeline",
             "decision_type": "helix_pipeline_completed",
-            "decision_summary": f"pipeline_status={pipeline_status}; stop_reason={stop_reason}; requires_surgeon={requires_surgeon}",
+            "decision_summary": f"pipeline_status={pipeline_status}; stop_reason={stop_reason}; requires_surgeon={requires_surgeon}; architect_approaches={architect_approach_count}; repair_strategy={repair_strategy}",
             "predicted_outcome": "unknown",
             "predicted_confidence": 0.0,
             "actual_outcome": success_class,
@@ -382,6 +390,10 @@ def run_helix_pipeline(
                 "stop_reason": stop_reason,
                 "surgeon_required": requires_surgeon,
                 "success_failure_classification": success_class,
+                "architect_approach_count": architect_approach_count,
+                "critic_repair_recommended": critic_repair_recommended,
+                "repair_strategy_category": repair_strategy,
+                "has_patch_payload": repair_metadata.get("has_patch_payload", False),
             },
             "helix_id_refs": [helix_id],
             "approval_id_refs": approval_id_refs[:5],

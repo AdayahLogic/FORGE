@@ -13,7 +13,7 @@ from NEXUS.helix_registry import normalize_helix_stage_result
 
 
 def _normalize_approach(a: dict[str, Any], idx: int) -> dict[str, Any]:
-    """Normalize approach to Phase 22 contract: approach_id, summary, pros, cons, risk_level, scalability."""
+    """Normalize approach to Phase 30 contract: approach_id, summary, pros, cons, risk_level, scalability, complexity, implementation_cost, recommended_when."""
     if not isinstance(a, dict):
         return {}
     aid = str(a.get("approach_id") or a.get("name") or chr(65 + idx))[:1]
@@ -24,6 +24,9 @@ def _normalize_approach(a: dict[str, Any], idx: int) -> dict[str, Any]:
         "cons": list(a.get("cons") or [])[:10],
         "risk_level": str(a.get("risk_level") or "medium").strip().lower()[:20],
         "scalability": str(a.get("scalability") or "")[:200],
+        "complexity": str(a.get("complexity") or "")[:100],
+        "implementation_cost": str(a.get("implementation_cost") or "")[:100],
+        "recommended_when": str(a.get("recommended_when") or "")[:200],
         "tradeoffs": a.get("tradeoffs") if isinstance(a.get("tradeoffs"), dict) else {},
     }
 
@@ -66,9 +69,11 @@ Each approach MUST have:
 - cons: array of 2-4 disadvantages
 - risk_level: "low" or "medium" or "high"
 - scalability: brief note on scalability
+- complexity: "low" or "medium" or "high" (optional)
+- implementation_cost: "low" or "medium" or "high" (optional)
+- recommended_when: when to prefer this approach (optional)
 
-Return ONLY a JSON array, no markdown. Example:
-[{{"approach_id":"A","summary":"Minimal change","pros":["fast","simple"],"cons":["less flexible"],"risk_level":"low","scalability":"single-node"}}, ...]
+Return ONLY a JSON array, no markdown.
 """
         try:
             result = route_generate(prompt=tradeoff_prompt, provider=None, model="gpt-4o-mini")
@@ -88,7 +93,7 @@ Return ONLY a JSON array, no markdown. Example:
             approaches = [_normalize_approach(a, i) for i, a in enumerate(raw_approaches[:3]) if isinstance(a, dict)]
             if len(approaches) < 2:
                 approaches.append(_normalize_approach(
-                    {"approach_id": "B", "summary": objective, "pros": ["covers core"], "cons": ["may need iteration"], "risk_level": "medium", "scalability": "TBD"},
+                    {"approach_id": "B", "summary": objective, "pros": ["covers core"], "cons": ["may need iteration"], "risk_level": "medium", "scalability": "TBD", "complexity": "medium", "implementation_cost": "medium", "recommended_when": "when primary approach fails"},
                     1,
                 ))
         except Exception:
@@ -98,6 +103,7 @@ Return ONLY a JSON array, no markdown. Example:
             ]
 
         tradeoffs = [a.get("tradeoffs") for a in approaches if a.get("tradeoffs")]
+        selection_rationale = f"Generated {len(approaches)} approach(es); compare complexity, risk_level, recommended_when for selection." if len(approaches) >= 2 else "Single approach; consider alternatives if needed."
 
         return normalize_helix_stage_result({
             "stage": "architect",
@@ -105,6 +111,8 @@ Return ONLY a JSON array, no markdown. Example:
             "output_summary": f"Generated {len(approaches)} approach(es) for: {objective[:200]}",
             "approaches": approaches,
             "tradeoffs": tradeoffs,
+            "selection_rationale": selection_rationale,
+            "multi_approach_count": len(approaches),
             "implementation_plan": plan,
         })
     except Exception as e:
@@ -209,26 +217,35 @@ def run_critic_stage(
     correctness_risk = "high" if repair_rec else ("medium" if len(risks) > 2 else "low")
     maintainability = "low" if len(steps) > 8 else ("high" if len(steps) <= 3 else "medium")
     scalability = "unknown" if not steps else "medium"
-    hidden_failure_points = []
+    hidden_failure_points: list[str] = []
+    testing_gaps: list[str] = []
+    compatibility_risk = "low"
     if repair_rec:
         hidden_failure_points.append(f"Regression: {reg_reason[:150]}")
+        compatibility_risk = "medium"
     if len(steps) > 5:
         hidden_failure_points.append("Many steps; consider integration points and rollback.")
+        testing_gaps.append("Integration tests may be needed across step boundaries.")
     if not risks:
         hidden_failure_points.append("No explicit risks documented; consider edge cases.")
+        testing_gaps.append("Edge cases and failure modes not explicitly tested.")
+    if len(steps) > 3:
+        testing_gaps.append("Consider unit tests per step.")
 
     critique_evaluation = {
         "correctness_risk": correctness_risk,
         "maintainability": maintainability,
         "scalability": scalability,
         "hidden_failure_points": hidden_failure_points[:5],
+        "testing_gaps": testing_gaps[:5],
+        "compatibility_risk": compatibility_risk,
     }
 
     critique = ""
     if repair_rec:
-        critique = f"Inspector flagged issues: {reg_reason[:300]}. correctness_risk={correctness_risk}; maintainability={maintainability}."
+        critique = f"Inspector flagged issues: {reg_reason[:300]}. correctness_risk={correctness_risk}; maintainability={maintainability}; testing_gaps={len(testing_gaps)}; compatibility_risk={compatibility_risk}."
     else:
-        critique = f"Structured evaluation: correctness_risk={correctness_risk}, maintainability={maintainability}, scalability={scalability}. Hidden failure points: {len(hidden_failure_points)}."
+        critique = f"Structured evaluation: correctness_risk={correctness_risk}, maintainability={maintainability}, scalability={scalability}. Hidden failure points: {len(hidden_failure_points)}; testing_gaps: {len(testing_gaps)}; compatibility_risk={compatibility_risk}."
 
     return normalize_helix_stage_result({
         "stage": "critic",
@@ -268,22 +285,32 @@ def run_optimizer_stage(
     if crit_eval.get("correctness_risk") in ("high", "medium"):
         safety.append("Review regression checks before deployment.")
 
+    implementation_sequencing: list[str] = []
+    if steps:
+        implementation_sequencing.append("1. Validate assumptions and rollback strategy before proceeding.")
+        if len(steps) > 3:
+            implementation_sequencing.append("2. Implement in logical milestones; verify each before proceeding.")
+        implementation_sequencing.append("3. Run regression checks after each change.")
+        implementation_sequencing.append("4. Document any deviations from the plan.")
+
     optimization_suggestions = {
         "performance": performance[:5],
         "structure": structure[:5],
         "safety": safety[:5],
         "readability": readability[:5],
+        "implementation_sequencing": implementation_sequencing[:5],
     }
     optimizations = (
-        performance + structure + safety + readability
+        performance + structure + safety + readability + implementation_sequencing
     )[:10]
 
     return normalize_helix_stage_result({
         "stage": "optimizer",
         "stage_status": "completed",
-        "output_summary": f"{len(optimizations)} optimization(s) across performance/structure/safety/readability",
+        "output_summary": f"{len(optimizations)} optimization(s) across performance/structure/safety/readability/sequencing",
         "optimizations": optimizations,
         "optimization_suggestions": optimization_suggestions,
+        "implementation_sequencing": implementation_sequencing[:5],
     })
 
 
@@ -335,17 +362,33 @@ def run_surgeon_stage(
     if isinstance(crit_eval, dict) and crit_eval.get("correctness_risk") == "high":
         severity = "high"
 
+    has_patch = repair_patch_proposal is not None
+    repair_strategy_category = "patch_available" if has_patch else "builder_no_patch"
+    missing_information_flags: list[str] = []
+    recommended_next_actions: list[str] = []
+    if not has_patch:
+        missing_information_flags.append("Builder did not produce patch_request; no target file or search/replace.")
+        missing_information_flags.append("Inspector regression reason may indicate target area.")
+        recommended_next_actions.append("Review Builder implementation_plan for patch_request; refine if needed.")
+        recommended_next_actions.append("Re-run Architect with narrower scope to elicit concrete patch.")
+        recommended_next_actions.append("Consider manual fix guided by target_hint and repair_reason.")
+    else:
+        recommended_next_actions.append("Patch proposal available; submit through approval flow for apply.")
+
     repair_metadata = {
         "repair_reason": repair_reason[:500],
         "severity": severity,
         "target_hint": target_hint,
-        "has_patch_payload": repair_patch_proposal is not None,
+        "has_patch_payload": has_patch,
+        "repair_strategy_category": repair_strategy_category,
+        "missing_information_flags": missing_information_flags[:5],
+        "recommended_next_actions": recommended_next_actions[:5],
     }
 
     return normalize_helix_stage_result({
         "stage": "surgeon",
         "stage_status": "repair_recommended",
-        "output_summary": f"Repair recommended: {repair_reason[:200]}",
+        "output_summary": f"Repair recommended: {repair_reason[:200]}; strategy={repair_strategy_category}",
         "repair_recommended": True,
         "repair_reason": repair_reason,
         "repair_patch_proposal": repair_patch_proposal,

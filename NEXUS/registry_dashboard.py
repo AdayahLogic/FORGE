@@ -792,6 +792,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "surgeon_invocation_frequency": 0.0,
             "approval_blocked_frequency": 0.0,
             "autonomy_linkage_presence": 0.0,
+            "multi_approach_success_rate": 0.0,
+            "repair_artifact_quality": {"repair_with_patch_count": 0, "repair_without_patch_count": 0, "repair_total": 0},
             "recent_runs": [],
             "per_project": {},
             "reason": "HELIX summary failed.",

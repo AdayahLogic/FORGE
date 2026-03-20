@@ -43,7 +43,7 @@ def get_helix_journal_path(project_path: str | None) -> str | None:
 
 
 def normalize_helix_stage_result(result: dict[str, Any]) -> dict[str, Any]:
-    """Normalize stage result to contract shape."""
+    """Normalize stage result to contract shape. Phase 30: selection_rationale, multi_approach_count, extended critique/optimizer/surgeon."""
     r = result or {}
     return {
         "stage": str(r.get("stage") or ""),
@@ -51,12 +51,15 @@ def normalize_helix_stage_result(result: dict[str, Any]) -> dict[str, Any]:
         "output_summary": str(r.get("output_summary") or ""),
         "approaches": list(r.get("approaches") or []),
         "tradeoffs": list(r.get("tradeoffs") or []),
+        "selection_rationale": str(r.get("selection_rationale") or "")[:500],
+        "multi_approach_count": int(r.get("multi_approach_count") or 0),
         "implementation_plan": r.get("implementation_plan"),
         "validation_result": r.get("validation_result"),
         "critique": str(r.get("critique") or ""),
         "critique_evaluation": r.get("critique_evaluation") if isinstance(r.get("critique_evaluation"), dict) else {},
         "optimizations": list(r.get("optimizations") or []),
         "optimization_suggestions": r.get("optimization_suggestions") if isinstance(r.get("optimization_suggestions"), dict) else {},
+        "implementation_sequencing": list(r.get("implementation_sequencing") or [])[:10],
         "repair_recommended": bool(r.get("repair_recommended", False)),
         "repair_reason": str(r.get("repair_reason") or ""),
         "repair_patch_proposal": r.get("repair_patch_proposal") if isinstance(r.get("repair_patch_proposal"), dict) else None,
