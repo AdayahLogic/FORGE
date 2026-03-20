@@ -119,6 +119,9 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 25: approval maturity
     "retry_patch_proposal",
     "approval_trace",
+    # Phase 26: operator release readiness
+    "release_readiness",
+    "operator_release_summary",
 })
 
 
@@ -3112,6 +3115,36 @@ def run_command(
             return _result(command=cmd, status="error", project_name=None, summary="approval_id or patch_id required.", payload={"error": "approval_id or patch_id required."})
         except Exception as e:
             fallback = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd in ("release_readiness", "operator_release_summary"):
+        try:
+            from NEXUS.release_readiness import build_release_readiness_safe, build_operator_release_summary
+            if cmd == "operator_release_summary":
+                data = build_operator_release_summary(project_name=proj_name)
+            else:
+                data = build_release_readiness_safe(project_name=proj_name)
+            status_val = data.get("release_readiness_status", "error_fallback")
+            summary_line = f"release_readiness={status_val}; blockers={len(data.get('critical_blockers', []))}; review_items={len(data.get('review_items', []))}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=data)
+        except Exception as e:
+            fallback = {
+                "release_readiness_status": "error_fallback",
+                "project_name": proj_name,
+                "product_status": "unknown",
+                "approval_status": "unknown",
+                "execution_environment_status": "unknown",
+                "patch_status": "unknown",
+                "autonomy_status": "unknown",
+                "helix_status": "unknown",
+                "critical_blockers": [str(e)],
+                "review_items": [],
+                "readiness_reason": str(e),
+                "ready_for_operator_release": False,
+                "trace_links_present": {"approval_linked": False, "patch_linked": False, "autonomy_linked": False, "product_linked": False, "helix_linked": False},
+                "generated_at": "",
+                "error": str(e),
+            }
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "health":

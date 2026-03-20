@@ -30,6 +30,52 @@ from NEXUS.studio_driver import build_studio_driver_result_safe
 STUDIO_NAME = "NEXUS"
 
 
+def _build_release_readiness_from_dashboard(
+    *,
+    product_summary: dict[str, Any],
+    approval_summary: dict[str, Any],
+    patch_proposal_summary: dict[str, Any],
+    execution_environment_summary: dict[str, Any],
+    autonomy_summary: dict[str, Any],
+    helix_summary: dict[str, Any],
+) -> dict[str, Any]:
+    """Build release readiness from dashboard summaries (Phase 26). Read-only."""
+    try:
+        from NEXUS.release_readiness import build_release_readiness_safe
+        minimal = {
+            "product_summary": product_summary,
+            "approval_summary": approval_summary,
+            "patch_proposal_summary": patch_proposal_summary,
+            "execution_environment_summary": execution_environment_summary,
+            "autonomy_summary": autonomy_summary,
+            "helix_summary": helix_summary,
+        }
+        return build_release_readiness_safe(dashboard_summary=minimal)
+    except Exception:
+        return {
+            "release_readiness_status": "error_fallback",
+            "project_name": None,
+            "product_status": "unknown",
+            "approval_status": "unknown",
+            "execution_environment_status": "unknown",
+            "patch_status": "unknown",
+            "autonomy_status": "unknown",
+            "helix_status": "unknown",
+            "critical_blockers": ["Release readiness unavailable."],
+            "review_items": [],
+            "readiness_reason": "Release readiness unavailable.",
+            "ready_for_operator_release": False,
+            "trace_links_present": {
+                "approval_linked": False,
+                "patch_linked": False,
+                "autonomy_linked": False,
+                "product_linked": False,
+                "helix_linked": False,
+            },
+            "generated_at": datetime.now().isoformat(),
+        }
+
+
 def build_registry_dashboard_summary() -> dict[str, Any]:
     """
     Build a unified registry summary for the studio.
@@ -889,6 +935,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "autonomy_summary": autonomy_summary,
         "helix_summary": helix_summary,
         "patch_proposal_summary": patch_proposal_summary,
+        "release_readiness_summary": _build_release_readiness_from_dashboard(
+            product_summary=product_summary,
+            approval_summary=approval_summary,
+            patch_proposal_summary=patch_proposal_summary,
+            execution_environment_summary=execution_environment_summary,
+            autonomy_summary=autonomy_summary,
+            helix_summary=helix_summary,
+        ),
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).
