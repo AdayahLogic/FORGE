@@ -159,6 +159,27 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
     if rfb is None:
         rfb = not out["executable_candidate"]
     out["requires_followup_before_approval"] = bool(rfb)
+    # Phase 37: candidate review readiness (derived from proposal fields)
+    try:
+        from NEXUS.candidate_review_workflow import evaluate_candidate_review_readiness
+        rev = evaluate_candidate_review_readiness(out)
+        out["review_status"] = rev.get("review_status", "not_ready_for_review")
+        out["review_readiness"] = rev.get("review_readiness", "low")
+        out["review_reason"] = rev.get("review_reason", "")[:300]
+        out["review_requirements_met"] = rev.get("review_requirements_met", [])[:10]
+        out["review_requirements_missing"] = rev.get("review_requirements_missing", [])[:10]
+        out["human_review_required"] = rev.get("human_review_required", True)
+        out["approval_progression_ready"] = rev.get("approval_progression_ready", False)
+        out["next_step_recommendation"] = rev.get("next_step_recommendation", "")[:200]
+    except Exception:
+        out["review_status"] = "not_ready_for_review"
+        out["review_readiness"] = "low"
+        out["review_reason"] = ""
+        out["review_requirements_met"] = []
+        out["review_requirements_missing"] = ["evaluation_failed"]
+        out["human_review_required"] = True
+        out["approval_progression_ready"] = False
+        out["next_step_recommendation"] = "Review readiness evaluation failed; assume manual review."
     return out
 
 

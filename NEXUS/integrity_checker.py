@@ -104,6 +104,8 @@ VALID_REFINEMENT_STATUS = ("not_refinable", "partially_refined", "draft_ready")
 VALID_CONVERSION_STATUS = ("not_convertible", "conditionally_convertible", "converted_to_patch_candidate")
 VALID_PROPOSAL_MATURITY = ("advisory", "guided_followup", "strong_candidate", "executable")
 VALID_COMPLETION_STATUS = ("not_completable", "partially_completable", "completed_patch_candidate")
+VALID_REVIEW_STATUS = ("not_ready_for_review", "ready_for_review", "reviewed", "changes_requested", "approved_for_approval", "error_fallback")
+VALID_REVIEW_READINESS = ("low", "medium", "high")
 
 # Phase 27: cross-artifact trace summary
 TRACE_SUMMARY_KEYS = (
@@ -254,6 +256,20 @@ def check_repair_metadata_shape(meta: dict[str, Any] | None) -> dict[str, Any]:
         "issues": issues,
         "payload_type": "repair_metadata",
     }
+
+
+def check_review_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Phase 37: validate candidate review record shape. Read-only."""
+    if not isinstance(record, dict):
+        return {"valid": True, "issues": [], "payload_type": "review_record", "skipped": "not a dict"}
+    issues: list[str] = []
+    rs = record.get("review_status")
+    if rs is not None and str(rs).strip().lower() not in VALID_REVIEW_STATUS:
+        issues.append(f"review_status must be one of {VALID_REVIEW_STATUS}, got {rs!r}")
+    rr = record.get("review_readiness")
+    if rr is not None and str(rr).strip().lower() not in VALID_REVIEW_READINESS:
+        issues.append(f"review_readiness must be one of {VALID_REVIEW_READINESS}, got {rr!r}")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "review_record"}
 
 
 def check_refs_in_record(record: dict[str, Any], *, ref_keys: tuple[str, ...] | None = None) -> dict[str, Any]:

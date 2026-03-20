@@ -12,6 +12,7 @@ from typing import Any
 from NEXUS.patch_proposal_registry import (
     read_patch_proposal_journal_tail,
     get_proposal_effective_status,
+    normalize_patch_proposal,
 )
 from NEXUS.approval_staleness import evaluate_proposal_approval_staleness
 from NEXUS.registry import PROJECTS
@@ -53,6 +54,16 @@ def build_patch_proposal_summary(
                 if is_stale:
                     approved_pending_apply_stale_count += 1
             r_with_proj = {**r, "_project": proj_key, "effective_status": effective_status, "_stale": is_stale}
+            try:
+                from NEXUS.candidate_review_workflow import evaluate_candidate_review_readiness
+                norm = normalize_patch_proposal(r)
+                rev = evaluate_candidate_review_readiness(norm)
+                r_with_proj["review_status"] = rev.get("review_status", "not_ready_for_review")
+                r_with_proj["review_readiness"] = rev.get("review_readiness", "low")
+                r_with_proj["next_step_recommendation"] = rev.get("next_step_recommendation", "")[:200]
+            except Exception:
+                r_with_proj["review_status"] = "not_ready_for_review"
+                r_with_proj["review_readiness"] = "low"
             recent_proposals.append(r_with_proj)
             status_counts[effective_status] = status_counts.get(effective_status, 0) + 1
             if effective_status == "proposed":

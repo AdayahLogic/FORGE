@@ -124,6 +124,10 @@ SUPPORTED_COMMANDS = frozenset({
     "operator_release_summary",
     # Phase 27: cross-artifact trace
     "artifact_trace",
+    # Phase 37: candidate review workflow
+    "candidate_review_status",
+    "review_candidate",
+    "candidate_review_details",
 })
 
 
@@ -3171,6 +3175,160 @@ def run_command(
             from NEXUS.cross_artifact_trace import _fallback_trace
             from datetime import datetime
             fallback = _fallback_trace(datetime.now().isoformat(), str(e), proj_name)
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "candidate_review_status":
+        try:
+            from NEXUS.patch_proposal_summary import build_patch_proposal_summary_safe
+            from NEXUS.candidate_review_workflow import evaluate_candidate_review_readiness
+            summary = build_patch_proposal_summary_safe(n_recent=30, n_tail=100)
+            proposals = summary.get("recent_proposals", [])
+            ready_count = 0
+            not_ready_count = 0
+            by_readiness: dict[str, int] = {"high": 0, "medium": 0, "low": 0}
+            candidates: list[dict[str, Any]] = []
+            for p in proposals[:20]:
+                pn = p.get("_project") or p.get("project_name") or ""
+                effective = p.get("effective_status") or p.get("status") or "proposed"
+                if effective not in ("proposed", "approval_required"):
+                    continue
+                rev = evaluate_candidate_review_readiness(p)
+                rs = rev.get("review_status", "not_ready_for_review")
+                rr = rev.get("review_readiness", "low")
+                by_readiness[rr] = by_readiness.get(rr, 0) + 1
+                if rs == "ready_for_review":
+                    ready_count += 1
+                else:
+                    not_ready_count += 1
+                candidates.append({
+                    "patch_id": p.get("patch_id"),
+                    "project": pn,
+                    "effective_status": effective,
+                    "review_status": rs,
+                    "review_readiness": rr,
+                    "review_reason": rev.get("review_reason", "")[:300],
+                    "next_step_recommendation": rev.get("next_step_recommendation", "")[:200],
+                })
+            payload = {
+                "ready_for_review_count": ready_count,
+                "not_ready_for_review_count": not_ready_count,
+                "by_readiness": by_readiness,
+                "candidates": candidates,
+                "patch_proposal_summary": summary,
+            }
+            summary_line = f"ready={ready_count}; not_ready={not_ready_count}; by_readiness={by_readiness}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback = {
+                "ready_for_review_count": 0,
+                "not_ready_for_review_count": 0,
+                "by_readiness": {"high": 0, "medium": 0, "low": 0},
+                "candidates": [],
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "review_candidate":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            review_outcome = (kwargs.get("review_outcome") or "reviewed").strip().lower()
+            reviewer_notes = (kwargs.get("reviewer_notes") or "").strip()[:1000]
+            followup_actions = kwargs.get("followup_actions")
+            if isinstance(followup_actions, str):
+                followup_actions = [x.strip() for x in followup_actions.split(",") if x.strip()][:10]
+            elif isinstance(followup_actions, list):
+                followup_actions = [str(x)[:200] for x in followup_actions[:10]]
+            else:
+                followup_actions = []
+            if not patch_id:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id required.", payload={"review_id": "", "error": "patch_id required."})
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, normalize_patch_proposal
+            from NEXUS.candidate_review_registry import append_candidate_review_record_safe, normalize_review_record
+            from NEXUS.candidate_review_workflow import evaluate_candidate_review_readiness
+            found, found_path, found_key = find_proposal_and_project(patch_id)
+            if not found or not found_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Patch proposal not found.", payload={"review_id": "", "error": "Patch proposal not found.", "patch_id": patch_id})
+            norm = normalize_patch_proposal(found)
+            rev = evaluate_candidate_review_readiness(norm)
+            if review_outcome not in ("reviewed", "changes_requested", "approved_for_approval"):
+                review_outcome = "reviewed"
+            record = {
+                "patch_id": patch_id,
+                "project_name": found_key or norm.get("project_name", ""),
+                "review_status": review_outcome,
+                "review_reason": rev.get("review_reason", "")[:300],
+                "review_readiness": rev.get("review_readiness", "medium"),
+                "review_requirements_met": rev.get("review_requirements_met", [])[:10],
+                "review_requirements_missing": rev.get("review_requirements_missing", [])[:10],
+                "reviewer_notes": reviewer_notes,
+                "review_outcome": review_outcome,
+                "followup_actions": followup_actions,
+                "human_review_required": False,
+                "approval_progression_ready": review_outcome == "approved_for_approval" and rev.get("approval_progression_ready", False),
+            }
+            normalized_record = normalize_review_record(record)
+            review_id = normalized_record.get("review_id", "")
+            written = append_candidate_review_record_safe(project_path=found_path, record=record)
+            if written:
+                try:
+                    from NEXUS.learning_writer import append_learning_record_safe
+                    append_learning_record_safe(project_path=found_path, record={
+                        "record_type": "candidate_review_recorded",
+                        "project_name": found_key or "",
+                        "workflow_stage": "candidate_review",
+                        "decision_source": "review_candidate",
+                        "decision_type": "review_recorded",
+                        "decision_summary": f"patch_id={patch_id}; review_outcome={review_outcome}; review_id={review_id}",
+                        "downstream_effects": {"patch_id": patch_id, "review_id": review_id, "review_status": review_outcome, "review_readiness": rev.get("review_readiness"), "approval_progression_ready": record.get("approval_progression_ready")},
+                        "patch_id_refs": [patch_id],
+                        "tags": ["patch_proposal", "candidate_review"],
+                    })
+                except Exception:
+                    pass
+            payload = {"review_id": review_id, "patch_id": patch_id, "review_outcome": review_outcome, "written": bool(written), "record": normalized_record}
+            return _result(command=cmd, status="ok", project_name=found_key, summary=f"review_recorded; outcome={review_outcome}", payload=payload)
+        except Exception as e:
+            fallback = {"review_id": "", "patch_id": kwargs.get("patch_id", ""), "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "candidate_review_details":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            proj_path = path
+            if not proj_path and proj_name:
+                from NEXUS.registry import PROJECTS as _PROJECTS
+                key = str(proj_name).strip().lower()
+                if key in _PROJECTS:
+                    proj_path = _PROJECTS[key].get("path")
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, normalize_patch_proposal, get_proposal_effective_status
+            from NEXUS.candidate_review_registry import get_latest_review_for_patch, read_candidate_review_journal_tail
+            from NEXUS.candidate_review_workflow import evaluate_candidate_review_readiness
+            if patch_id:
+                found, found_path, found_key = find_proposal_and_project(patch_id)
+                if found and found_path:
+                    norm = normalize_patch_proposal(found)
+                    rev = evaluate_candidate_review_readiness(norm)
+                    effective_status, resolution = get_proposal_effective_status(project_path=found_path, patch_id=patch_id)
+                    latest_review = get_latest_review_for_patch(project_path=found_path, patch_id=patch_id)
+                    display_status = latest_review.get("review_status") if latest_review else rev.get("review_status")
+                    payload = {
+                        "patch_proposal": {k: v for k, v in norm.items() if k != "patch_payload"},
+                        "patch_id": patch_id,
+                        "project": found_key,
+                        "effective_status": effective_status,
+                        "review_readiness": rev,
+                        "display_review_status": display_status,
+                        "latest_review_record": latest_review,
+                        "resolution": resolution,
+                    }
+                    return _result(command=cmd, status="ok", project_name=found_key, summary=f"patch_id={patch_id}; review_status={display_status}", payload=payload)
+            if proj_path:
+                tail = read_candidate_review_journal_tail(project_path=proj_path, n=30)
+                payload = {"recent_reviews": tail[:20], "project": proj_name}
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"recent_reviews={len(payload['recent_reviews'])}", payload=payload)
+            return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id or project_name required.", payload={"error": "patch_id or project_name required."})
+        except Exception as e:
+            fallback = {"patch_proposal": None, "review_readiness": None, "latest_review_record": None, "error": str(e)}
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "health":
