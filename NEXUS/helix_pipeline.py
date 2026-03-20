@@ -397,6 +397,12 @@ def run_helix_pipeline(
             "repair_strategy_category": repair_strategy,
             "has_patch_payload": repair_metadata.get("has_patch_payload", False),
         }
+        if requires_surgeon:
+            downstream["repair_artifact_patch_readiness"] = repair_metadata.get("patch_readiness", "unknown")
+            downstream["repair_artifact_issue_scope"] = repair_metadata.get("issue_scope", "unknown")
+            downstream["repair_artifact_human_followup_required"] = repair_metadata.get("human_followup_required", True)
+            mif = repair_metadata.get("missing_information_flags") or []
+            downstream["repair_artifact_missing_info_count"] = len(mif)
         if quality_signals:
             downstream["quality_signals"] = quality_signals
             downstream["high_confidence_output"] = bool(architect_approach_count >= 2 and not critique_severity_high)

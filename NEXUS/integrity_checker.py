@@ -92,6 +92,12 @@ PATCH_PROPOSAL_SUMMARY_KEYS = (
     "reason",
 )
 
+# Phase 32: Surgeon repair_metadata core keys (required when repair_recommended)
+REPAIR_METADATA_CORE_KEYS = ("repair_reason", "has_patch_payload", "repair_strategy_category")
+REPAIR_METADATA_EXTENDED_KEYS = ("patch_readiness", "issue_scope", "target_files_candidate", "operator_handoff_notes")
+VALID_PATCH_READINESS = ("low", "medium", "high")
+VALID_ISSUE_SCOPE = ("single_file", "multi_file", "unknown")
+
 # Phase 27: cross-artifact trace summary
 TRACE_SUMMARY_KEYS = (
     "trace_status",
@@ -185,6 +191,33 @@ def check_trace_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
         "valid": len(missing) == 0,
         "missing_keys": missing,
         "payload_type": "cross_artifact_trace_summary",
+    }
+
+
+def check_repair_metadata_shape(meta: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Check Surgeon repair_metadata shape (Phase 32). Read-only, deterministic.
+    Lenient: core keys required; extended keys and value validation when present.
+    """
+    if not isinstance(meta, dict):
+        return {"valid": True, "issues": [], "payload_type": "repair_metadata", "skipped": "not a dict"}
+    issues: list[str] = []
+    for k in REPAIR_METADATA_CORE_KEYS:
+        if k not in meta:
+            issues.append(f"missing core key: {k}")
+    pr = meta.get("patch_readiness")
+    if pr is not None and str(pr).strip().lower() not in VALID_PATCH_READINESS:
+        issues.append(f"patch_readiness must be one of {VALID_PATCH_READINESS}, got {pr!r}")
+    scope = meta.get("issue_scope")
+    if scope is not None and str(scope).strip().lower() not in VALID_ISSUE_SCOPE:
+        issues.append(f"issue_scope must be one of {VALID_ISSUE_SCOPE}, got {scope!r}")
+    mif = meta.get("missing_information_flags")
+    if mif is not None and not isinstance(mif, list):
+        issues.append("missing_information_flags must be list")
+    return {
+        "valid": len(issues) == 0,
+        "issues": issues,
+        "payload_type": "repair_metadata",
     }
 
 
@@ -295,6 +328,35 @@ def run_integrity_check(
     results.append(r)
     if not r["valid"]:
         all_valid = False
+
+    # Phase 32: Surgeon repair_metadata shape (when present in helix journal)
+    try:
+        from NEXUS.registry import PROJECTS
+        from NEXUS.helix_registry import read_helix_journal_tail
+        found = False
+        for proj_key in list(PROJECTS.keys())[:2]:
+            if found:
+                break
+            path = PROJECTS.get(proj_key, {}).get("path")
+            if not path:
+                continue
+            tail = read_helix_journal_tail(project_path=path, n=5)
+            for rec in tail:
+                if found:
+                    break
+                for sr in rec.get("stage_results") or []:
+                    if sr.get("stage") == "surgeon" and sr.get("repair_recommended"):
+                        meta = sr.get("repair_metadata")
+                        if meta:
+                            r = check_repair_metadata_shape(meta)
+                            r["source"] = "helix_surgeon_repair_metadata"
+                            results.append(r)
+                            if not r["valid"]:
+                                all_valid = False
+                            found = True
+                            break
+    except Exception:
+        pass
 
     # Ref shape in sample records (Phase 28: autonomy + patch)
     try:

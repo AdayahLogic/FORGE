@@ -412,6 +412,48 @@ def run_optimizer_stage(
     })
 
 
+def _infer_target_files_candidate(
+    builder_result: dict[str, Any] | None,
+    val_result: dict[str, Any],
+    target_hint: str,
+) -> list[str]:
+    """Phase 32: infer candidate target files from patch_request, validation, or hint."""
+    candidates: list[str] = []
+    if builder_result:
+        impl_plan = builder_result.get("implementation_plan") or {}
+        patch_req = impl_plan.get("patch_request") if isinstance(impl_plan, dict) else None
+        if isinstance(patch_req, dict) and patch_req.get("target_relative_path"):
+            p = str(patch_req.get("target_relative_path", "")).strip()
+            if p and p not in candidates:
+                candidates.append(p)
+    checks = val_result.get("checks") or {}
+    if isinstance(checks, dict):
+        for k, v in checks.items():
+            if isinstance(v, str) and (".py" in v or ".ts" in v or ".js" in v or "/" in v):
+                for part in v.replace("\\", "/").split():
+                    if "/" in part or part.endswith((".py", ".ts", ".js", ".tsx", ".jsx")):
+                        if part not in candidates and len(part) < 200:
+                            candidates.append(part[:200])
+    if target_hint and not candidates:
+        import re
+        for m in re.finditer(r"[\w./\-]+\.(py|ts|tsx|js|jsx|json)\b", target_hint):
+            p = m.group(0)
+            if p not in candidates:
+                candidates.append(p)
+    return candidates[:10]
+
+
+def _infer_issue_scope(target_files: list[str], impl_steps: list[Any]) -> str:
+    """Phase 32: infer issue_scope from targets or implementation steps."""
+    if len(target_files) > 1:
+        return "multi_file"
+    if len(target_files) == 1:
+        return "single_file"
+    if impl_steps and len(impl_steps) > 3:
+        return "multi_file"
+    return "unknown"
+
+
 def run_surgeon_stage(
     critic_result: dict[str, Any],
     inspector_result: dict[str, Any],
@@ -424,6 +466,8 @@ def run_surgeon_stage(
     Produces repair recommendation (structured); does NOT apply patches.
     When repair recommended and builder has patch_request, includes repair_patch_proposal.
     Actual patch application goes through normal approval/patch flow.
+    Phase 32: richer repair artifacts (patch_readiness, issue_scope, suspected_root_causes,
+    validation_recommendations, target_files_candidate, operator_handoff_notes).
     """
     repair_rec = critic_result.get("repair_recommended", False) or inspector_result.get("repair_recommended", False)
     repair_reason = critic_result.get("repair_reason") or inspector_result.get("repair_reason") or ""
@@ -462,16 +506,65 @@ def run_surgeon_stage(
 
     has_patch = repair_patch_proposal is not None
     repair_strategy_category = "patch_available" if has_patch else "builder_no_patch"
+    impl_plan = (builder_result or {}).get("implementation_plan") or {}
+    impl_steps = impl_plan.get("implementation_steps") or []
+
+    # Phase 32: target_files_candidate, issue_scope
+    target_files_candidate = _infer_target_files_candidate(builder_result, val_result, target_hint)
+    issue_scope = _infer_issue_scope(target_files_candidate, impl_steps)
+
+    # Phase 32: suspected_root_causes from critic + inspector
+    suspected_root_causes: list[str] = []
+    if repair_reason:
+        suspected_root_causes.append(repair_reason[:200])
+    hidden = crit_eval.get("hidden_failure_points") or []
+    for h in hidden[:3]:
+        if isinstance(h, str) and h.strip():
+            suspected_root_causes.append(h.strip()[:150])
+    testing_gaps = crit_eval.get("testing_gaps") or []
+    for t in testing_gaps[:2]:
+        if isinstance(t, str) and t.strip():
+            suspected_root_causes.append(f"Testing gap: {t.strip()[:120]}")
+    suspected_root_causes = list(dict.fromkeys(suspected_root_causes))[:8]
+
     missing_information_flags: list[str] = []
     recommended_next_actions: list[str] = []
+    validation_recommendations: list[str] = []
     if not has_patch:
         missing_information_flags.append("Builder did not produce patch_request; no target file or search/replace.")
         missing_information_flags.append("Inspector regression reason may indicate target area.")
         recommended_next_actions.append("Review Builder implementation_plan for patch_request; refine if needed.")
         recommended_next_actions.append("Re-run Architect with narrower scope to elicit concrete patch.")
         recommended_next_actions.append("Consider manual fix guided by target_hint and repair_reason.")
+        validation_recommendations.append("Re-run regression checks after any manual fix.")
+        if testing_gaps:
+            validation_recommendations.append("Address testing gaps before considering patch complete.")
+        if not target_files_candidate:
+            missing_information_flags.append("No target file candidate identified; scope may be unclear.")
     else:
         recommended_next_actions.append("Patch proposal available; submit through approval flow for apply.")
+        validation_recommendations.append("Verify patch via approval flow before apply.")
+        validation_recommendations.append("Run regression checks after patch apply.")
+
+    # Phase 32: patch_readiness, human_followup_required
+    if has_patch:
+        patch_readiness = "high"
+        human_followup_required = False
+    elif target_files_candidate and suspected_root_causes:
+        patch_readiness = "medium"
+        human_followup_required = True
+    else:
+        patch_readiness = "low"
+        human_followup_required = True
+
+    # Phase 32: operator_handoff_notes, patch_followup_candidate (forward-compat with governed patch flows)
+    patch_followup_candidate = not has_patch and (len(target_files_candidate) > 0 or bool(target_hint))
+    if has_patch and repair_patch_proposal:
+        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}."
+    elif patch_readiness == "medium":
+        operator_handoff_notes = f"Partial info: {len(target_files_candidate)} target candidate(s), {len(suspected_root_causes)} suspected cause(s). {len(missing_information_flags)} missing info flag(s). Human follow-up required."
+    else:
+        operator_handoff_notes = f"Low readiness. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Review recommended_next_actions and missing_information_flags."
 
     repair_metadata = {
         "repair_reason": repair_reason[:500],
@@ -481,12 +574,20 @@ def run_surgeon_stage(
         "repair_strategy_category": repair_strategy_category,
         "missing_information_flags": missing_information_flags[:5],
         "recommended_next_actions": recommended_next_actions[:5],
+        "target_files_candidate": target_files_candidate[:10],
+        "issue_scope": issue_scope,
+        "suspected_root_causes": suspected_root_causes[:8],
+        "validation_recommendations": validation_recommendations[:5],
+        "patch_readiness": patch_readiness,
+        "human_followup_required": human_followup_required,
+        "operator_handoff_notes": operator_handoff_notes[:500],
+        "patch_followup_candidate": patch_followup_candidate,
     }
 
     return normalize_helix_stage_result({
         "stage": "surgeon",
         "stage_status": "repair_recommended",
-        "output_summary": f"Repair recommended: {repair_reason[:200]}; strategy={repair_strategy_category}",
+        "output_summary": f"Repair recommended: {repair_reason[:200]}; strategy={repair_strategy_category}; patch_readiness={patch_readiness}",
         "repair_recommended": True,
         "repair_reason": repair_reason,
         "repair_patch_proposal": repair_patch_proposal,

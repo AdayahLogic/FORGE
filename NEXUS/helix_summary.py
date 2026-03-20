@@ -68,6 +68,11 @@ def build_helix_summary(
     multi_approach_count = 0
     repair_with_patch_count = 0
     repair_without_patch_count = 0
+    patch_readiness_high = 0
+    patch_readiness_medium = 0
+    patch_readiness_low = 0
+    common_missing_info_patterns: dict[str, int] = {}
+    repair_artifact_actionable_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -95,8 +100,20 @@ def build_helix_summary(
                     meta = sr.get("repair_metadata") or {}
                     if meta.get("has_patch_payload"):
                         repair_with_patch_count += 1
+                        patch_readiness_high += 1
                     else:
                         repair_without_patch_count += 1
+                        pr = (meta.get("patch_readiness") or "low").strip().lower()
+                        if pr == "medium":
+                            patch_readiness_medium += 1
+                        else:
+                            patch_readiness_low += 1
+                    for flag in meta.get("missing_information_flags") or []:
+                        if isinstance(flag, str) and flag.strip():
+                            k = flag.strip()[:150]
+                            common_missing_info_patterns[k] = common_missing_info_patterns.get(k, 0) + 1
+                    if meta.get("patch_readiness") in ("high", "medium") or meta.get("has_patch_payload"):
+                        repair_artifact_actionable_count += 1
         if tail:
             last = tail[-1]
             if last_helix_run is None or (last.get("finished_at") or "") > (last_helix_run.get("finished_at") or ""):
@@ -139,10 +156,20 @@ def build_helix_summary(
     approval_blocked_frequency = approval_blocked_count / total_runs if total_runs else 0.0
     autonomy_linkage_presence = autonomy_linkage_count / total_runs if total_runs else 0.0
     multi_approach_success_rate = multi_approach_count / total_runs if total_runs else 0.0
-    repair_artifact_quality = {
+    repair_total = repair_with_patch_count + repair_without_patch_count
+    repair_artifact_quality: dict[str, Any] = {
         "repair_with_patch_count": repair_with_patch_count,
         "repair_without_patch_count": repair_without_patch_count,
-        "repair_total": repair_with_patch_count + repair_without_patch_count,
+        "repair_total": repair_total,
+        "patch_readiness_distribution": {
+            "high": patch_readiness_high,
+            "medium": patch_readiness_medium,
+            "low": patch_readiness_low,
+        },
+        "common_missing_info_patterns": dict(
+            sorted(common_missing_info_patterns.items(), key=lambda x: -x[1])[:10]
+        ),
+        "actionable_count": repair_with_patch_count + patch_readiness_medium,
     }
 
     # Phase 31: quality signals from last run (or aggregate from recent)
@@ -211,7 +238,14 @@ def build_helix_summary_safe(
             "approval_blocked_frequency": 0.0,
             "autonomy_linkage_presence": 0.0,
             "multi_approach_success_rate": 0.0,
-            "repair_artifact_quality": {"repair_with_patch_count": 0, "repair_without_patch_count": 0, "repair_total": 0},
+            "repair_artifact_quality": {
+                "repair_with_patch_count": 0,
+                "repair_without_patch_count": 0,
+                "repair_total": 0,
+                "patch_readiness_distribution": {"high": 0, "medium": 0, "low": 0},
+                "common_missing_info_patterns": {},
+                "actionable_count": 0,
+            },
             "helix_quality_signals": {},
             "critique_severity_patterns": {},
             "optimizer_actionability_count": 0,
