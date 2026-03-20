@@ -82,6 +82,9 @@ def build_helix_summary(
     conversion_converted_count = 0
     conversion_conditionally_count = 0
     conversion_not_convertible_count = 0
+    completion_completed_count = 0
+    completion_partially_count = 0
+    completion_not_completable_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -137,6 +140,13 @@ def build_helix_summary(
                         conversion_conditionally_count += 1
                     else:
                         conversion_not_convertible_count += 1
+                    cps = (meta.get("completion_status") or "not_completable").strip().lower()
+                    if cps == "completed_patch_candidate":
+                        completion_completed_count += 1
+                    elif cps == "partially_completable":
+                        completion_partially_count += 1
+                    else:
+                        completion_not_completable_count += 1
         if tail:
             last = tail[-1]
             if last_helix_run is None or (last.get("finished_at") or "") > (last_helix_run.get("finished_at") or ""):
@@ -207,6 +217,11 @@ def build_helix_summary(
             "converted_to_patch_candidate": conversion_converted_count,
             "conditionally_convertible": conversion_conditionally_count,
             "not_convertible": conversion_not_convertible_count,
+        },
+        "completion_distribution": {
+            "completed_patch_candidate": completion_completed_count,
+            "partially_completable": completion_partially_count,
+            "not_completable": completion_not_completable_count,
         },
     }
 
@@ -286,6 +301,7 @@ def build_helix_summary_safe(
                 "draftability_distribution": {"high": 0, "medium": 0, "low": 0},
                 "refinement_distribution": {"draft_ready": 0, "partially_refined": 0, "not_refinable": 0},
                 "conversion_distribution": {"converted_to_patch_candidate": 0, "conditionally_convertible": 0, "not_convertible": 0},
+                "completion_distribution": {"completed_patch_candidate": 0, "partially_completable": 0, "not_completable": 0},
             },
             "helix_quality_signals": {},
             "critique_severity_patterns": {},

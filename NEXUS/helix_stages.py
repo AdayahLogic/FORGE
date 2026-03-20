@@ -608,12 +608,13 @@ def run_surgeon_stage(
         refinement = {}
         refinement_status = "not_refinable"
 
+    comp_status = "completed_patch_candidate" if has_patch else ("partially_completable" if patch_readiness == "medium" else "not_completable")
     if has_patch and repair_patch_proposal:
-        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Draftability: high. Refinement: {refinement_status}. Conversion: converted_to_patch_candidate; executable."
+        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Completion: {comp_status}; executable."
     elif patch_readiness == "medium":
-        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Strategy: guided_patch_followup. Refinement: {refinement_status}. Conversion: conditionally_convertible; human review recommended."
+        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Completion: {comp_status}. Human must provide search_text and replacement_text."
     else:
-        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Refinement: {refinement_status}. Conversion: not_convertible. Advisory only; review candidate_followup_actions."
+        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Completion: {comp_status}. Advisory only; review candidate_followup_actions."
 
     repair_metadata = {
         "repair_reason": repair_reason[:500],
@@ -666,6 +667,23 @@ def run_surgeon_stage(
         repair_metadata["conversion_status"] = "not_convertible"
         repair_metadata["executable_candidate"] = has_patch
         repair_metadata["proposal_maturity"] = "executable" if has_patch else "advisory"
+
+    # Phase 36: patch completion assist (Builder + Surgeon; no fabrication)
+    try:
+        from NEXUS.helix_patch_completion import evaluate_patch_completion
+        patch_payload_for_comp = repair_patch_proposal if has_patch and repair_patch_proposal else {}
+        comp = evaluate_patch_completion(builder_result, repair_metadata, patch_payload_for_comp)
+        repair_metadata["completion_status"] = comp.get("completion_status", "not_completable")
+        repair_metadata["completion_reason"] = comp.get("completion_reason", "")[:300]
+        repair_metadata["completion_requirements_met"] = comp.get("completion_requirements_met", [])[:10]
+        repair_metadata["completion_requirements_missing"] = comp.get("completion_requirements_missing", [])[:10]
+        repair_metadata["completion_confidence"] = comp.get("completion_confidence", "low")
+        repair_metadata["completed_candidate_type"] = comp.get("completed_candidate_type", "advisory_only")
+        repair_metadata["requires_followup_before_approval"] = comp.get("requires_followup_before_approval", True)
+    except Exception:
+        repair_metadata["completion_status"] = "not_completable"
+        repair_metadata["completion_confidence"] = "low"
+        repair_metadata["requires_followup_before_approval"] = True
 
     return normalize_helix_stage_result({
         "stage": "surgeon",

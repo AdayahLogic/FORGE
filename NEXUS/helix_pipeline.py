@@ -315,9 +315,12 @@ def run_helix_pipeline(
             }
             try:
                 from NEXUS.helix_draft_conversion import evaluate_draft_conversion
+                from NEXUS.helix_patch_completion import evaluate_patch_completion
                 conv = evaluate_draft_conversion(repair_meta, True, patch_payload)
+                comp = evaluate_patch_completion(builder_result, repair_meta, patch_payload)
             except Exception:
                 conv = {"conversion_status": "converted_to_patch_candidate", "executable_candidate": True, "proposal_maturity": "executable"}
+                comp = {"completion_status": "completed_patch_candidate", "completion_confidence": "high"}
             proposal = {
                 "project_name": project_name,
                 "run_id": run_id,
@@ -345,6 +348,13 @@ def run_helix_pipeline(
                 "conversion_confidence": conv.get("conversion_confidence", "high"),
                 "ready_for_human_patch_review": conv.get("ready_for_human_patch_review", True),
                 "ready_for_governed_patch_validation": conv.get("ready_for_governed_patch_validation", True),
+                "completion_status": comp.get("completion_status", "completed_patch_candidate"),
+                "completion_reason": comp.get("completion_reason", "")[:300],
+                "completion_requirements_met": comp.get("completion_requirements_met", [])[:10],
+                "completion_requirements_missing": comp.get("completion_requirements_missing", [])[:10],
+                "completion_confidence": comp.get("completion_confidence", "high"),
+                "completed_candidate_type": comp.get("completed_candidate_type", "diff_patch_candidate"),
+                "requires_followup_before_approval": comp.get("requires_followup_before_approval", False),
             }
             written = append_patch_proposal_safe(project_path=project_path, record=proposal)
         elif requires_surgeon and repair_meta.get("patch_followup_candidate") and repair_meta.get("patch_draftability") in ("medium", "high"):
@@ -357,10 +367,13 @@ def run_helix_pipeline(
             proposal_completeness = "partial" if refinement_status == "partially_refined" else "advisory"
             try:
                 from NEXUS.helix_draft_conversion import evaluate_draft_conversion
+                from NEXUS.helix_patch_completion import evaluate_patch_completion
                 draft_payload = {"draft_followup_artifact": True}
                 conv = evaluate_draft_conversion(repair_meta, False, draft_payload)
+                comp = evaluate_patch_completion(builder_result, repair_meta, draft_payload)
             except Exception:
                 conv = {"conversion_status": "conditionally_convertible", "executable_candidate": False, "proposal_maturity": "guided_followup"}
+                comp = {"completion_status": "partially_completable", "completion_confidence": "low"}
             proposal = {
                 "project_name": project_name,
                 "run_id": run_id,
@@ -391,6 +404,9 @@ def run_helix_pipeline(
                     "conversion_status": conv.get("conversion_status", "conditionally_convertible"),
                     "proposal_maturity": conv.get("proposal_maturity", "guided_followup"),
                     "executable_candidate": False,
+                    "completion_status": comp.get("completion_status", "partially_completable"),
+                    "completed_target_file": comp.get("completed_target_file", "")[:500],
+                    "completion_requirements_missing": comp.get("completion_requirements_missing", [])[:10],
                 },
                 "proposal_readiness": "draft_followup",
                 "proposal_completeness": proposal_completeness,
@@ -406,6 +422,13 @@ def run_helix_pipeline(
                 "conversion_confidence": conv.get("conversion_confidence", "low"),
                 "ready_for_human_patch_review": conv.get("ready_for_human_patch_review", True),
                 "ready_for_governed_patch_validation": conv.get("ready_for_governed_patch_validation", False),
+                "completion_status": comp.get("completion_status", "partially_completable"),
+                "completion_reason": comp.get("completion_reason", "")[:300],
+                "completion_requirements_met": comp.get("completion_requirements_met", [])[:10],
+                "completion_requirements_missing": comp.get("completion_requirements_missing", [])[:10],
+                "completion_confidence": comp.get("completion_confidence", "low"),
+                "completed_candidate_type": comp.get("completed_candidate_type", "guided_followup_only"),
+                "requires_followup_before_approval": comp.get("requires_followup_before_approval", True),
             }
             written = append_patch_proposal_safe(project_path=project_path, record=proposal)
         else:
@@ -501,6 +524,9 @@ def run_helix_pipeline(
             downstream["conversion_confidence"] = repair_metadata.get("conversion_confidence", "unknown")
             downstream["executable_candidate"] = repair_metadata.get("executable_candidate", False)
             downstream["proposal_maturity"] = repair_metadata.get("proposal_maturity", "unknown")
+            downstream["completion_status"] = repair_metadata.get("completion_status", "unknown")
+            downstream["completion_confidence"] = repair_metadata.get("completion_confidence", "unknown")
+            downstream["requires_followup_before_approval"] = repair_metadata.get("requires_followup_before_approval", True)
         if quality_signals:
             downstream["quality_signals"] = quality_signals
             downstream["high_confidence_output"] = bool(architect_approach_count >= 2 and not critique_severity_high)

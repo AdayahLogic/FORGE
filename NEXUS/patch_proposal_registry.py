@@ -141,6 +141,24 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
         out["conversion_confidence"] = "high" if out["executable_candidate"] else "low"
     out["ready_for_human_patch_review"] = bool(r.get("ready_for_human_patch_review", True))
     out["ready_for_governed_patch_validation"] = bool(r.get("ready_for_governed_patch_validation", out["executable_candidate"]))
+    # Phase 36: completion fields
+    completion_status = str(r.get("completion_status") or pp.get("completion_status") or "").strip().lower()
+    if completion_status not in ("not_completable", "partially_completable", "completed_patch_candidate"):
+        completion_status = "completed_patch_candidate" if out["executable_candidate"] else "partially_completable"
+    out["completion_status"] = completion_status
+    out["completion_reason"] = str(r.get("completion_reason") or "")[:300]
+    out["completion_requirements_met"] = list(r.get("completion_requirements_met") or [])[:10]
+    out["completion_requirements_missing"] = list(r.get("completion_requirements_missing") or [])[:10]
+    out["completion_confidence"] = str(r.get("completion_confidence") or "low").strip().lower()
+    if out["completion_confidence"] not in ("low", "medium", "high"):
+        out["completion_confidence"] = "high" if out["executable_candidate"] else "low"
+    out["completed_candidate_type"] = str(r.get("completed_candidate_type") or pp.get("completed_candidate_type") or "advisory_only").strip().lower()
+    if out["completed_candidate_type"] not in ("diff_patch_candidate", "guided_followup_only", "advisory_only"):
+        out["completed_candidate_type"] = "diff_patch_candidate" if out["executable_candidate"] else "guided_followup_only"
+    rfb = r.get("requires_followup_before_approval")
+    if rfb is None:
+        rfb = not out["executable_candidate"]
+    out["requires_followup_before_approval"] = bool(rfb)
     return out
 
 

@@ -103,6 +103,7 @@ VALID_PROPOSAL_READINESS = ("fully_ready", "draft_followup", "advisory_only")
 VALID_REFINEMENT_STATUS = ("not_refinable", "partially_refined", "draft_ready")
 VALID_CONVERSION_STATUS = ("not_convertible", "conditionally_convertible", "converted_to_patch_candidate")
 VALID_PROPOSAL_MATURITY = ("advisory", "guided_followup", "strong_candidate", "executable")
+VALID_COMPLETION_STATUS = ("not_completable", "partially_completable", "completed_patch_candidate")
 
 # Phase 27: cross-artifact trace summary
 TRACE_SUMMARY_KEYS = (
@@ -245,6 +246,9 @@ def check_repair_metadata_shape(meta: dict[str, Any] | None) -> dict[str, Any]:
     cs = meta.get("conversion_status")
     if cs is not None and str(cs).strip().lower() not in VALID_CONVERSION_STATUS:
         issues.append(f"conversion_status must be one of {VALID_CONVERSION_STATUS}, got {cs!r}")
+    cps = meta.get("completion_status")
+    if cps is not None and str(cps).strip().lower() not in VALID_COMPLETION_STATUS:
+        issues.append(f"completion_status must be one of {VALID_COMPLETION_STATUS}, got {cps!r}")
     return {
         "valid": len(issues) == 0,
         "issues": issues,
