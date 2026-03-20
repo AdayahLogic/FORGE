@@ -122,6 +122,8 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 26: operator release readiness
     "release_readiness",
     "operator_release_summary",
+    # Phase 27: cross-artifact trace
+    "artifact_trace",
 })
 
 
@@ -3145,6 +3147,19 @@ def run_command(
                 "generated_at": "",
                 "error": str(e),
             }
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "artifact_trace":
+        try:
+            from NEXUS.cross_artifact_trace import build_cross_artifact_trace_safe
+            data = build_cross_artifact_trace_safe(project_name=proj_name, project_path=path)
+            status_val = data.get("trace_status", "error_fallback")
+            summary_line = f"trace_status={status_val}; links={sum(1 for v in (data.get('link_completeness') or {}).values() if v)}; missing={len(data.get('missing_links', []))}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=data)
+        except Exception as e:
+            from NEXUS.cross_artifact_trace import _fallback_trace
+            from datetime import datetime
+            fallback = _fallback_trace(datetime.now().isoformat(), str(e), proj_name)
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd == "health":

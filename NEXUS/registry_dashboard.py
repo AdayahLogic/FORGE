@@ -76,6 +76,42 @@ def _build_release_readiness_from_dashboard(
         }
 
 
+def _build_cross_artifact_trace_for_dashboard() -> dict[str, Any]:
+    """Build cross-artifact trace for dashboard (Phase 27). Read-only; studio-wide."""
+    try:
+        from NEXUS.cross_artifact_trace import build_cross_artifact_trace_safe
+        return build_cross_artifact_trace_safe(n_recent=30)
+    except Exception:
+        return {
+            "trace_status": "error_fallback",
+            "project_name": None,
+            "approval_ids": [],
+            "patch_ids": [],
+            "helix_ids": [],
+            "autonomy_ids": [],
+            "product_ids": [],
+            "learning_record_refs": [],
+            "link_completeness": {
+                "approval_to_patch": False,
+                "patch_to_helix": False,
+                "patch_to_product": False,
+                "autonomy_to_product": False,
+                "helix_to_autonomy": False,
+            },
+            "missing_links": ["Cross-artifact trace unavailable."],
+            "trace_reason": "Cross-artifact trace unavailable.",
+            "generated_at": datetime.now().isoformat(),
+            "artifact_counts": {
+                "approvals": 0,
+                "patches": 0,
+                "helix_runs": 0,
+                "autonomy_runs": 0,
+                "products": 0,
+                "learning_records": 0,
+            },
+        }
+
+
 def build_registry_dashboard_summary() -> dict[str, Any]:
     """
     Build a unified registry summary for the studio.
@@ -943,6 +979,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             autonomy_summary=autonomy_summary,
             helix_summary=helix_summary,
         ),
+        "cross_artifact_trace_summary": _build_cross_artifact_trace_for_dashboard(),
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
         # Phase 6 elite capability layers (summary-oriented).

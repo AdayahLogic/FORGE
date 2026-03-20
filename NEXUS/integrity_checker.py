@@ -78,6 +78,22 @@ PATCH_PROPOSAL_SUMMARY_KEYS = (
     "reason",
 )
 
+# Phase 27: cross-artifact trace summary
+TRACE_SUMMARY_KEYS = (
+    "trace_status",
+    "project_name",
+    "approval_ids",
+    "patch_ids",
+    "helix_ids",
+    "autonomy_ids",
+    "product_ids",
+    "learning_record_refs",
+    "link_completeness",
+    "missing_links",
+    "trace_reason",
+    "generated_at",
+)
+
 
 def _check_keys(payload: dict[str, Any], required: tuple[str, ...]) -> list[str]:
     """Return list of missing keys."""
@@ -145,6 +161,16 @@ def check_patch_proposal_summary_shape(payload: dict[str, Any]) -> dict[str, Any
         "valid": len(missing) == 0,
         "missing_keys": missing,
         "payload_type": "patch_proposal_summary",
+    }
+
+
+def check_trace_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
+    """Check cross-artifact trace summary has required keys (Phase 27). Read-only."""
+    missing = _check_keys(payload, TRACE_SUMMARY_KEYS)
+    return {
+        "valid": len(missing) == 0,
+        "missing_keys": missing,
+        "payload_type": "cross_artifact_trace_summary",
     }
 
 
@@ -242,6 +268,14 @@ def run_integrity_check(
     # Patch proposal summary (Phase 23)
     patch_proposal = dash.get("patch_proposal_summary") or {}
     r = check_patch_proposal_summary_shape(patch_proposal)
+    r["source"] = "dashboard"
+    results.append(r)
+    if not r["valid"]:
+        all_valid = False
+
+    # Cross-artifact trace summary (Phase 27)
+    trace_summary = dash.get("cross_artifact_trace_summary") or {}
+    r = check_trace_summary_shape(trace_summary)
     r["source"] = "dashboard"
     results.append(r)
     if not r["valid"]:
