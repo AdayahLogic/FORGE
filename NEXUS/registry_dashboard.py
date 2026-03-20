@@ -71,8 +71,18 @@ def _build_release_readiness_from_dashboard(
                 "autonomy_linked": False,
                 "product_linked": False,
                 "helix_linked": False,
+                "review_linked": False,
             },
             "generated_at": datetime.now().isoformat(),
+            "review_status_summary": "",
+            "review_blocker_count": 0,
+            "review_required_count": 0,
+            "changes_requested_count": 0,
+            "approved_for_approval_count": 0,
+            "candidates_pending_review": 0,
+            "candidates_not_ready_for_review": 0,
+            "review_linkage_present": False,
+            "review_reasoning": [],
         }
 
 

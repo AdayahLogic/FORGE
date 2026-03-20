@@ -272,6 +272,35 @@ def check_review_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
     return {"valid": len(issues) == 0, "issues": issues, "payload_type": "review_record"}
 
 
+RELEASE_READINESS_KEYS = (
+    "release_readiness_status",
+    "critical_blockers",
+    "review_items",
+    "trace_links_present",
+    "review_status_summary",
+    "review_blocker_count",
+    "review_required_count",
+    "review_linkage_present",
+)
+
+
+def check_release_readiness_shape(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Phase 38: validate release readiness has Phase 38 review fields when present. Read-only."""
+    if not isinstance(payload, dict):
+        return {"valid": True, "issues": [], "payload_type": "release_readiness", "skipped": "not a dict"}
+    issues: list[str] = []
+    for k in RELEASE_READINESS_KEYS:
+        if k not in payload:
+            issues.append(f"missing key: {k}")
+    status = payload.get("release_readiness_status")
+    if status is not None and str(status).strip().lower() not in ("ready", "blocked", "review_required", "error_fallback"):
+        issues.append(f"release_readiness_status must be one of (ready, blocked, review_required, error_fallback), got {status!r}")
+    rbc = payload.get("review_blocker_count")
+    if rbc is not None and not isinstance(rbc, (int, float)):
+        issues.append("review_blocker_count must be numeric")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "release_readiness"}
+
+
 def check_refs_in_record(record: dict[str, Any], *, ref_keys: tuple[str, ...] | None = None) -> dict[str, Any]:
     """Check ref keys are list of str. Read-only. Phase 28: ref_keys param for patch (includes helix_id_refs)."""
     keys = ref_keys or REF_KEYS
@@ -376,6 +405,14 @@ def run_integrity_check(
     trace_summary = dash.get("cross_artifact_trace_summary") or {}
     r = check_trace_summary_shape(trace_summary)
     r["source"] = "dashboard"
+    results.append(r)
+    if not r["valid"]:
+        all_valid = False
+
+    # Phase 38: Release readiness shape (review-aware)
+    release_readiness = dash.get("release_readiness_summary") or {}
+    r = check_release_readiness_shape(release_readiness)
+    r["source"] = "dashboard_release_readiness"
     results.append(r)
     if not r["valid"]:
         all_valid = False
