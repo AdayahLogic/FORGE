@@ -60,6 +60,7 @@ HELIX_SUMMARY_KEYS = (
     "reason",
 )
 REF_KEYS = ("approval_id_refs", "autonomy_id_refs", "product_id_refs")
+REF_KEYS_PATCH = ("approval_id_refs", "autonomy_id_refs", "product_id_refs", "helix_id_refs")
 PATCH_PROPOSAL_SUMMARY_KEYS = (
     "patch_proposal_status",
     "pending_count",
@@ -174,10 +175,11 @@ def check_trace_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def check_refs_in_record(record: dict[str, Any]) -> dict[str, Any]:
-    """Check approval_id_refs, autonomy_id_refs, product_id_refs are list of str. Read-only."""
+def check_refs_in_record(record: dict[str, Any], *, ref_keys: tuple[str, ...] | None = None) -> dict[str, Any]:
+    """Check ref keys are list of str. Read-only. Phase 28: ref_keys param for patch (includes helix_id_refs)."""
+    keys = ref_keys or REF_KEYS
     issues: list[str] = []
-    for key in REF_KEYS:
+    for key in keys:
         val = record.get(key)
         if val is None:
             continue
@@ -281,10 +283,11 @@ def run_integrity_check(
     if not r["valid"]:
         all_valid = False
 
-    # Ref shape in a sample record (if available)
+    # Ref shape in sample records (Phase 28: autonomy + patch)
     try:
         from NEXUS.registry import PROJECTS
         from NEXUS.autonomy_registry import read_autonomy_journal_tail
+        from NEXUS.patch_proposal_registry import read_patch_proposal_journal_tail
         for proj_key in list(PROJECTS.keys())[:1]:
             path = PROJECTS.get(proj_key, {}).get("path")
             if path:
@@ -292,6 +295,13 @@ def run_integrity_check(
                 if tail:
                     r = check_refs_in_record(tail[-1])
                     r["source"] = "autonomy_journal"
+                    results.append(r)
+                    if not r["valid"]:
+                        all_valid = False
+                patch_tail = read_patch_proposal_journal_tail(project_path=path, n=1)
+                if patch_tail:
+                    r = check_refs_in_record(patch_tail[-1], ref_keys=REF_KEYS_PATCH)
+                    r["source"] = "patch_proposal_journal"
                     results.append(r)
                     if not r["valid"]:
                         all_valid = False

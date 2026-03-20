@@ -88,6 +88,9 @@ def build_cross_artifact_trace(
             pid = ctx.get("patch_id")
             if pid and isinstance(pid, str):
                 approval_to_patch_pairs.add((aid or "", pid))
+            for pid_ref in r.get("patch_id_refs") or []:
+                if pid_ref and isinstance(pid_ref, str) and aid:
+                    approval_to_patch_pairs.add((aid, pid_ref))
 
         # Patch proposals
         for r in read_patch_proposal_journal_tail(project_path=path, n=n_recent):
@@ -135,11 +138,17 @@ def build_cross_artifact_trace(
         except Exception:
             pass
 
-        # Learning (best-effort)
+        # Learning (best-effort; Phase 28: use patch_id_refs/approval_id_refs when present)
         for i, lr in enumerate(read_learning_journal_tail(project_path=path, n=min(n_recent, 20))):
             ref = lr.get("run_id") or lr.get("timestamp") or str(i)
             if isinstance(ref, str) and ref:
                 learning_record_refs.append(f"{proj_key}:{ref}"[:80])
+            for aid in lr.get("approval_id_refs") or []:
+                if aid and isinstance(aid, str):
+                    approval_ids.append(aid)
+                for pid_ref in lr.get("patch_id_refs") or []:
+                    if pid_ref and isinstance(pid_ref, str):
+                        approval_to_patch_pairs.add((aid, pid_ref))
 
     learning_record_refs = learning_record_refs[:20]
 

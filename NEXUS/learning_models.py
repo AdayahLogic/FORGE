@@ -60,6 +60,23 @@ def normalize_learning_record(record: dict[str, Any]) -> dict[str, Any]:
     if not timestamp:
         timestamp = datetime.now().isoformat()
 
+    # Phase 28: forward-link refs (optional; normalize when present)
+    def _ref_list(v: Any) -> list[str]:
+        if v is None:
+            return []
+        if isinstance(v, str) and v.strip():
+            return [v.strip()]
+        if isinstance(v, (list, tuple)):
+            out = []
+            seen: set[str] = set()
+            for x in v:
+                s = str(x).strip() if x is not None else ""
+                if s and s not in seen:
+                    seen.add(s)
+                    out.append(s)
+            return out[:20]
+        return []
+
     return {
         "learning_contract_version": LEARNING_CONTRACT_VERSION,
         "record_type": _normalize_str(rec.get("record_type"), default="outcome_record"),
@@ -80,5 +97,9 @@ def normalize_learning_record(record: dict[str, Any]) -> dict[str, Any]:
         "human_override": rec.get("human_override"),
         "downstream_effects": rec.get("downstream_effects") if isinstance(rec.get("downstream_effects"), dict) else {},
         "tags": rec.get("tags") if isinstance(rec.get("tags"), list) else [],
+        "patch_id_refs": _ref_list(rec.get("patch_id_refs")),
+        "approval_id_refs": _ref_list(rec.get("approval_id_refs")),
+        "helix_id_refs": _ref_list(rec.get("helix_id_refs")),
+        "autonomy_id_refs": _ref_list(rec.get("autonomy_id_refs")),
     }
 

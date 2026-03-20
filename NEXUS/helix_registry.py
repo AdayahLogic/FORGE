@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from NEXUS.ref_utils import normalize_ref_list
+
 HELIX_JOURNAL_FILENAME = "helix_journal.jsonl"
 
 # Stage names (deterministic ordering)
@@ -83,9 +85,9 @@ def normalize_helix_record(record: dict[str, Any]) -> dict[str, Any]:
         "stop_reason": str(r.get("stop_reason") or ""),
         "started_at": str(r.get("started_at") or ""),
         "finished_at": str(r.get("finished_at") or ""),
-        "approval_id_refs": list(r.get("approval_id_refs") or []),
-        "autonomy_id_refs": list(r.get("autonomy_id_refs") or []),
-        "product_id_refs": list(r.get("product_id_refs") or []),
+        "approval_id_refs": normalize_ref_list(r.get("approval_id_refs")),
+        "autonomy_id_refs": normalize_ref_list(r.get("autonomy_id_refs")),
+        "product_id_refs": normalize_ref_list(r.get("product_id_refs")),
     }
 
 

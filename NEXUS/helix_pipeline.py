@@ -332,6 +332,7 @@ def run_helix_pipeline(
                     tail = read_patch_proposal_journal_tail(project_path=project_path, n=1)
                     if tail:
                         pp = tail[-1]
+                        patch_id_val = pp.get("patch_id")
                         lr = {
                             "record_type": "patch_proposal_created",
                             "run_id": run_id,
@@ -339,8 +340,10 @@ def run_helix_pipeline(
                             "workflow_stage": "helix_pipeline",
                             "decision_source": "patch_proposal_registry",
                             "decision_type": "patch_proposal_emitted",
-                            "decision_summary": f"patch_id={pp.get('patch_id')}; source={source}; target={target_path}",
-                            "downstream_effects": {"patch_id": pp.get("patch_id"), "source": source},
+                            "decision_summary": f"patch_id={patch_id_val}; source={source}; target={target_path}",
+                            "downstream_effects": {"patch_id": patch_id_val, "source": source},
+                            "patch_id_refs": [patch_id_val] if patch_id_val else [],
+                            "helix_id_refs": [helix_id],
                             "tags": ["patch_proposal", "helix"],
                         }
                         append_learning_record_safe(project_path=project_path, record=lr)
@@ -380,6 +383,10 @@ def run_helix_pipeline(
                 "surgeon_required": requires_surgeon,
                 "success_failure_classification": success_class,
             },
+            "helix_id_refs": [helix_id],
+            "approval_id_refs": approval_id_refs[:5],
+            "autonomy_id_refs": autonomy_id_refs[:5],
+            "product_id_refs": product_id_refs[:5],
             "tags": ["helix", pipeline_status, success_class],
         }
         append_learning_record_safe(project_path=project_path, record=lr)

@@ -303,6 +303,9 @@ def run_bounded_autonomy(
             decision_type="autonomy_run_completed",
             decision_summary=f"steps={steps_completed}/{steps_attempted}; stop_reason={stop_reason}",
         )
+        lr["autonomy_id_refs"] = [autonomy_id]
+        lr["approval_id_refs"] = approval_id_refs[:5]
+        lr["product_id_refs"] = product_id_refs[:5]
         append_learning_record_safe(project_path=project_path, record=lr)
     except Exception:
         pass

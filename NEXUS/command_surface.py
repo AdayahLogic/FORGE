@@ -2904,14 +2904,17 @@ def run_command(
             if result.get("resolved"):
                 try:
                     from NEXUS.learning_writer import append_learning_record_safe
+                    aid = result.get("approval_id") or ""
                     append_learning_record_safe(project_path=found_path, record={
                         "record_type": "patch_proposal_approved",
                         "project_name": found_key or "",
                         "workflow_stage": "approval_resolution",
                         "decision_source": "approve_patch_proposal",
                         "decision_type": "approve",
-                        "decision_summary": f"patch_id={patch_id}; approval_id={result.get('approval_id')}",
-                        "downstream_effects": {"patch_id": patch_id, "approval_id": result.get("approval_id")},
+                        "decision_summary": f"patch_id={patch_id}; approval_id={aid}",
+                        "downstream_effects": {"patch_id": patch_id, "approval_id": aid},
+                        "patch_id_refs": [patch_id],
+                        "approval_id_refs": [aid] if aid else [],
                         "tags": ["patch_proposal", "approval"],
                     })
                 except Exception:
@@ -2935,14 +2938,17 @@ def run_command(
             if result.get("resolved"):
                 try:
                     from NEXUS.learning_writer import append_learning_record_safe
+                    aid = result.get("approval_id") or ""
                     append_learning_record_safe(project_path=found_path, record={
                         "record_type": "patch_proposal_rejected",
                         "project_name": found_key or "",
                         "workflow_stage": "approval_resolution",
                         "decision_source": "reject_patch_proposal",
                         "decision_type": "reject",
-                        "decision_summary": f"patch_id={patch_id}; approval_id={result.get('approval_id')}",
-                        "downstream_effects": {"patch_id": patch_id, "approval_id": result.get("approval_id")},
+                        "decision_summary": f"patch_id={patch_id}; approval_id={aid}",
+                        "downstream_effects": {"patch_id": patch_id, "approval_id": aid},
+                        "patch_id_refs": [patch_id],
+                        "approval_id_refs": [aid] if aid else [],
                         "tags": ["patch_proposal", "approval"],
                     })
                 except Exception:
@@ -2975,6 +2981,7 @@ def run_command(
                         "project_name": found_key or "",
                         "decision_source": "apply_patch_proposal",
                         "decision_summary": f"patch_id={patch_id}; blocked: approval stale ({hours_since:.1f}h)",
+                        "patch_id_refs": [patch_id],
                         "tags": ["patch_proposal", "stale"],
                     })
                 except Exception:
@@ -3001,7 +3008,8 @@ def run_command(
             if patch_applied:
                 write_patch_report(found_path, found_key or "", summary, run_id=found.get("run_id"))
                 from NEXUS.patch_proposal_registry import append_patch_proposal_resolution
-                append_patch_proposal_resolution(found_path, patch_id, "apply", "applied", "", project_name=found_key or "", reason="Patch applied successfully.")
+                approval_id_for_apply = (resolution or {}).get("approval_id") or ""
+                append_patch_proposal_resolution(found_path, patch_id, "apply", "applied", approval_id_for_apply, project_name=found_key or "", reason="Patch applied successfully.")
                 try:
                     from NEXUS.learning_writer import append_learning_record_safe
                     append_learning_record_safe(project_path=found_path, record={
@@ -3012,6 +3020,8 @@ def run_command(
                         "decision_type": "applied",
                         "decision_summary": f"patch_id={patch_id}; target={target}",
                         "downstream_effects": {"patch_id": patch_id, "target": target, "patch_applied": True},
+                        "patch_id_refs": [patch_id],
+                        "approval_id_refs": [approval_id_for_apply] if approval_id_for_apply else [],
                         "tags": ["patch_proposal", "applied"],
                     })
                 except Exception:
@@ -3043,6 +3053,7 @@ def run_command(
                         "project_name": found_key or "",
                         "decision_source": "retry_patch_proposal",
                         "decision_summary": f"patch_id={patch_id}; retry checked: approval stale ({hours_since:.1f}h)",
+                        "patch_id_refs": [patch_id],
                         "tags": ["patch_proposal", "retry", "stale"],
                     })
                 except Exception:

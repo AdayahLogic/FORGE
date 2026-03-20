@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from NEXUS.ref_utils import normalize_ref_list
+
 AUTONOMY_JOURNAL_FILENAME = "autonomy_journal.jsonl"
 
 
@@ -59,8 +61,8 @@ def normalize_autonomy_record(record: dict[str, Any]) -> dict[str, Any]:
         "step_results": list(r.get("step_results") or []),
         "started_at": str(r.get("started_at") or ""),
         "finished_at": str(r.get("finished_at") or ""),
-        "approval_id_refs": list(r.get("approval_id_refs") or []),
-        "product_id_refs": list(r.get("product_id_refs") or []),
+        "approval_id_refs": normalize_ref_list(r.get("approval_id_refs")),
+        "product_id_refs": normalize_ref_list(r.get("product_id_refs")),
     }
 
 

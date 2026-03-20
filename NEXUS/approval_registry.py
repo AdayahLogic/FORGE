@@ -41,8 +41,14 @@ def normalize_approval_record(record: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize approval record to contract shape.
     Ensures required fields exist with safe defaults.
+    Phase 28: capture patch_id_refs from context when available (forward-link).
     """
     r = record or {}
+    context = dict(r.get("context") or {})
+    patch_id_refs: list[str] = list(r.get("patch_id_refs") or [])
+    pid = context.get("patch_id")
+    if pid and isinstance(pid, str) and pid.strip() and pid not in patch_id_refs:
+        patch_id_refs = [pid] + [x for x in patch_id_refs if x != pid][:19]
     return {
         "approval_id": str(r.get("approval_id") or uuid.uuid4().hex[:16]),
         "run_id": str(r.get("run_id") or ""),
@@ -55,9 +61,10 @@ def normalize_approval_record(record: dict[str, Any]) -> dict[str, Any]:
         "requires_human": bool(r.get("requires_human", True)),
         "risk_level": str(r.get("risk_level") or "unknown"),
         "sensitivity": str(r.get("sensitivity") or "unknown"),
-        "context": dict(r.get("context") or {}),
+        "context": context,
         "decision": r.get("decision"),
         "decision_timestamp": r.get("decision_timestamp"),
+        "patch_id_refs": patch_id_refs[:20],
     }
 
 

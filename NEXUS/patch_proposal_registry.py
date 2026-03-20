@@ -13,6 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from NEXUS.ref_utils import normalize_ref_list
+
 PATCH_PROPOSAL_JOURNAL_FILENAME = "patch_proposal_journal.jsonl"
 PATCH_PROPOSAL_RESOLUTION_FILENAME = "patch_proposal_resolution.jsonl"
 
@@ -85,10 +87,10 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
         "change_type": change_type,
         "risk_level": str(r.get("risk_level") or "medium").strip().lower()[:20],
         "requires_approval": bool(r.get("requires_approval", True)),
-        "approval_id_refs": list(r.get("approval_id_refs") or []),
-        "product_id_refs": list(r.get("product_id_refs") or []),
-        "autonomy_id_refs": list(r.get("autonomy_id_refs") or []),
-        "helix_id_refs": list(r.get("helix_id_refs") or []),
+        "approval_id_refs": normalize_ref_list(r.get("approval_id_refs")),
+        "product_id_refs": normalize_ref_list(r.get("product_id_refs")),
+        "autonomy_id_refs": normalize_ref_list(r.get("autonomy_id_refs")),
+        "helix_id_refs": normalize_ref_list(r.get("helix_id_refs")),
         "rationale": str(r.get("rationale") or "")[:1000],
         "patch_payload": patch_payload,
         "created_at": str(r.get("created_at") or now),
