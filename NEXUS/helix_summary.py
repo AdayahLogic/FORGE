@@ -73,6 +73,9 @@ def build_helix_summary(
     patch_readiness_low = 0
     common_missing_info_patterns: dict[str, int] = {}
     repair_artifact_actionable_count = 0
+    draftability_high_count = 0
+    draftability_medium_count = 0
+    draftability_low_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -170,6 +173,11 @@ def build_helix_summary(
             sorted(common_missing_info_patterns.items(), key=lambda x: -x[1])[:10]
         ),
         "actionable_count": repair_with_patch_count + patch_readiness_medium,
+        "draftability_distribution": {
+            "high": draftability_high_count,
+            "medium": draftability_medium_count,
+            "low": draftability_low_count,
+        },
     }
 
     # Phase 31: quality signals from last run (or aggregate from recent)
@@ -245,6 +253,7 @@ def build_helix_summary_safe(
                 "patch_readiness_distribution": {"high": 0, "medium": 0, "low": 0},
                 "common_missing_info_patterns": {},
                 "actionable_count": 0,
+                "draftability_distribution": {"high": 0, "medium": 0, "low": 0},
             },
             "helix_quality_signals": {},
             "critique_severity_patterns": {},

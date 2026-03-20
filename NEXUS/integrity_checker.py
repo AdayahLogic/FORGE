@@ -97,6 +97,9 @@ REPAIR_METADATA_CORE_KEYS = ("repair_reason", "has_patch_payload", "repair_strat
 REPAIR_METADATA_EXTENDED_KEYS = ("patch_readiness", "issue_scope", "target_files_candidate", "operator_handoff_notes")
 VALID_PATCH_READINESS = ("low", "medium", "high")
 VALID_ISSUE_SCOPE = ("single_file", "multi_file", "unknown")
+VALID_PATCH_DRAFTABILITY = ("low", "medium", "high")
+VALID_CANDIDATE_PATCH_STRATEGY = ("direct_diff", "guided_patch_followup", "advisory_only")
+VALID_PROPOSAL_READINESS = ("fully_ready", "draft_followup", "advisory_only")
 
 # Phase 27: cross-artifact trace summary
 TRACE_SUMMARY_KEYS = (
@@ -194,6 +197,17 @@ def check_trace_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def check_patch_proposal_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Phase 33: validate patch proposal record has valid proposal_readiness when present."""
+    if not isinstance(record, dict):
+        return {"valid": True, "issues": [], "payload_type": "patch_proposal_record", "skipped": "not a dict"}
+    issues: list[str] = []
+    pr = record.get("proposal_readiness")
+    if pr is not None and str(pr).strip().lower() not in VALID_PROPOSAL_READINESS:
+        issues.append(f"proposal_readiness must be one of {VALID_PROPOSAL_READINESS}, got {pr!r}")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "patch_proposal_record"}
+
+
 def check_repair_metadata_shape(meta: dict[str, Any] | None) -> dict[str, Any]:
     """
     Check Surgeon repair_metadata shape (Phase 32). Read-only, deterministic.
@@ -214,6 +228,13 @@ def check_repair_metadata_shape(meta: dict[str, Any] | None) -> dict[str, Any]:
     mif = meta.get("missing_information_flags")
     if mif is not None and not isinstance(mif, list):
         issues.append("missing_information_flags must be list")
+    # Phase 33: draftability fields
+    pd = meta.get("patch_draftability")
+    if pd is not None and str(pd).strip().lower() not in VALID_PATCH_DRAFTABILITY:
+        issues.append(f"patch_draftability must be one of {VALID_PATCH_DRAFTABILITY}, got {pd!r}")
+    cps = meta.get("candidate_patch_strategy")
+    if cps is not None and str(cps).strip().lower() not in VALID_CANDIDATE_PATCH_STRATEGY:
+        issues.append(f"candidate_patch_strategy must be one of {VALID_CANDIDATE_PATCH_STRATEGY}, got {cps!r}")
     return {
         "valid": len(issues) == 0,
         "issues": issues,

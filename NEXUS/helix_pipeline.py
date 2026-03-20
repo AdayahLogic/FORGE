@@ -293,13 +293,18 @@ def run_helix_pipeline(
 
     append_helix_record_safe(project_path, record)
 
-    # Phase 23: emit patch proposal when Builder has patch_request (governed artifact, never auto-applied)
+    # Phase 23/33: emit patch proposal when Builder has patch_request OR Surgeon has draft-followup artifact (governed, never auto-applied)
     try:
+        from NEXUS.patch_proposal_registry import append_patch_proposal_safe
+
         impl_plan = (builder_result or {}).get("implementation_plan") or {}
         patch_req = impl_plan.get("patch_request") if isinstance(impl_plan, dict) else None
-        if isinstance(patch_req, dict) and patch_req.get("target_relative_path") and isinstance(patch_req.get("search_text"), str) and patch_req.get("search_text") and isinstance(patch_req.get("replacement_text"), str):
-            from NEXUS.patch_proposal_registry import append_patch_proposal_safe
+        surgeon_result = next((sr for sr in stage_results if sr.get("stage") == "surgeon"), {})
+        repair_meta = surgeon_result.get("repair_metadata") or {}
 
+        has_full_patch = isinstance(patch_req, dict) and patch_req.get("target_relative_path") and isinstance(patch_req.get("search_text"), str) and patch_req.get("search_text") and isinstance(patch_req.get("replacement_text"), str)
+
+        if has_full_patch:
             target_path = str(patch_req.get("target_relative_path") or "")
             source = "surgeon" if requires_surgeon else "helix_builder"
             proposal = {
@@ -323,32 +328,77 @@ def run_helix_pipeline(
                     "replacement_text": patch_req.get("replacement_text"),
                     "replace_all": bool(patch_req.get("replace_all", False)),
                 },
+                "proposal_readiness": "fully_ready",
+                "proposal_completeness": "complete",
+                "draft_source": source,
+                "missing_information_flags": [],
+                "requires_followup_before_apply": False,
             }
             written = append_patch_proposal_safe(project_path=project_path, record=proposal)
-            if written:
-                try:
-                    from NEXUS.learning_writer import append_learning_record_safe
-                    from NEXUS.patch_proposal_registry import read_patch_proposal_journal_tail
-                    tail = read_patch_proposal_journal_tail(project_path=project_path, n=1)
-                    if tail:
-                        pp = tail[-1]
-                        patch_id_val = pp.get("patch_id")
-                        lr = {
-                            "record_type": "patch_proposal_created",
-                            "run_id": run_id,
-                            "project_name": project_name,
-                            "workflow_stage": "helix_pipeline",
-                            "decision_source": "patch_proposal_registry",
-                            "decision_type": "patch_proposal_emitted",
-                            "decision_summary": f"patch_id={patch_id_val}; source={source}; target={target_path}",
-                            "downstream_effects": {"patch_id": patch_id_val, "source": source},
-                            "patch_id_refs": [patch_id_val] if patch_id_val else [],
-                            "helix_id_refs": [helix_id],
-                            "tags": ["patch_proposal", "helix"],
-                        }
-                        append_learning_record_safe(project_path=project_path, record=lr)
-                except Exception:
-                    pass
+        elif requires_surgeon and repair_meta.get("patch_followup_candidate") and repair_meta.get("patch_draftability") in ("medium", "high"):
+            # Phase 33: emit governed draft-followup proposal when Surgeon has draftable artifact (no patch payload)
+            target_files = repair_meta.get("candidate_target_files") or repair_meta.get("target_files_candidate") or []
+            if not target_files and repair_meta.get("target_hint"):
+                target_files = []
+            summary = f"HELIX surgeon draft-followup: {repair_meta.get('repair_reason', '')[:80]}"
+            proposal = {
+                "project_name": project_name,
+                "run_id": run_id,
+                "source": "surgeon",
+                "status": "proposed",
+                "summary": summary[:500],
+                "target_files": target_files[:10],
+                "change_type": "guided_patch_followup",
+                "risk_level": repair_meta.get("severity", "medium"),
+                "requires_approval": True,
+                "approval_id_refs": approval_id_refs[:5],
+                "product_id_refs": product_id_refs[:5],
+                "autonomy_id_refs": autonomy_id_refs[:5],
+                "helix_id_refs": [helix_id],
+                "rationale": repair_meta.get("draftability_reason", requested_outcome)[:300],
+                "patch_payload": {
+                    "draft_followup_artifact": True,
+                    "candidate_target_files": target_files[:10],
+                    "candidate_search_anchors": repair_meta.get("candidate_search_anchors", [])[:5],
+                    "candidate_replacement_intent": repair_meta.get("candidate_replacement_intent", "")[:300],
+                    "suspected_root_causes": repair_meta.get("suspected_root_causes", [])[:5],
+                },
+                "proposal_readiness": "draft_followup",
+                "proposal_completeness": "partial",
+                "draft_source": "surgeon",
+                "missing_information_flags": repair_meta.get("missing_information_flags", [])[:5],
+                "requires_followup_before_apply": True,
+            }
+            written = append_patch_proposal_safe(project_path=project_path, record=proposal)
+        else:
+            written = None
+
+        if written:
+            try:
+                from NEXUS.learning_writer import append_learning_record_safe
+                from NEXUS.patch_proposal_registry import read_patch_proposal_journal_tail
+                tail = read_patch_proposal_journal_tail(project_path=project_path, n=1)
+                if tail:
+                    pp = tail[-1]
+                    patch_id_val = pp.get("patch_id")
+                    prop_source = pp.get("source", "unknown")
+                    prop_target = (pp.get("target_files") or [""])[0] if pp.get("target_files") else ""
+                    lr = {
+                        "record_type": "patch_proposal_created",
+                        "run_id": run_id,
+                        "project_name": project_name,
+                        "workflow_stage": "helix_pipeline",
+                        "decision_source": "patch_proposal_registry",
+                        "decision_type": "patch_proposal_emitted",
+                        "decision_summary": f"patch_id={patch_id_val}; source={prop_source}; proposal_readiness={pp.get('proposal_readiness', '')}",
+                        "downstream_effects": {"patch_id": patch_id_val, "source": prop_source, "proposal_readiness": pp.get("proposal_readiness"), "target": prop_target},
+                        "patch_id_refs": [patch_id_val] if patch_id_val else [],
+                        "helix_id_refs": [helix_id],
+                        "tags": ["patch_proposal", "helix"],
+                    }
+                    append_learning_record_safe(project_path=project_path, record=lr)
+            except Exception:
+                pass
     except Exception:
         pass
 
@@ -403,6 +453,8 @@ def run_helix_pipeline(
             downstream["repair_artifact_human_followup_required"] = repair_metadata.get("human_followup_required", True)
             mif = repair_metadata.get("missing_information_flags") or []
             downstream["repair_artifact_missing_info_count"] = len(mif)
+            downstream["patch_draftability"] = repair_metadata.get("patch_draftability", "unknown")
+            downstream["candidate_patch_strategy"] = repair_metadata.get("candidate_patch_strategy", "advisory_only")
         if quality_signals:
             downstream["quality_signals"] = quality_signals
             downstream["high_confidence_output"] = bool(architect_approach_count >= 2 and not critique_severity_high)

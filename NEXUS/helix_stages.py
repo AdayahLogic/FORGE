@@ -559,12 +559,43 @@ def run_surgeon_stage(
 
     # Phase 32: operator_handoff_notes, patch_followup_candidate (forward-compat with governed patch flows)
     patch_followup_candidate = not has_patch and (len(target_files_candidate) > 0 or bool(target_hint))
-    if has_patch and repair_patch_proposal:
-        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}."
-    elif patch_readiness == "medium":
-        operator_handoff_notes = f"Partial info: {len(target_files_candidate)} target candidate(s), {len(suspected_root_causes)} suspected cause(s). {len(missing_information_flags)} missing info flag(s). Human follow-up required."
+
+    # Phase 33: patch draftability contract (advisory, structured; no execution)
+    if has_patch:
+        patch_draftability = "high"
+        candidate_patch_strategy = "direct_diff"
+        draftability_reason = "Builder supplied full patch_request; ready for governed proposal."
+        draftability_requirements_met = ["target_file", "search_text", "replacement_text"]
+        draftability_requirements_missing = []
+        candidate_target_files = target_files_candidate[:10]
+        candidate_search_anchors: list[str] = []
+        if repair_patch_proposal and repair_patch_proposal.get("search_text"):
+            candidate_search_anchors = [str(repair_patch_proposal.get("search_text", ""))[:100]]
+        candidate_replacement_intent = (repair_patch_proposal.get("replacement_text", "") or "")[:200] if repair_patch_proposal else ""
+    elif patch_followup_candidate and target_files_candidate and suspected_root_causes:
+        patch_draftability = "medium"
+        candidate_patch_strategy = "guided_patch_followup"
+        draftability_reason = "Target file(s) and suspected causes identified; human can draft patch from artifact."
+        draftability_requirements_met = ["target_files_candidate", "suspected_root_causes"]
+        draftability_requirements_missing = ["search_text", "replacement_text"]
+        candidate_target_files = target_files_candidate[:10]
+        candidate_search_anchors = [target_hint[:150]] if target_hint else []
+        candidate_replacement_intent = (suspected_root_causes[0] or "")[:200] if suspected_root_causes else repair_reason[:200]
     else:
-        operator_handoff_notes = f"Low readiness. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Review recommended_next_actions and missing_information_flags."
+        patch_draftability = "low"
+        candidate_patch_strategy = "advisory_only"
+        draftability_reason = "Insufficient info for patch drafting; advisory artifact only."
+        draftability_requirements_met = []
+        draftability_requirements_missing = ["target_file", "search_text", "replacement_text", "suspected_causes"]
+        candidate_target_files = target_files_candidate[:10]
+        candidate_search_anchors = [target_hint[:150]] if target_hint else []
+        candidate_replacement_intent = repair_reason[:200]
+    if has_patch and repair_patch_proposal:
+        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Draftability: high."
+    elif patch_readiness == "medium":
+        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Strategy: guided_patch_followup. Human validation required before apply."
+    else:
+        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Advisory only; review recommended_next_actions."
 
     repair_metadata = {
         "repair_reason": repair_reason[:500],
@@ -582,6 +613,15 @@ def run_surgeon_stage(
         "human_followup_required": human_followup_required,
         "operator_handoff_notes": operator_handoff_notes[:500],
         "patch_followup_candidate": patch_followup_candidate,
+        "patch_draftability": patch_draftability,
+        "draftability_reason": draftability_reason[:300],
+        "draftability_requirements_met": draftability_requirements_met[:8],
+        "draftability_requirements_missing": draftability_requirements_missing[:8],
+        "candidate_patch_strategy": candidate_patch_strategy,
+        "candidate_target_files": candidate_target_files[:10],
+        "candidate_search_anchors": candidate_search_anchors[:5],
+        "candidate_replacement_intent": candidate_replacement_intent[:300],
+        "human_validation_required": human_followup_required,
     }
 
     return normalize_helix_stage_result({

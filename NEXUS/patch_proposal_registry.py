@@ -30,8 +30,8 @@ PATCH_STATUSES = (
     "applied",
     "error_fallback",
 )
-# Allowed change_type values
-CHANGE_TYPES = ("diff_patch", "safe_patch", "advisory_only")
+# Allowed change_type values (Phase 33: guided_patch_followup for draft-followup artifacts)
+CHANGE_TYPES = ("diff_patch", "safe_patch", "advisory_only", "guided_patch_followup")
 
 
 def get_patch_proposal_state_dir(project_path: str | None) -> Path | None:
@@ -76,7 +76,7 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(patch_payload, dict):
         patch_payload = {}
 
-    return {
+    out: dict[str, Any] = {
         "patch_id": str(r.get("patch_id") or uuid.uuid4().hex[:16]),
         "project_name": str(r.get("project_name") or ""),
         "run_id": str(r.get("run_id") or ""),
@@ -96,6 +96,19 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
         "created_at": str(r.get("created_at") or now),
         "updated_at": str(r.get("updated_at") or now),
     }
+    # Phase 33: proposal readiness and draft quality
+    proposal_readiness = str(r.get("proposal_readiness") or "").strip().lower()
+    if proposal_readiness not in ("fully_ready", "draft_followup", "advisory_only"):
+        proposal_readiness = "fully_ready" if change_type == "diff_patch" and patch_payload.get("search_text") else "advisory_only"
+    out["proposal_readiness"] = proposal_readiness
+    proposal_completeness = str(r.get("proposal_completeness") or "").strip().lower()
+    if proposal_completeness not in ("complete", "partial", "advisory"):
+        proposal_completeness = "complete" if proposal_readiness == "fully_ready" else ("partial" if proposal_readiness == "draft_followup" else "advisory")
+    out["proposal_completeness"] = proposal_completeness
+    out["draft_source"] = str(r.get("draft_source") or source)[:50]
+    out["missing_information_flags"] = list(r.get("missing_information_flags") or [])[:10]
+    out["requires_followup_before_apply"] = bool(r.get("requires_followup_before_apply", proposal_readiness != "fully_ready"))
+    return out
 
 
 def append_patch_proposal(
