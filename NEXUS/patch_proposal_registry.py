@@ -123,6 +123,24 @@ def normalize_patch_proposal(record: dict[str, Any]) -> dict[str, Any]:
     if rhr is None:
         rhr = proposal_readiness != "fully_ready"
     out["requires_human_reconstruction"] = bool(rhr)
+    # Phase 35: conversion and maturity fields
+    conversion_status = str(r.get("conversion_status") or pp.get("conversion_status") or "").strip().lower()
+    if conversion_status not in ("not_convertible", "conditionally_convertible", "converted_to_patch_candidate"):
+        conversion_status = "converted_to_patch_candidate" if (change_type == "diff_patch" and patch_payload.get("search_text")) else "conditionally_convertible"
+    out["conversion_status"] = conversion_status
+    out["conversion_reason"] = str(r.get("conversion_reason") or "")[:300]
+    out["conversion_requirements_met"] = list(r.get("conversion_requirements_met") or [])[:10]
+    out["conversion_requirements_missing"] = list(r.get("conversion_requirements_missing") or [])[:10]
+    out["executable_candidate"] = bool(r.get("executable_candidate") if "executable_candidate" in r else (change_type == "diff_patch" and bool(patch_payload.get("search_text"))))
+    proposal_maturity = str(r.get("proposal_maturity") or pp.get("proposal_maturity") or "").strip().lower()
+    if proposal_maturity not in ("advisory", "guided_followup", "strong_candidate", "executable"):
+        proposal_maturity = "executable" if out["executable_candidate"] else ("strong_candidate" if conversion_status == "conditionally_convertible" and out.get("refinement_status") == "partially_refined" else "guided_followup")
+    out["proposal_maturity"] = proposal_maturity
+    out["conversion_confidence"] = str(r.get("conversion_confidence") or "low").strip().lower()
+    if out["conversion_confidence"] not in ("low", "medium", "high"):
+        out["conversion_confidence"] = "high" if out["executable_candidate"] else "low"
+    out["ready_for_human_patch_review"] = bool(r.get("ready_for_human_patch_review", True))
+    out["ready_for_governed_patch_validation"] = bool(r.get("ready_for_governed_patch_validation", out["executable_candidate"]))
     return out
 
 

@@ -307,6 +307,17 @@ def run_helix_pipeline(
         if has_full_patch:
             target_path = str(patch_req.get("target_relative_path") or "")
             source = "surgeon" if requires_surgeon else "helix_builder"
+            patch_payload = {
+                "target_relative_path": target_path,
+                "search_text": patch_req.get("search_text"),
+                "replacement_text": patch_req.get("replacement_text"),
+                "replace_all": bool(patch_req.get("replace_all", False)),
+            }
+            try:
+                from NEXUS.helix_draft_conversion import evaluate_draft_conversion
+                conv = evaluate_draft_conversion(repair_meta, True, patch_payload)
+            except Exception:
+                conv = {"conversion_status": "converted_to_patch_candidate", "executable_candidate": True, "proposal_maturity": "executable"}
             proposal = {
                 "project_name": project_name,
                 "run_id": run_id,
@@ -322,27 +333,34 @@ def run_helix_pipeline(
                 "autonomy_id_refs": autonomy_id_refs[:5],
                 "helix_id_refs": [helix_id],
                 "rationale": impl_plan.get("objective") or requested_outcome[:300],
-                "patch_payload": {
-                    "target_relative_path": target_path,
-                    "search_text": patch_req.get("search_text"),
-                    "replacement_text": patch_req.get("replacement_text"),
-                    "replace_all": bool(patch_req.get("replace_all", False)),
-                },
+                "patch_payload": patch_payload,
                 "proposal_readiness": "fully_ready",
                 "proposal_completeness": "complete",
                 "draft_source": source,
                 "missing_information_flags": [],
                 "requires_followup_before_apply": False,
+                "conversion_status": conv.get("conversion_status", "converted_to_patch_candidate"),
+                "executable_candidate": conv.get("executable_candidate", True),
+                "proposal_maturity": conv.get("proposal_maturity", "executable"),
+                "conversion_confidence": conv.get("conversion_confidence", "high"),
+                "ready_for_human_patch_review": conv.get("ready_for_human_patch_review", True),
+                "ready_for_governed_patch_validation": conv.get("ready_for_governed_patch_validation", True),
             }
             written = append_patch_proposal_safe(project_path=project_path, record=proposal)
         elif requires_surgeon and repair_meta.get("patch_followup_candidate") and repair_meta.get("patch_draftability") in ("medium", "high"):
-            # Phase 33: emit governed draft-followup proposal when Surgeon has draftable artifact (no patch payload)
+            # Phase 33/35: emit governed draft-followup proposal when Surgeon has draftable artifact (no patch payload)
             target_files = repair_meta.get("candidate_target_files") or repair_meta.get("target_files_candidate") or []
             if not target_files and repair_meta.get("target_hint"):
                 target_files = []
             summary = f"HELIX surgeon draft-followup: {repair_meta.get('repair_reason', '')[:80]}"
             refinement_status = repair_meta.get("refinement_status", "not_refinable")
             proposal_completeness = "partial" if refinement_status == "partially_refined" else "advisory"
+            try:
+                from NEXUS.helix_draft_conversion import evaluate_draft_conversion
+                draft_payload = {"draft_followup_artifact": True}
+                conv = evaluate_draft_conversion(repair_meta, False, draft_payload)
+            except Exception:
+                conv = {"conversion_status": "conditionally_convertible", "executable_candidate": False, "proposal_maturity": "guided_followup"}
             proposal = {
                 "project_name": project_name,
                 "run_id": run_id,
@@ -370,12 +388,24 @@ def run_helix_pipeline(
                     "candidate_validation_steps": repair_meta.get("candidate_validation_steps", [])[:5],
                     "candidate_followup_actions": repair_meta.get("candidate_followup_actions", [])[:5],
                     "requires_human_reconstruction": repair_meta.get("requires_human_reconstruction", True),
+                    "conversion_status": conv.get("conversion_status", "conditionally_convertible"),
+                    "proposal_maturity": conv.get("proposal_maturity", "guided_followup"),
+                    "executable_candidate": False,
                 },
                 "proposal_readiness": "draft_followup",
                 "proposal_completeness": proposal_completeness,
                 "draft_source": "surgeon",
                 "missing_information_flags": repair_meta.get("missing_information_flags", [])[:5],
                 "requires_followup_before_apply": True,
+                "conversion_status": conv.get("conversion_status", "conditionally_convertible"),
+                "conversion_reason": conv.get("conversion_reason", "")[:300],
+                "conversion_requirements_met": conv.get("conversion_requirements_met", [])[:10],
+                "conversion_requirements_missing": conv.get("conversion_requirements_missing", [])[:10],
+                "executable_candidate": conv.get("executable_candidate", False),
+                "proposal_maturity": conv.get("proposal_maturity", "guided_followup"),
+                "conversion_confidence": conv.get("conversion_confidence", "low"),
+                "ready_for_human_patch_review": conv.get("ready_for_human_patch_review", True),
+                "ready_for_governed_patch_validation": conv.get("ready_for_governed_patch_validation", False),
             }
             written = append_patch_proposal_safe(project_path=project_path, record=proposal)
         else:
@@ -467,6 +497,10 @@ def run_helix_pipeline(
             downstream["draft_candidate_quality"] = repair_metadata.get("draft_candidate_quality", "unknown")
             downstream["candidate_change_scope"] = repair_metadata.get("candidate_change_scope", "unknown")
             downstream["requires_human_reconstruction"] = repair_metadata.get("requires_human_reconstruction", True)
+            downstream["conversion_status"] = repair_metadata.get("conversion_status", "unknown")
+            downstream["conversion_confidence"] = repair_metadata.get("conversion_confidence", "unknown")
+            downstream["executable_candidate"] = repair_metadata.get("executable_candidate", False)
+            downstream["proposal_maturity"] = repair_metadata.get("proposal_maturity", "unknown")
         if quality_signals:
             downstream["quality_signals"] = quality_signals
             downstream["high_confidence_output"] = bool(architect_approach_count >= 2 and not critique_severity_high)

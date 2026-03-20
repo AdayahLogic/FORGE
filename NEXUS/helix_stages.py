@@ -609,11 +609,11 @@ def run_surgeon_stage(
         refinement_status = "not_refinable"
 
     if has_patch and repair_patch_proposal:
-        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Draftability: high. Refinement: {refinement_status}."
+        operator_handoff_notes = f"Patch ready for approval flow. Target: {repair_patch_proposal.get('target_relative_path', '?')}. Severity: {severity}. Draftability: high. Refinement: {refinement_status}. Conversion: converted_to_patch_candidate; executable."
     elif patch_readiness == "medium":
-        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Strategy: guided_patch_followup. Refinement: {refinement_status}. Human validation required before apply."
+        operator_handoff_notes = f"Draftability: medium. {len(target_files_candidate)} target(s), {len(suspected_root_causes)} cause(s). Strategy: guided_patch_followup. Refinement: {refinement_status}. Conversion: conditionally_convertible; human review recommended."
     else:
-        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Refinement: {refinement_status}. Advisory only; review candidate_followup_actions."
+        operator_handoff_notes = f"Draftability: low. Repair reason: {repair_reason[:100]}. Target hint: {target_hint[:80] or 'none'}. Refinement: {refinement_status}. Conversion: not_convertible. Advisory only; review candidate_followup_actions."
 
     repair_metadata = {
         "repair_reason": repair_reason[:500],
@@ -651,6 +651,21 @@ def run_surgeon_stage(
     repair_metadata["candidate_validation_steps"] = refinement.get("candidate_validation_steps", [])[:5]
     repair_metadata["candidate_followup_actions"] = refinement.get("candidate_followup_actions", [])[:5]
     repair_metadata["requires_human_reconstruction"] = refinement.get("requires_human_reconstruction", True)
+
+    # Phase 35: draft-to-patch conversion evaluation
+    try:
+        from NEXUS.helix_draft_conversion import evaluate_draft_conversion
+        patch_payload_for_conv = repair_patch_proposal if has_patch and repair_patch_proposal else {}
+        conv = evaluate_draft_conversion(repair_metadata, has_patch, patch_payload_for_conv)
+        repair_metadata["conversion_status"] = conv.get("conversion_status", "not_convertible")
+        repair_metadata["conversion_reason"] = conv.get("conversion_reason", "")[:300]
+        repair_metadata["executable_candidate"] = conv.get("executable_candidate", False)
+        repair_metadata["proposal_maturity"] = conv.get("proposal_maturity", "advisory")
+        repair_metadata["conversion_confidence"] = conv.get("conversion_confidence", "low")
+    except Exception:
+        repair_metadata["conversion_status"] = "not_convertible"
+        repair_metadata["executable_candidate"] = has_patch
+        repair_metadata["proposal_maturity"] = "executable" if has_patch else "advisory"
 
     return normalize_helix_stage_result({
         "stage": "surgeon",

@@ -79,6 +79,9 @@ def build_helix_summary(
     refinement_draft_ready_count = 0
     refinement_partially_refined_count = 0
     refinement_not_refinable_count = 0
+    conversion_converted_count = 0
+    conversion_conditionally_count = 0
+    conversion_not_convertible_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -127,6 +130,13 @@ def build_helix_summary(
                         refinement_partially_refined_count += 1
                     else:
                         refinement_not_refinable_count += 1
+                    cs = (meta.get("conversion_status") or "not_convertible").strip().lower()
+                    if cs == "converted_to_patch_candidate":
+                        conversion_converted_count += 1
+                    elif cs == "conditionally_convertible":
+                        conversion_conditionally_count += 1
+                    else:
+                        conversion_not_convertible_count += 1
         if tail:
             last = tail[-1]
             if last_helix_run is None or (last.get("finished_at") or "") > (last_helix_run.get("finished_at") or ""):
@@ -192,6 +202,11 @@ def build_helix_summary(
             "draft_ready": refinement_draft_ready_count,
             "partially_refined": refinement_partially_refined_count,
             "not_refinable": refinement_not_refinable_count,
+        },
+        "conversion_distribution": {
+            "converted_to_patch_candidate": conversion_converted_count,
+            "conditionally_convertible": conversion_conditionally_count,
+            "not_convertible": conversion_not_convertible_count,
         },
     }
 
@@ -270,6 +285,7 @@ def build_helix_summary_safe(
                 "actionable_count": 0,
                 "draftability_distribution": {"high": 0, "medium": 0, "low": 0},
                 "refinement_distribution": {"draft_ready": 0, "partially_refined": 0, "not_refinable": 0},
+                "conversion_distribution": {"converted_to_patch_candidate": 0, "conditionally_convertible": 0, "not_convertible": 0},
             },
             "helix_quality_signals": {},
             "critique_severity_patterns": {},
