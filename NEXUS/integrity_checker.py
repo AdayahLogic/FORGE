@@ -31,7 +31,18 @@ PRODUCT_SUMMARY_KEYS = (
     "learning_linkage_present",
     "approval_linkage_present",
     "autonomy_linkage_present",
+    "patch_linkage_present",
+    "helix_linkage_present",
     "reason",
+)
+PRODUCT_REF_KEYS = (
+    "approval_id_refs",
+    "approval_refs",
+    "patch_id_refs",
+    "helix_id_refs",
+    "autonomy_id_refs",
+    "autonomy_refs",
+    "learning_insight_refs",
 )
 AUTONOMY_SUMMARY_KEYS = (
     "autonomy_posture",
@@ -194,7 +205,7 @@ def check_refs_in_record(record: dict[str, Any], *, ref_keys: tuple[str, ...] | 
 
 
 def check_product_manifest_sections(manifest: dict[str, Any]) -> dict[str, Any]:
-    """Check product manifest has required sections. Read-only."""
+    """Check product manifest has required sections. Read-only. Phase 29: product ref keys."""
     required = (
         "product_id",
         "project_name",
@@ -204,7 +215,7 @@ def check_product_manifest_sections(manifest: dict[str, Any]) -> dict[str, Any]:
         "risk_profile",
     )
     missing = _check_keys(manifest, required)
-    refs_ok = check_refs_in_record(manifest)
+    refs_ok = check_refs_in_record(manifest, ref_keys=PRODUCT_REF_KEYS)
     return {
         "valid": len(missing) == 0 and refs_ok.get("valid", True),
         "missing_keys": missing,

@@ -761,6 +761,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "learning_linkage_present": False,
             "approval_linkage_present": False,
             "autonomy_linkage_present": False,
+            "patch_linkage_present": False,
+            "helix_linkage_present": False,
             "reason": "Product summary failed.",
         }
         autonomy_summary = {

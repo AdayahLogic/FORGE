@@ -62,17 +62,23 @@ def build_product_summary(
 
     total = draft_count + ready_count + restricted_count
 
-    # Forward-compatibility: expose linkage presence (learning, approval, autonomy).
+    # Forward-compatibility: expose linkage presence (Phase 29: patch, helix too).
     learning_linkage_present = False
     approval_linkage_present = False
     autonomy_linkage_present = False
+    patch_linkage_present = False
+    helix_linkage_present = False
     for _proj, m in products_by_project.items():
         if m.get("learning_insight_refs"):
             learning_linkage_present = True
-        if m.get("approval_refs"):
+        if m.get("approval_refs") or m.get("approval_id_refs"):
             approval_linkage_present = True
-        if m.get("autonomy_refs"):
+        if m.get("autonomy_refs") or m.get("autonomy_id_refs"):
             autonomy_linkage_present = True
+        if m.get("patch_id_refs"):
+            patch_linkage_present = True
+        if m.get("helix_id_refs"):
+            helix_linkage_present = True
 
     if ready_count > 0 and restricted_count == 0:
         product_status = "ready"
@@ -101,6 +107,8 @@ def build_product_summary(
         "learning_linkage_present": learning_linkage_present,
         "approval_linkage_present": approval_linkage_present,
         "autonomy_linkage_present": autonomy_linkage_present,
+        "patch_linkage_present": patch_linkage_present,
+        "helix_linkage_present": helix_linkage_present,
         "reason": reason,
     }
 
@@ -124,5 +132,7 @@ def build_product_summary_safe(
             "learning_linkage_present": False,
             "approval_linkage_present": False,
             "autonomy_linkage_present": False,
+            "patch_linkage_present": False,
+            "helix_linkage_present": False,
             "reason": "Product summary evaluation failed.",
         }

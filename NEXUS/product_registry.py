@@ -12,6 +12,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from NEXUS.ref_utils import normalize_ref_list
+
 PRODUCT_MANIFEST_FILENAME = "product_manifest.json"
 
 
@@ -40,8 +42,11 @@ def normalize_product_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     """
     Normalize product manifest to contract shape.
     Ensures required fields exist with safe defaults.
+    Phase 29: include normalized ref fields for trace alignment.
     """
     m = manifest or {}
+    approval_id_refs = normalize_ref_list(m.get("approval_id_refs") or m.get("approval_refs"))
+    autonomy_id_refs = normalize_ref_list(m.get("autonomy_id_refs") or m.get("autonomy_refs"))
     return {
         "product_id": str(m.get("product_id") or ""),
         "project_name": str(m.get("project_name") or ""),
@@ -58,6 +63,13 @@ def normalize_product_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
         "risk_profile": str(m.get("risk_profile") or "unknown"),
         "safety_summary": dict(m.get("safety_summary") or {}),
         "notes": str(m.get("notes") or ""),
+        "approval_refs": approval_id_refs[:10],
+        "autonomy_refs": autonomy_id_refs[:10],
+        "approval_id_refs": approval_id_refs[:20],
+        "patch_id_refs": normalize_ref_list(m.get("patch_id_refs"))[:20],
+        "helix_id_refs": normalize_ref_list(m.get("helix_id_refs"))[:20],
+        "autonomy_id_refs": autonomy_id_refs[:20],
+        "learning_insight_refs": normalize_ref_list(m.get("learning_insight_refs"))[:20],
     }
 
 

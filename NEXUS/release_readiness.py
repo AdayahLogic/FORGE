@@ -61,7 +61,13 @@ def build_release_readiness(
     # Trace linkage visibility (do not invent links)
     if product.get("approval_linkage_present"):
         trace_links_present["approval_linked"] = True
-    if product.get("learning_linkage_present") or product.get("autonomy_linkage_present"):
+    if (
+        product.get("learning_linkage_present")
+        or product.get("autonomy_linkage_present")
+        or product.get("approval_linkage_present")
+        or product.get("patch_linkage_present")
+        or product.get("helix_linkage_present")
+    ):
         trace_links_present["product_linked"] = True
     if patch.get("approved_pending_apply_count", 0) > 0 or patch.get("pending_count", 0) > 0:
         trace_links_present["patch_linked"] = True

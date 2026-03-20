@@ -125,7 +125,7 @@ def build_cross_artifact_trace(
             if r.get("product_id_refs"):
                 autonomy_has_product = True
 
-        # Product
+        # Product (Phase 29: product refs contribute to linkage)
         try:
             manifest = build_product_manifest_safe(
                 project_name=proj_key,
@@ -135,6 +135,8 @@ def build_cross_artifact_trace(
             pid_val = manifest.get("product_id")
             if pid_val and isinstance(pid_val, str) and pid_val != "error_fallback":
                 product_ids.append(pid_val)
+            if manifest.get("patch_id_refs"):
+                patch_has_product = True
         except Exception:
             pass
 

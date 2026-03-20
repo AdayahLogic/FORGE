@@ -16,6 +16,23 @@ from NEXUS.execution_environment_summary import build_per_project_environment_su
 from NEXUS.registry import PROJECTS
 from NEXUS.tool_registry import TOOL_REGISTRY, get_tools_for_agent, list_active_tools
 from NEXUS.runtime_target_registry import list_active_runtime_targets
+from NEXUS.ref_utils import normalize_ref_list
+
+
+def get_product_refs(manifest: dict[str, Any] | None) -> dict[str, list[str]]:
+    """
+    Phase 29: Normalized product ref access.
+    Returns dict with approval_id_refs, patch_id_refs, helix_id_refs,
+    autonomy_id_refs, learning_insight_refs. Uses both old and new field names.
+    """
+    m = manifest or {}
+    return {
+        "approval_id_refs": normalize_ref_list(m.get("approval_id_refs") or m.get("approval_refs")),
+        "patch_id_refs": normalize_ref_list(m.get("patch_id_refs")),
+        "helix_id_refs": normalize_ref_list(m.get("helix_id_refs")),
+        "autonomy_id_refs": normalize_ref_list(m.get("autonomy_id_refs") or m.get("autonomy_refs")),
+        "learning_insight_refs": normalize_ref_list(m.get("learning_insight_refs")),
+    }
 
 
 def _tools_for_project(project_key: str) -> list[str]:
@@ -162,6 +179,45 @@ def build_product_manifest(
     approval_reqs = _approval_requirements(project_path=path)
     safety = _safety_summary(risk_profile, env_posture, approval_reqs)
 
+    # Phase 29: normalized ref capture from real journals (when available)
+    approval_id_refs = normalize_ref_list(approval_reqs.get("recent_approval_ids"))
+    patch_id_refs: list[str] = []
+    helix_id_refs: list[str] = []
+    autonomy_id_refs: list[str] = []
+    learning_insight_refs: list[str] = []
+    try:
+        from NEXUS.patch_proposal_registry import read_patch_proposal_journal_tail
+        for r in read_patch_proposal_journal_tail(project_path=path, n=15):
+            pid = r.get("patch_id")
+            if pid and isinstance(pid, str):
+                patch_id_refs.append(pid)
+    except Exception:
+        pass
+    try:
+        from NEXUS.helix_registry import read_helix_journal_tail
+        for r in read_helix_journal_tail(project_path=path, n=10):
+            hid = r.get("helix_id")
+            if hid and isinstance(hid, str):
+                helix_id_refs.append(hid)
+    except Exception:
+        pass
+    try:
+        from NEXUS.autonomy_registry import read_autonomy_journal_tail
+        for r in read_autonomy_journal_tail(project_path=path, n=10):
+            aid = r.get("autonomy_id")
+            if aid and isinstance(aid, str):
+                autonomy_id_refs.append(aid)
+    except Exception:
+        pass
+    try:
+        from NEXUS.learning_writer import read_learning_journal_tail
+        for i, lr in enumerate(read_learning_journal_tail(project_path=path, n=10)):
+            ref = lr.get("run_id") or lr.get("timestamp") or str(i)
+            if ref and isinstance(ref, str):
+                learning_insight_refs.append(f"{key}:{ref}"[:60])
+    except Exception:
+        pass
+
     active_targets = list_active_runtime_targets()
     required_runtime_targets = list(set(active_targets) & {"local", "cursor", "codex"})
     if not required_runtime_targets:
@@ -189,9 +245,13 @@ def build_product_manifest(
         "risk_profile": risk_profile,
         "safety_summary": safety,
         "notes": proj.get("description") or "",
-        "learning_insight_refs": [],
-        "approval_refs": approval_reqs.get("recent_approval_ids") or [],
-        "autonomy_refs": [],
+        "learning_insight_refs": learning_insight_refs[:20],
+        "approval_refs": approval_id_refs[:10],
+        "autonomy_refs": autonomy_id_refs[:10],
+        "approval_id_refs": approval_id_refs[:20],
+        "patch_id_refs": patch_id_refs[:20],
+        "helix_id_refs": helix_id_refs[:20],
+        "autonomy_id_refs": autonomy_id_refs[:20],
     }
 
 
@@ -230,4 +290,8 @@ def build_product_manifest_safe(
             "learning_insight_refs": [],
             "approval_refs": [],
             "autonomy_refs": [],
+            "approval_id_refs": [],
+            "patch_id_refs": [],
+            "helix_id_refs": [],
+            "autonomy_id_refs": [],
         }
