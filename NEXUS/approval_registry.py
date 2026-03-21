@@ -42,6 +42,7 @@ def normalize_approval_record(record: dict[str, Any]) -> dict[str, Any]:
     Normalize approval record to contract shape.
     Ensures required fields exist with safe defaults.
     Phase 28: capture patch_id_refs from context when available (forward-link).
+    Phase 39: add expiry metadata when decision_timestamp present.
     """
     r = record or {}
     context = dict(r.get("context") or {})
@@ -49,7 +50,7 @@ def normalize_approval_record(record: dict[str, Any]) -> dict[str, Any]:
     pid = context.get("patch_id")
     if pid and isinstance(pid, str) and pid.strip() and pid not in patch_id_refs:
         patch_id_refs = [pid] + [x for x in patch_id_refs if x != pid][:19]
-    return {
+    out: dict[str, Any] = {
         "approval_id": str(r.get("approval_id") or uuid.uuid4().hex[:16]),
         "run_id": str(r.get("run_id") or ""),
         "project_name": str(r.get("project_name") or ""),
@@ -66,6 +67,20 @@ def normalize_approval_record(record: dict[str, Any]) -> dict[str, Any]:
         "decision_timestamp": r.get("decision_timestamp"),
         "patch_id_refs": patch_id_refs[:20],
     }
+    try:
+        from NEXUS.approval_staleness import compute_expiry_metadata
+        if out.get("status") in ("approved", "rejected") and (out.get("decision_timestamp") or out.get("timestamp")):
+            meta = compute_expiry_metadata(out, record_type="approval")
+            out["expiry_timestamp"] = meta.get("expiry_timestamp", "")
+            out["expiry_status"] = meta.get("expiry_status", "unknown")
+            out["stale_after_hours"] = meta.get("stale_after_hours", 24.0)
+            out["requires_reapproval"] = meta.get("requires_reapproval", False)
+    except Exception:
+        out["expiry_timestamp"] = r.get("expiry_timestamp", "")
+        out["expiry_status"] = r.get("expiry_status", "unknown")
+        out["stale_after_hours"] = r.get("stale_after_hours", 24.0)
+        out["requires_reapproval"] = r.get("requires_reapproval", False)
+    return out
 
 
 def append_approval_record(

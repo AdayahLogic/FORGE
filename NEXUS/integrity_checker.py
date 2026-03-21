@@ -18,6 +18,7 @@ APPROVAL_SUMMARY_KEYS = (
     "approval_types",
     "stale_count",
     "approved_pending_apply_count",
+    "reapproval_required_count",
     "reason",
 )
 PRODUCT_SUMMARY_KEYS = (

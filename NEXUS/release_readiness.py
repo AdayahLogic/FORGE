@@ -178,6 +178,9 @@ def build_release_readiness(
         critical_blockers.append(f"{patch.get('pending_count')} patch proposal(s) pending approval.")
     if (patch.get("approved_pending_apply_stale_count") or 0) > 0:
         critical_blockers.append("Stale approvals blocking patch apply; re-approval required.")
+    reapproval_count = approval.get("reapproval_required_count") or 0
+    if reapproval_count > 0:
+        critical_blockers.append(f"{reapproval_count} approval(s) require re-approval (stale/expired).")
     if exec_status == "error_fallback":
         critical_blockers.append("Execution environment unavailable or error.")
     if autonomy_posture == "approval_blocked":

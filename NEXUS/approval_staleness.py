@@ -3,6 +3,7 @@ NEXUS approval staleness evaluation (Phase 25).
 
 Derived staleness: timestamp-based, read-only.
 No auto-delete; no mutation. Mark stale in summaries only.
+Phase 39: configurable staleness by type; explicit expiry metadata.
 """
 
 from __future__ import annotations
@@ -12,6 +13,83 @@ from typing import Any
 
 # Default: approval/resolution older than 24h is considered stale
 APPROVAL_STALENESS_HOURS = 24.0
+
+# Phase 39: optional per-approval-type staleness (hours). Empty = use default.
+APPROVAL_STALENESS_BY_TYPE: dict[str, float] = {
+    "patch_proposal_resolution": 24.0,
+}
+
+
+def get_staleness_hours(approval_type: str | None = None) -> float:
+    """Phase 39: Return staleness hours for approval type, or default."""
+    if approval_type and str(approval_type).strip():
+        key = str(approval_type).strip()
+        if key in APPROVAL_STALENESS_BY_TYPE:
+            return APPROVAL_STALENESS_BY_TYPE[key]
+    return APPROVAL_STALENESS_HOURS
+
+
+def compute_expiry_metadata(
+    record: dict[str, Any] | None,
+    *,
+    record_type: str = "approval",
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """
+    Phase 39: Compute explicit expiry metadata from approval or resolution record.
+    Returns expiry_timestamp, expiry_status, stale_after_hours, requires_reapproval.
+    For old records without persisted expiry, derives from timestamp.
+    """
+    out: dict[str, Any] = {
+        "expiry_timestamp": "",
+        "expiry_status": "unknown",
+        "stale_after_hours": APPROVAL_STALENESS_HOURS,
+        "requires_reapproval": False,
+        "approval_type": "",
+        "approval_policy_source": "derived",
+    }
+    if not record or not isinstance(record, dict):
+        return out
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+
+    ts = record.get("expiry_timestamp") or record.get("decision_timestamp") or record.get("timestamp")
+    dt = _parse_iso(ts)
+    approval_type = str(record.get("approval_type") or "unknown").strip()
+    stale_hours = get_staleness_hours(approval_type)
+    out["stale_after_hours"] = stale_hours
+    out["approval_type"] = approval_type
+
+    if record_type == "resolution":
+        if str(record.get("new_status") or "").strip().lower() != "approved_pending_apply":
+            out["expiry_status"] = "unknown"
+            return out
+        ts = record.get("timestamp")
+        dt = _parse_iso(ts)
+        approval_type = "patch_proposal_resolution"
+        stale_hours = get_staleness_hours(approval_type)
+        out["stale_after_hours"] = stale_hours
+
+    if not dt:
+        return out
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+
+    expiry_dt = dt + timedelta(hours=stale_hours)
+    out["expiry_timestamp"] = expiry_dt.isoformat()
+    delta = now - dt
+    hours = delta.total_seconds() / 3600.0
+
+    if hours > stale_hours:
+        out["expiry_status"] = "stale"
+        out["requires_reapproval"] = True
+    else:
+        out["expiry_status"] = "active"
+        out["requires_reapproval"] = False
+
+    return out
 
 
 def _parse_iso(ts: str | None) -> datetime | None:

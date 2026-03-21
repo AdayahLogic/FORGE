@@ -4,6 +4,7 @@ NEXUS approval summary layer (Phase 18).
 Builds approval visibility for dashboard and command surface.
 Read-only; no approval decisions.
 Phase 25: adds stale count, approved_pending_apply visibility.
+Phase 39: adds reapproval_required_count, lifecycle summary.
 """
 
 from __future__ import annotations
@@ -40,6 +41,7 @@ def build_approval_summary(
     approval_types_seen: set[str] = set()
     stale_count = 0
     approved_pending_apply_count = 0
+    reapproval_required_count = 0
 
     for proj_key in sorted(PROJECTS.keys()):
         proj = PROJECTS[proj_key]
@@ -63,6 +65,15 @@ def build_approval_summary(
                 if at:
                     approval_types_seen.add(str(at))
 
+    try:
+        from NEXUS.approval_lifecycle import get_reapproval_required_count
+        for proj_key in PROJECTS:
+            path = PROJECTS.get(proj_key, {}).get("path")
+            if path:
+                reapproval_required_count += get_reapproval_required_count(project_path=path)
+    except Exception:
+        reapproval_required_count = stale_count
+
     pending_count_total = sum(pending_by_project.values())
     recent_approvals.sort(key=lambda x: x.get("timestamp") or "", reverse=True)
     recent_approvals = recent_approvals[:n_recent]
@@ -70,6 +81,9 @@ def build_approval_summary(
     if pending_count_total > 0:
         status = "pending"
         reason = f"{pending_count_total} approval(s) pending across projects."
+    elif reapproval_required_count > 0:
+        status = "clear"
+        reason = f"No pending approvals; {reapproval_required_count} require re-approval (stale/expired)."
     elif stale_count > 0:
         status = "clear"
         reason = f"No pending approvals; {stale_count} stale."
@@ -85,6 +99,7 @@ def build_approval_summary(
         "approval_types": sorted(approval_types_seen),
         "stale_count": stale_count,
         "approved_pending_apply_count": approved_pending_apply_count,
+        "reapproval_required_count": reapproval_required_count,
         "reason": reason,
     }
 
@@ -106,5 +121,6 @@ def build_approval_summary_safe(
             "approval_types": [],
             "stale_count": 0,
             "approved_pending_apply_count": 0,
+            "reapproval_required_count": 0,
             "reason": "Approval summary evaluation failed.",
         }

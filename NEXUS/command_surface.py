@@ -119,6 +119,10 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 25: approval maturity
     "retry_patch_proposal",
     "approval_trace",
+    # Phase 39: approval lifecycle
+    "approval_lifecycle_status",
+    "reapproval_status",
+    "retry_after_expiry_status",
     # Phase 26: operator release readiness
     "release_readiness",
     "operator_release_summary",
@@ -3116,6 +3120,11 @@ def run_command(
                         is_stale, hours = evaluate_proposal_approval_staleness(trace["resolution"])
                         trace["is_stale"] = is_stale
                         trace["hours_since"] = hours
+                        try:
+                            from NEXUS.approval_lifecycle import evaluate_resolution_lifecycle
+                            trace["lifecycle"] = evaluate_resolution_lifecycle(trace["resolution"])
+                        except Exception:
+                            trace["lifecycle"] = {}
                     aid = trace["resolution"].get("approval_id") if trace["resolution"] else None
                     if aid:
                         for proj_key in PROJECTS:
@@ -3132,6 +3141,102 @@ def run_command(
             return _result(command=cmd, status="error", project_name=None, summary="approval_id or patch_id required.", payload={"error": "approval_id or patch_id required."})
         except Exception as e:
             fallback = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "approval_lifecycle_status":
+        try:
+            approval_id = (kwargs.get("approval_id") or "").strip() or None
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            from NEXUS.approval_summary import build_approval_summary_safe
+            from NEXUS.approval_lifecycle import evaluate_approval_lifecycle, evaluate_resolution_lifecycle
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch
+            from NEXUS.registry import PROJECTS
+            summary = build_approval_summary_safe(n_recent=30, n_tail=100)
+            lifecycle_items: list[dict[str, Any]] = []
+            if approval_id:
+                for proj_key in PROJECTS:
+                    p = PROJECTS.get(proj_key, {}).get("path")
+                    if p:
+                        from NEXUS.approval_registry import read_approval_journal_tail
+                        tail = read_approval_journal_tail(project_path=p, n=100)
+                        for ar in tail:
+                            if ar.get("approval_id") == approval_id:
+                                lc = evaluate_approval_lifecycle(ar)
+                                lifecycle_items.append({**lc, "approval_id": approval_id, "project": proj_key})
+                                break
+                    if lifecycle_items:
+                        break
+            elif patch_id:
+                prop, prop_path, prop_key = find_proposal_and_project(patch_id)
+                if prop and prop_path:
+                    effective, resolution = get_proposal_effective_status(project_path=prop_path, patch_id=patch_id)
+                    lc = evaluate_resolution_lifecycle(resolution) if resolution else {"approval_lifecycle_status": "unknown", "lifecycle_next_step": "No resolution yet."}
+                    lifecycle_items.append({**lc, "patch_id": patch_id, "project": prop_key, "effective_status": effective})
+            else:
+                for ar in summary.get("recent_approvals", [])[:10]:
+                    if str(ar.get("status") or "").strip().lower() == "approved":
+                        lc = evaluate_approval_lifecycle(ar)
+                        lifecycle_items.append({**lc, "approval_id": ar.get("approval_id"), "project": ar.get("_project")})
+            payload = {
+                "approval_lifecycle_status": lifecycle_items[0].get("approval_lifecycle_status") if lifecycle_items else "unknown",
+                "lifecycle_items": lifecycle_items,
+                "reapproval_required_count": summary.get("reapproval_required_count", 0),
+                "approval_summary": summary,
+            }
+            summary_line = f"lifecycle={payload['approval_lifecycle_status']}; reapproval_required={payload['reapproval_required_count']}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback = {"approval_lifecycle_status": "unknown", "lifecycle_items": [], "reapproval_required_count": 0, "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "reapproval_status":
+        try:
+            from NEXUS.approval_summary import build_approval_summary_safe
+            from NEXUS.approval_lifecycle import get_reapproval_required_count
+            from NEXUS.registry import PROJECTS
+            summary = build_approval_summary_safe(n_recent=20, n_tail=100)
+            reapproval_count = summary.get("reapproval_required_count", 0)
+            items: list[dict[str, Any]] = []
+            for proj_key in PROJECTS:
+                path = PROJECTS.get(proj_key, {}).get("path")
+                if not path:
+                    continue
+                from NEXUS.patch_proposal_registry import read_patch_proposal_resolution_tail
+                tail = read_patch_proposal_resolution_tail(project_path=path, n=50)
+                for r in tail:
+                    if str(r.get("new_status") or "").strip().lower() != "approved_pending_apply":
+                        continue
+                    from NEXUS.approval_lifecycle import evaluate_resolution_lifecycle
+                    lc = evaluate_resolution_lifecycle(r)
+                    if lc.get("reapproval_required"):
+                        items.append({"patch_id": r.get("patch_id"), "project": proj_key, "lifecycle": lc})
+            payload = {"reapproval_required_count": reapproval_count, "items_requiring_reapproval": items[:20], "approval_summary": summary}
+            summary_line = f"reapproval_required={reapproval_count}; items={len(items)}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback = {"reapproval_required_count": 0, "items_requiring_reapproval": [], "error": str(e)}
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    if cmd == "retry_after_expiry_status":
+        try:
+            patch_id = (kwargs.get("patch_id") or "").strip() or None
+            from NEXUS.approval_lifecycle import evaluate_resolution_lifecycle
+            from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch
+            if not patch_id:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="patch_id required.", payload={"retry_ready": False, "error": "patch_id required."})
+            prop, prop_path, prop_key = find_proposal_and_project(patch_id)
+            if not prop or not prop_path:
+                return _result(command=cmd, status="error", project_name=proj_name, summary="Patch not found.", payload={"retry_ready": False, "patch_id": patch_id})
+            effective, resolution = get_proposal_effective_status(project_path=prop_path, patch_id=patch_id)
+            if effective != "approved_pending_apply":
+                return _result(command=cmd, status="ok", project_name=prop_key, summary=f"Status={effective}; retry not applicable.", payload={"retry_ready": False, "effective_status": effective, "lifecycle": {"lifecycle_next_step": f"Proposal status is {effective}; retry applies only to approved_pending_apply."}})
+            lc = evaluate_resolution_lifecycle(resolution)
+            retry_ready = lc.get("retry_after_expiry_ready", False)
+            payload = {"retry_ready": retry_ready, "patch_id": patch_id, "effective_status": effective, "lifecycle": lc}
+            summary_line = f"retry_ready={retry_ready}; {lc.get('lifecycle_next_step', '')[:80]}"
+            return _result(command=cmd, status="ok", project_name=prop_key, summary=summary_line, payload=payload)
+        except Exception as e:
+            fallback = {"retry_ready": False, "patch_id": kwargs.get("patch_id", ""), "error": str(e)}
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
 
     if cmd in ("release_readiness", "operator_release_summary"):

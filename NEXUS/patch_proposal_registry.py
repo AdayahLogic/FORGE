@@ -396,6 +396,15 @@ def append_patch_proposal_resolution(
         "reason": reason[:500],
         "timestamp": now,
     }
+    if new_status == "approved_pending_apply":
+        try:
+            from NEXUS.approval_staleness import compute_expiry_metadata, get_staleness_hours
+            meta = compute_expiry_metadata(record, record_type="resolution")
+            record["expiry_timestamp"] = meta.get("expiry_timestamp", "")
+            record["stale_after_hours"] = meta.get("stale_after_hours", 24.0)
+        except Exception:
+            record["expiry_timestamp"] = ""
+            record["stale_after_hours"] = 24.0
     try:
         safe = _truncate_for_json(record)
         with open(path, "a", encoding="utf-8") as f:
