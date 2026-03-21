@@ -74,6 +74,34 @@ def build_execution_environment_summary(
             runtime_target_summary=rt,
         )
 
+    # Phase 40: runtime isolation posture (honest; no fake sandbox claims)
+    try:
+        from NEXUS.runtime_isolation import build_runtime_isolation_posture_safe
+        isolation_posture = build_runtime_isolation_posture_safe(
+            execution_environment_summary={
+                "execution_environment_status": status,
+                "active_environments": active_envs,
+                "planned_environments": planned_envs,
+            },
+            runtime_target_summary=rt,
+        )
+    except Exception:
+        isolation_posture = {
+            "isolation_posture": "error_fallback",
+            "file_scope_status": "unknown",
+            "network_scope_status": "unknown",
+            "secret_scope_status": "unknown",
+            "connector_scope_status": "unknown",
+            "mutation_scope_status": "unknown",
+            "rollback_posture": "unknown",
+            "isolation_reason": "Isolation posture unavailable.",
+            "runtime_restrictions": [],
+            "allowed_execution_domains": [],
+            "blocked_execution_domains": [],
+            "destructive_risk_posture": "unknown",
+            "generated_at": "",
+        }
+
     return {
         "execution_environment_status": status,
         "active_environments": active_envs,
@@ -82,6 +110,7 @@ def build_execution_environment_summary(
         "environments": get_all_environment_definitions(),
         "per_project_summaries": per_project_summaries,
         "reason": reason,
+        "runtime_isolation_posture": isolation_posture,
     }
 
 
@@ -105,6 +134,21 @@ def build_execution_environment_summary_safe(
             "environments": [],
             "per_project_summaries": {},
             "reason": "Execution environment summary evaluation failed.",
+            "runtime_isolation_posture": {
+                "isolation_posture": "error_fallback",
+                "file_scope_status": "unknown",
+                "network_scope_status": "unknown",
+                "secret_scope_status": "unknown",
+                "connector_scope_status": "unknown",
+                "mutation_scope_status": "unknown",
+                "rollback_posture": "unknown",
+                "isolation_reason": "Execution environment summary failed.",
+                "runtime_restrictions": [],
+                "allowed_execution_domains": [],
+                "blocked_execution_domains": [],
+                "destructive_risk_posture": "unknown",
+                "generated_at": "",
+            },
         }
 
 

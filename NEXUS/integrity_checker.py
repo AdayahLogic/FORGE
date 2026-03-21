@@ -273,6 +273,42 @@ def check_review_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
     return {"valid": len(issues) == 0, "issues": issues, "payload_type": "review_record"}
 
 
+# Phase 40: runtime isolation posture
+RUNTIME_ISOLATION_KEYS = (
+    "isolation_posture",
+    "file_scope_status",
+    "network_scope_status",
+    "secret_scope_status",
+    "connector_scope_status",
+    "mutation_scope_status",
+    "rollback_posture",
+    "isolation_reason",
+    "runtime_restrictions",
+    "allowed_execution_domains",
+    "blocked_execution_domains",
+    "destructive_risk_posture",
+    "generated_at",
+)
+VALID_ISOLATION_POSTURE = ("weak", "bounded", "restricted", "isolated_planned", "error_fallback")
+
+
+def check_runtime_isolation_shape(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Phase 40: validate runtime isolation posture has required keys. Read-only."""
+    if not isinstance(payload, dict):
+        return {"valid": True, "issues": [], "payload_type": "runtime_isolation", "skipped": "not a dict"}
+    issues: list[str] = []
+    for k in RUNTIME_ISOLATION_KEYS:
+        if k not in payload:
+            issues.append(f"missing key: {k}")
+    iso = payload.get("isolation_posture")
+    if iso is not None and str(iso).strip().lower() not in VALID_ISOLATION_POSTURE:
+        issues.append(f"isolation_posture must be one of {VALID_ISOLATION_POSTURE}, got {iso!r}")
+    rr = payload.get("runtime_restrictions")
+    if rr is not None and not isinstance(rr, list):
+        issues.append("runtime_restrictions must be list")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "runtime_isolation"}
+
+
 RELEASE_READINESS_KEYS = (
     "release_readiness_status",
     "critical_blockers",
@@ -417,6 +453,16 @@ def run_integrity_check(
     results.append(r)
     if not r["valid"]:
         all_valid = False
+
+    # Phase 40: Runtime isolation posture (from execution_environment_summary)
+    exec_env = dash.get("execution_environment_summary") or {}
+    isolation = exec_env.get("runtime_isolation_posture")
+    if isolation:
+        r = check_runtime_isolation_shape(isolation)
+        r["source"] = "execution_environment_runtime_isolation"
+        results.append(r)
+        if not r["valid"]:
+            all_valid = False
 
     # Phase 32: Surgeon repair_metadata shape (when present in helix journal)
     try:

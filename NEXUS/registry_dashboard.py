@@ -749,6 +749,21 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "environments": [],
             "per_project_summaries": {},
             "reason": "Execution environment summary failed.",
+            "runtime_isolation_posture": {
+                "isolation_posture": "error_fallback",
+                "file_scope_status": "unknown",
+                "network_scope_status": "unknown",
+                "secret_scope_status": "unknown",
+                "connector_scope_status": "unknown",
+                "mutation_scope_status": "unknown",
+                "rollback_posture": "unknown",
+                "isolation_reason": "Execution environment summary failed.",
+                "runtime_restrictions": [],
+                "allowed_execution_domains": [],
+                "blocked_execution_domains": [],
+                "destructive_risk_posture": "unknown",
+                "generated_at": datetime.now().isoformat(),
+            },
         }
         approval_summary = {
             "approval_status": "error_fallback",

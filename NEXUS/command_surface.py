@@ -126,6 +126,9 @@ SUPPORTED_COMMANDS = frozenset({
     # Phase 26: operator release readiness
     "release_readiness",
     "operator_release_summary",
+    # Phase 40: runtime isolation
+    "runtime_isolation_status",
+    "sandbox_posture",
     # Phase 27: cross-artifact trace
     "artifact_trace",
     # Phase 37: candidate review workflow
@@ -3268,6 +3271,38 @@ def run_command(
                 "error": str(e),
             }
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload=fallback)
+
+    # Phase 40: runtime isolation (read-only; no execution)
+    if cmd in ("runtime_isolation_status", "sandbox_posture"):
+        try:
+            from NEXUS.runtime_isolation import build_runtime_isolation_posture_safe
+            from NEXUS.registry_dashboard import build_registry_dashboard_summary
+            dash = build_registry_dashboard_summary()
+            exec_env = dash.get("execution_environment_summary") or {}
+            data = build_runtime_isolation_posture_safe(
+                execution_environment_summary=exec_env,
+            )
+            iso = data.get("isolation_posture", "unknown")
+            summary_line = f"isolation_posture={iso}; file={data.get('file_scope_status')}; network={data.get('network_scope_status')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=data)
+        except Exception as e:
+            fallback = {
+                "isolation_posture": "error_fallback",
+                "file_scope_status": "unknown",
+                "network_scope_status": "unknown",
+                "secret_scope_status": "unknown",
+                "connector_scope_status": "unknown",
+                "mutation_scope_status": "unknown",
+                "rollback_posture": "unknown",
+                "isolation_reason": str(e),
+                "runtime_restrictions": [],
+                "allowed_execution_domains": [],
+                "blocked_execution_domains": [],
+                "destructive_risk_posture": "unknown",
+                "generated_at": "",
+                "error": str(e),
+            }
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload=fallback)
 
     if cmd == "artifact_trace":
         try:

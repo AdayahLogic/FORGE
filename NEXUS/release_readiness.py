@@ -183,6 +183,27 @@ def build_release_readiness(
         critical_blockers.append(f"{reapproval_count} approval(s) require re-approval (stale/expired).")
     if exec_status == "error_fallback":
         critical_blockers.append("Execution environment unavailable or error.")
+
+    # Phase 40: runtime isolation posture - conservative when weak/unclear
+    isolation_posture = exec_env.get("runtime_isolation_posture")
+    if not isinstance(isolation_posture, dict):
+        try:
+            from NEXUS.runtime_isolation import build_runtime_isolation_posture_safe
+            isolation_posture = build_runtime_isolation_posture_safe(
+                execution_environment_summary=exec_env,
+            )
+        except Exception:
+            isolation_posture = {
+                "isolation_posture": "error_fallback",
+                "isolation_reason": "Runtime isolation posture unavailable.",
+            }
+    if isolation_posture.get("isolation_posture") == "error_fallback":
+        critical_blockers.append("Runtime isolation posture unavailable; safety visibility reduced.")
+    elif str(isolation_posture.get("isolation_posture", "")).strip().lower() == "weak":
+        review_items.append(
+            "Runtime isolation is weak; execution bounded by policy only. "
+            "No container/VM sandbox. Consider review before high-risk operations."
+        )
     if autonomy_posture == "approval_blocked":
         critical_blockers.append("Autonomy blocked by approval gate.")
     if helix_posture == "approval_blocked":
@@ -266,6 +287,7 @@ def build_release_readiness(
         "candidates_not_ready_for_review": candidates_not_ready_for_review,
         "review_linkage_present": review_awareness.get("review_linkage_present", False),
         "review_reasoning": review_awareness.get("review_reasoning", [])[:5],
+        "runtime_isolation_posture": isolation_posture,
     }
 
 
@@ -286,7 +308,7 @@ def build_release_readiness_safe(
 
 
 def _fallback_readiness(generated_at: str, reason: str, project_name: str | None) -> dict[str, Any]:
-    """Error fallback shape; preserves contract. Phase 38: includes review fields."""
+    """Error fallback shape; preserves contract. Phase 38: includes review fields. Phase 40: isolation posture."""
     return {
         "release_readiness_status": "error_fallback",
         "project_name": project_name,
@@ -318,6 +340,21 @@ def _fallback_readiness(generated_at: str, reason: str, project_name: str | None
         "candidates_not_ready_for_review": 0,
         "review_linkage_present": False,
         "review_reasoning": [],
+        "runtime_isolation_posture": {
+            "isolation_posture": "error_fallback",
+            "file_scope_status": "unknown",
+            "network_scope_status": "unknown",
+            "secret_scope_status": "unknown",
+            "connector_scope_status": "unknown",
+            "mutation_scope_status": "unknown",
+            "rollback_posture": "unknown",
+            "isolation_reason": reason,
+            "runtime_restrictions": [],
+            "allowed_execution_domains": [],
+            "blocked_execution_domains": [],
+            "destructive_risk_posture": "unknown",
+            "generated_at": generated_at,
+        },
     }
 
 
@@ -335,11 +372,13 @@ def build_operator_release_summary(
     review_sum = r.get("review_status_summary", "")
     review_blk = r.get("review_blocker_count", 0)
     review_req = r.get("review_required_count", 0)
+    iso = (r.get("runtime_isolation_posture") or {}).get("isolation_posture", "unknown")
     r["operator_summary"] = (
         f"Status: {r.get('release_readiness_status')}. "
         f"Blockers: {len(r.get('critical_blockers', []))}. "
         f"Review items: {len(r.get('review_items', []))}. "
-        f"Review: {review_sum or 'none'}."
+        f"Review: {review_sum or 'none'}. "
+        f"Isolation: {iso}."
     )
     r["operator_review_summary"] = (
         f"Review blockers: {review_blk}. "
