@@ -42,6 +42,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_decision_status",
     "execution_package_eligibility_check",
     "execution_package_eligibility_status",
+    "execution_package_release_request",
+    "execution_package_release_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -218,6 +220,10 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "eligibility_timestamp": p.get("eligibility_timestamp"),
         "eligibility_reason": p.get("eligibility_reason") or {"code": "", "message": ""},
         "eligibility_check_id": p.get("eligibility_check_id"),
+        "release_status": p.get("release_status"),
+        "release_timestamp": p.get("release_timestamp"),
+        "release_reason": p.get("release_reason") or {"code": "", "message": ""},
+        "release_id": p.get("release_id"),
     }
 
 
@@ -260,6 +266,15 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "eligibility_reason": p.get("eligibility_reason") or {"code": "", "message": ""},
             "eligibility_checked_by": p.get("eligibility_checked_by") or "",
             "eligibility_check_id": p.get("eligibility_check_id") or "",
+        },
+        "release": {
+            "release_status": p.get("release_status") or "pending",
+            "release_timestamp": p.get("release_timestamp") or "",
+            "release_actor": p.get("release_actor") or "",
+            "release_notes": p.get("release_notes") or "",
+            "release_id": p.get("release_id") or "",
+            "release_reason": p.get("release_reason") or {"code": "", "message": ""},
+            "release_version": p.get("release_version") or "v1",
         },
         "metadata": dict(p.get("metadata") or {}),
     }
@@ -824,6 +839,143 @@ def run_command(
                         "eligibility_reason": package.get("eligibility_reason") or {"code": "", "message": ""},
                         "eligibility_checked_by": package.get("eligibility_checked_by"),
                         "eligibility_check_id": package.get("eligibility_check_id"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_release_request":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        release_actor = str(kwargs.get("release_actor") or "").strip()
+        release_notes = str(kwargs.get("release_notes") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not release_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="release_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_release_safe
+
+            result = record_execution_package_release_safe(
+                project_path=path,
+                package_id=package_id,
+                release_actor=release_actor,
+                release_notes=release_notes,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package release."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            release = {
+                "release_status": package.get("release_status"),
+                "release_timestamp": package.get("release_timestamp"),
+                "release_actor": package.get("release_actor"),
+                "release_notes": package.get("release_notes"),
+                "release_id": package.get("release_id"),
+                "release_reason": package.get("release_reason") or {"code": "", "message": ""},
+                "release_version": package.get("release_version"),
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; release_status={release.get('release_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package release recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "release": release,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_release_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; release_status={package.get('release_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package release status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "release": {
+                        "release_status": package.get("release_status"),
+                        "release_timestamp": package.get("release_timestamp"),
+                        "release_actor": package.get("release_actor"),
+                        "release_notes": package.get("release_notes"),
+                        "release_id": package.get("release_id"),
+                        "release_reason": package.get("release_reason") or {"code": "", "message": ""},
+                        "release_version": package.get("release_version"),
                     },
                 },
             )

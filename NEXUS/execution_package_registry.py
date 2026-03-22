@@ -47,6 +47,12 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "eligibility_reason": normalized.get("eligibility_reason"),
         "eligibility_checked_by": normalized.get("eligibility_checked_by"),
         "eligibility_check_id": normalized.get("eligibility_check_id"),
+        "release_status": normalized.get("release_status"),
+        "release_timestamp": normalized.get("release_timestamp"),
+        "release_actor": normalized.get("release_actor"),
+        "release_id": normalized.get("release_id"),
+        "release_reason": normalized.get("release_reason"),
+        "release_version": normalized.get("release_version"),
     }
 
 
@@ -93,6 +99,15 @@ def get_execution_package_file_path(project_path: str | None, package_id: str | 
 
 
 def _normalize_eligibility_reason(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {"code": "", "message": ""}
+    return {
+        "code": str(value.get("code") or ""),
+        "message": str(value.get("message") or ""),
+    }
+
+
+def _normalize_release_reason(value: Any) -> dict[str, str]:
     if not isinstance(value, dict):
         return {"code": "", "message": ""}
     return {
@@ -157,6 +172,13 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "eligibility_reason": _normalize_eligibility_reason(p.get("eligibility_reason")),
         "eligibility_checked_by": str(p.get("eligibility_checked_by") or ""),
         "eligibility_check_id": str(p.get("eligibility_check_id") or ""),
+        "release_status": str(p.get("release_status") or "pending").strip().lower(),
+        "release_timestamp": str(p.get("release_timestamp") or ""),
+        "release_actor": str(p.get("release_actor") or ""),
+        "release_notes": str(p.get("release_notes") or ""),
+        "release_id": str(p.get("release_id") or ""),
+        "release_reason": _normalize_release_reason(p.get("release_reason")),
+        "release_version": str(p.get("release_version") or "v1"),
     }
 
 
@@ -185,6 +207,12 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "eligibility_reason": _normalize_eligibility_reason(r.get("eligibility_reason")),
         "eligibility_checked_by": str(r.get("eligibility_checked_by") or ""),
         "eligibility_check_id": str(r.get("eligibility_check_id") or ""),
+        "release_status": str(r.get("release_status") or "pending").strip().lower(),
+        "release_timestamp": str(r.get("release_timestamp") or ""),
+        "release_actor": str(r.get("release_actor") or ""),
+        "release_id": str(r.get("release_id") or ""),
+        "release_reason": _normalize_release_reason(r.get("release_reason")),
+        "release_version": str(r.get("release_version") or "v1"),
     }
 
 
@@ -410,6 +438,52 @@ def evaluate_execution_package_eligibility(package: dict[str, Any] | None) -> di
     }
 
 
+def evaluate_execution_package_release(package: dict[str, Any] | None) -> dict[str, Any]:
+    """Evaluate whether a package can be released for future execution without executing it."""
+    p = normalize_execution_package(package)
+    if not bool(p.get("sealed")):
+        return {
+            "release_status": "blocked",
+            "release_reason": {
+                "code": "not_sealed",
+                "message": "Package must remain sealed to be released.",
+            },
+        }
+    if str(p.get("decision_status") or "").strip().lower() != "approved":
+        return {
+            "release_status": "blocked",
+            "release_reason": {
+                "code": "decision_not_approved",
+                "message": "Package decision must be approved.",
+            },
+        }
+    if str(p.get("eligibility_status") or "").strip().lower() != "eligible":
+        return {
+            "release_status": "blocked",
+            "release_reason": {
+                "code": "eligibility_not_eligible",
+                "message": "Package eligibility must be eligible before release.",
+            },
+        }
+    execution_summary = p.get("execution_summary") or {}
+    runtime_artifacts = p.get("runtime_artifacts") or []
+    if bool(execution_summary.get("can_execute")) or len(runtime_artifacts) > 0:
+        return {
+            "release_status": "blocked",
+            "release_reason": {
+                "code": "execution_detected",
+                "message": "Package indicates execution has already occurred.",
+            },
+        }
+    return {
+        "release_status": "released",
+        "release_reason": {
+            "code": "released",
+            "message": "Package is released for future execution handling.",
+        },
+    }
+
+
 def record_execution_package_eligibility(
     *,
     project_path: str | None,
@@ -456,3 +530,48 @@ def record_execution_package_eligibility_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_eligibility(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package eligibility.", "package": None}
+
+
+def record_execution_package_release(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    release_actor: str,
+    release_notes: str = "",
+) -> dict[str, Any]:
+    """Evaluate and persist package release state using package-local facts only."""
+    actor = str(release_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "release_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    evaluation = evaluate_execution_package_release(package)
+    package["release_status"] = evaluation.get("release_status") or "pending"
+    package["release_timestamp"] = _utc_now_iso()
+    package["release_actor"] = actor
+    package["release_notes"] = str(release_notes or "")
+    package["release_id"] = str(uuid.uuid4())
+    package["release_reason"] = _normalize_release_reason(evaluation.get("release_reason"))
+    package["release_version"] = "v1"
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package release recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package release.", "package": None}
+
+
+def record_execution_package_release_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_release(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package release.", "package": None}
