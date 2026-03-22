@@ -30,6 +30,11 @@ SUPPORTED_COMMANDS = frozenset({
     "latest_session",
     "ledger_tail",
     "project_summary",
+    "project_autopilot_start",
+    "project_autopilot_status",
+    "project_autopilot_pause",
+    "project_autopilot_resume",
+    "project_autopilot_stop",
     "registry_status",
     "dashboard_summary",
     "runtime_targets",
@@ -4903,6 +4908,67 @@ def run_command(
                 project_name=proj_name,
                 summary=f"Project {loaded.get('active_project', proj_name)} at {path}",
                 payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in (
+        "project_autopilot_start",
+        "project_autopilot_status",
+        "project_autopilot_pause",
+        "project_autopilot_resume",
+        "project_autopilot_stop",
+    ):
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.project_autopilot import (
+                get_project_autopilot_status,
+                pause_project_autopilot,
+                resume_project_autopilot,
+                start_project_autopilot,
+                stop_project_autopilot,
+            )
+
+            if cmd == "project_autopilot_start":
+                result = start_project_autopilot(
+                    project_path=path,
+                    project_name=proj_name or "",
+                    iteration_limit=kwargs.get("iteration_limit"),
+                    autopilot_mode=kwargs.get("autopilot_mode"),
+                )
+            elif cmd == "project_autopilot_pause":
+                result = pause_project_autopilot(project_path=path, project_name=proj_name or "")
+            elif cmd == "project_autopilot_resume":
+                result = resume_project_autopilot(project_path=path, project_name=proj_name or "")
+            elif cmd == "project_autopilot_stop":
+                result = stop_project_autopilot(project_path=path, project_name=proj_name or "")
+            else:
+                result = get_project_autopilot_status(project_path=path, project_name=proj_name or "")
+
+            session = result.get("session") if isinstance(result.get("session"), dict) else {}
+            summary_line = (
+                f"autopilot_status={session.get('autopilot_status')}; "
+                f"iteration={session.get('autopilot_iteration_count')}/{session.get('autopilot_iteration_limit')}; "
+                f"next_action={session.get('autopilot_next_action')}"
+            )
+            return _result(
+                command=cmd,
+                status="ok" if result.get("status") == "ok" else "error",
+                project_name=proj_name,
+                summary=summary_line if result.get("status") == "ok" else str(result.get("reason") or "Autopilot command failed."),
+                payload={
+                    "status": result.get("status"),
+                    "reason": result.get("reason"),
+                    "project_path": path,
+                    "autopilot": session,
+                },
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})

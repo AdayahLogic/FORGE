@@ -315,6 +315,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     regression_status_count: dict[str, int] = {}
     prism_status_by_project: dict[str, str] = {}
     prism_recommendation_count: dict[str, int] = {"go": 0, "revise": 0, "hold": 0}
+    autopilot_status_by_project: dict[str, str] = {}
+    iteration_counts_by_project: dict[str, dict[str, int]] = {}
+    latest_autopilot_action_by_project: dict[str, str] = {}
+    active_autopilot_projects: list[str] = []
+    escalation_count_total = 0
+    paused_count_total = 0
+    completed_count_total = 0
+    blocked_count_total = 0
     from NEXUS.execution_package_registry import list_execution_package_journal_entries
     for key in project_keys:
         path = PROJECTS[key].get("path")
@@ -325,6 +333,23 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             if "load_error" in loaded:
                 continue
             states_by_project[key] = loaded
+            autopilot_status = str(loaded.get("autopilot_status") or "idle")
+            autopilot_status_by_project[key] = autopilot_status
+            iteration_counts_by_project[key] = {
+                "iteration_count": max(0, int(loaded.get("autopilot_iteration_count") or 0)),
+                "iteration_limit": max(0, int(loaded.get("autopilot_iteration_limit") or 0)),
+            }
+            latest_autopilot_action_by_project[key] = str(loaded.get("autopilot_next_action") or "")
+            if autopilot_status in ("ready", "running", "paused", "escalated", "blocked"):
+                active_autopilot_projects.append(key)
+            if autopilot_status == "escalated":
+                escalation_count_total += 1
+            if autopilot_status == "paused":
+                paused_count_total += 1
+            if autopilot_status == "completed":
+                completed_count_total += 1
+            if autopilot_status == "blocked":
+                blocked_count_total += 1
             dps = loaded.get("dispatch_plan_summary") or {}
             dispatch_by_project[key] = {
                 "dispatch_planning_status": dps.get("dispatch_planning_status"),
@@ -1158,6 +1183,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "summary_generated_at": now,
         "studio_name": STUDIO_NAME,
         "project_summary": project_summary,
+        "project_autopilot_summary": {
+            "autopilot_surface_status": "ok",
+            "active_autopilot_projects": sorted(set(active_autopilot_projects)),
+            "autopilot_status_by_project": autopilot_status_by_project,
+            "iteration_counts_by_project": iteration_counts_by_project,
+            "escalation_count_total": escalation_count_total,
+            "paused_count_total": paused_count_total,
+            "completed_count_total": completed_count_total,
+            "blocked_count_total": blocked_count_total,
+            "latest_autopilot_action_by_project": latest_autopilot_action_by_project,
+        },
         "agent_summary": agent_summary,
         "policy_summary": policy_summary,
         "tool_summary": tool_summary,

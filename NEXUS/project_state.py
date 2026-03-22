@@ -132,6 +132,20 @@ def save_project_state(
     prism_result: dict | None = None,
     last_prism_summary: dict | None = None,
     last_aegis_decision: dict | None = None,
+    autopilot_status: str | None = None,
+    autopilot_session_id: str | None = None,
+    autopilot_project_key: str | None = None,
+    autopilot_mode: str | None = None,
+    autopilot_iteration_count: int | None = None,
+    autopilot_iteration_limit: int | None = None,
+    autopilot_started_at: str | None = None,
+    autopilot_updated_at: str | None = None,
+    autopilot_last_package_id: str | None = None,
+    autopilot_last_result: dict | None = None,
+    autopilot_next_action: str | None = None,
+    autopilot_stop_reason: str | None = None,
+    autopilot_escalation_reason: str | None = None,
+    autopilot_progress_summary: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -156,6 +170,34 @@ def save_project_state(
         prism_result = previous.get("prism_result")
     if last_prism_summary is None and isinstance(previous.get("last_prism_summary"), dict):
         last_prism_summary = previous.get("last_prism_summary")
+    if autopilot_status is None and isinstance(previous.get("autopilot_status"), str):
+        autopilot_status = previous.get("autopilot_status")
+    if autopilot_session_id is None and isinstance(previous.get("autopilot_session_id"), str):
+        autopilot_session_id = previous.get("autopilot_session_id")
+    if autopilot_project_key is None and isinstance(previous.get("autopilot_project_key"), str):
+        autopilot_project_key = previous.get("autopilot_project_key")
+    if autopilot_mode is None and isinstance(previous.get("autopilot_mode"), str):
+        autopilot_mode = previous.get("autopilot_mode")
+    if autopilot_iteration_count is None and isinstance(previous.get("autopilot_iteration_count"), int):
+        autopilot_iteration_count = previous.get("autopilot_iteration_count")
+    if autopilot_iteration_limit is None and isinstance(previous.get("autopilot_iteration_limit"), int):
+        autopilot_iteration_limit = previous.get("autopilot_iteration_limit")
+    if autopilot_started_at is None and isinstance(previous.get("autopilot_started_at"), str):
+        autopilot_started_at = previous.get("autopilot_started_at")
+    if autopilot_updated_at is None and isinstance(previous.get("autopilot_updated_at"), str):
+        autopilot_updated_at = previous.get("autopilot_updated_at")
+    if autopilot_last_package_id is None and isinstance(previous.get("autopilot_last_package_id"), str):
+        autopilot_last_package_id = previous.get("autopilot_last_package_id")
+    if autopilot_last_result is None and isinstance(previous.get("autopilot_last_result"), dict):
+        autopilot_last_result = previous.get("autopilot_last_result")
+    if autopilot_next_action is None and isinstance(previous.get("autopilot_next_action"), str):
+        autopilot_next_action = previous.get("autopilot_next_action")
+    if autopilot_stop_reason is None and isinstance(previous.get("autopilot_stop_reason"), str):
+        autopilot_stop_reason = previous.get("autopilot_stop_reason")
+    if autopilot_escalation_reason is None and isinstance(previous.get("autopilot_escalation_reason"), str):
+        autopilot_escalation_reason = previous.get("autopilot_escalation_reason")
+    if autopilot_progress_summary is None and isinstance(previous.get("autopilot_progress_summary"), dict):
+        autopilot_progress_summary = previous.get("autopilot_progress_summary")
 
     # Normalize AEGIS decision into the stable contract shape.
     from AEGIS.aegis_contract import normalize_aegis_result
@@ -302,6 +344,20 @@ def save_project_state(
         "prism_result": prism_result or {},
         "last_prism_summary": last_prism_summary or {},
         "last_aegis_decision": last_aegis_decision_normalized,
+        "autopilot_status": autopilot_status,
+        "autopilot_session_id": autopilot_session_id,
+        "autopilot_project_key": autopilot_project_key,
+        "autopilot_mode": autopilot_mode,
+        "autopilot_iteration_count": autopilot_iteration_count,
+        "autopilot_iteration_limit": autopilot_iteration_limit,
+        "autopilot_started_at": autopilot_started_at,
+        "autopilot_updated_at": autopilot_updated_at,
+        "autopilot_last_package_id": autopilot_last_package_id,
+        "autopilot_last_result": autopilot_last_result or {},
+        "autopilot_next_action": autopilot_next_action,
+        "autopilot_stop_reason": autopilot_stop_reason,
+        "autopilot_escalation_reason": autopilot_escalation_reason,
+        "autopilot_progress_summary": autopilot_progress_summary or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,
