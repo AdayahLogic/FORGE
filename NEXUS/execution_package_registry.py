@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +18,31 @@ from typing import Any
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
 EXECUTION_PACKAGE_DIRNAME = "execution_packages"
 MAX_EXECUTION_PACKAGE_LIST_LIMIT = 50
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _build_execution_package_journal_record(normalized: dict[str, Any], package_path: str | None) -> dict[str, Any]:
+    return {
+        "package_id": normalized.get("package_id"),
+        "project_name": normalized.get("project_name"),
+        "run_id": normalized.get("run_id"),
+        "created_at": normalized.get("created_at"),
+        "package_status": normalized.get("package_status"),
+        "review_status": normalized.get("review_status"),
+        "runtime_target_id": normalized.get("runtime_target_id"),
+        "requires_human_approval": normalized.get("requires_human_approval"),
+        "approval_id_refs": normalized.get("approval_id_refs"),
+        "sealed": normalized.get("sealed"),
+        "reason": normalized.get("reason"),
+        "package_file": package_path,
+        "decision_status": normalized.get("decision_status"),
+        "decision_timestamp": normalized.get("decision_timestamp"),
+        "decision_actor": normalized.get("decision_actor"),
+        "decision_id": normalized.get("decision_id"),
+    }
 
 
 def get_execution_package_state_dir(project_path: str | None) -> Path | None:
@@ -108,6 +133,11 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "rollback_notes": [str(x) for x in (p.get("rollback_notes") or []) if str(x).strip()][:20],
         "runtime_artifacts": [x for x in runtime_artifacts[:20] if isinstance(x, dict)],
         "metadata": dict(p.get("metadata") or {}),
+        "decision_status": str(p.get("decision_status") or "pending").strip().lower(),
+        "decision_timestamp": str(p.get("decision_timestamp") or ""),
+        "decision_actor": str(p.get("decision_actor") or ""),
+        "decision_notes": str(p.get("decision_notes") or ""),
+        "decision_id": str(p.get("decision_id") or ""),
     }
 
 
@@ -127,6 +157,10 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "sealed": bool(r.get("sealed", True)),
         "reason": str(r.get("reason") or ""),
         "package_file": str(r.get("package_file") or ""),
+        "decision_status": str(r.get("decision_status") or "pending").strip().lower(),
+        "decision_timestamp": str(r.get("decision_timestamp") or ""),
+        "decision_actor": str(r.get("decision_actor") or ""),
+        "decision_id": str(r.get("decision_id") or ""),
     }
 
 
@@ -152,20 +186,7 @@ def write_execution_package(project_path: str | None, package: dict[str, Any]) -
 
         Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
 
-        journal_record = {
-            "package_id": normalized.get("package_id"),
-            "project_name": normalized.get("project_name"),
-            "run_id": normalized.get("run_id"),
-            "created_at": normalized.get("created_at"),
-            "package_status": normalized.get("package_status"),
-            "review_status": normalized.get("review_status"),
-            "runtime_target_id": normalized.get("runtime_target_id"),
-            "requires_human_approval": normalized.get("requires_human_approval"),
-            "approval_id_refs": normalized.get("approval_id_refs"),
-            "sealed": normalized.get("sealed"),
-            "reason": normalized.get("reason"),
-            "package_file": package_path,
-        }
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
         with open(journal_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
         return package_path
@@ -229,8 +250,15 @@ def list_execution_package_journal_entries(project_path: str | None, n: int = 20
     limit = max(1, min(int(n or 20), MAX_EXECUTION_PACKAGE_LIST_LIMIT))
     rows = read_execution_package_journal_tail(project_path=project_path, n=MAX_EXECUTION_PACKAGE_LIST_LIMIT)
     rows = [normalize_execution_package_journal_record(r) for r in rows if isinstance(r, dict)]
-    rows.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
-    return rows[:limit]
+    latest_by_package: dict[str, dict[str, Any]] = {}
+    for row in reversed(rows):
+        package_id = str(row.get("package_id") or "").strip()
+        if not package_id or package_id in latest_by_package:
+            continue
+        latest_by_package[package_id] = row
+    deduped = list(latest_by_package.values())
+    deduped.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return deduped[:limit]
 
 
 def list_reviewable_execution_packages(project_path: str | None, n: int = 20) -> list[dict[str, Any]]:
@@ -240,3 +268,50 @@ def list_reviewable_execution_packages(project_path: str | None, n: int = 20) ->
     reviewable = [normalize_execution_package_journal_record(r) for r in rows if _is_review_pending_package(r)]
     reviewable.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return reviewable[:limit]
+
+
+def record_execution_package_decision(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    decision_status: str,
+    decision_actor: str,
+    decision_notes: str = "",
+) -> dict[str, Any]:
+    """Persist an immutable human decision onto a sealed package and append a summary journal record."""
+    normalized_status = str(decision_status or "").strip().lower()
+    if normalized_status not in ("approved", "rejected"):
+        return {"status": "error", "reason": "decision_status must be approved or rejected.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    if not bool(package.get("sealed")):
+        return {"status": "error", "reason": "Only sealed execution packages may be decided.", "package": package}
+    if str(package.get("decision_status") or "pending").strip().lower() != "pending":
+        return {"status": "error", "reason": "Execution package decision is immutable once set.", "package": package}
+    package["decision_status"] = normalized_status
+    package["decision_timestamp"] = _utc_now_iso()
+    package["decision_actor"] = str(decision_actor or "").strip()
+    package["decision_notes"] = str(decision_notes or "")
+    package["decision_id"] = str(uuid.uuid4())
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package decision recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package decision.", "package": None}
+
+
+def record_execution_package_decision_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_decision(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package decision.", "package": None}

@@ -237,6 +237,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     execution_package_review_required_projects: list[str] = []
     execution_package_sealed_count_total = 0
     execution_package_recent_by_project: dict[str, list[dict[str, Any]]] = {}
+    execution_package_decision_counts_by_project: dict[str, dict[str, int]] = {}
+    latest_execution_package_decision_status_by_project: dict[str, str] = {}
+    execution_package_decision_required_projects: list[str] = []
     resume_status_by_project: dict[str, str] = {}
     resume_status_count: dict[str, int] = {}
     heartbeat_status_by_project: dict[str, str] = {}
@@ -351,9 +354,19 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             execution_package_sealed_count_total += sum(1 for row in execution_package_rows if bool(row.get("sealed")))
             if pending_count > 0:
                 execution_package_review_required_projects.append(key)
+                execution_package_decision_required_projects.append(key)
+            decision_counts = {"pending": 0, "approved": 0, "rejected": 0}
+            for row in execution_package_rows:
+                ds = str(row.get("decision_status") or "pending").strip().lower()
+                if ds not in decision_counts:
+                    ds = "pending"
+                decision_counts[ds] += 1
+            execution_package_decision_counts_by_project[key] = decision_counts
             latest_id = loaded.get("execution_package_id")
             latest_path = loaded.get("execution_package_path")
             latest_row = execution_package_rows[0] if execution_package_rows else {}
+            if latest_row.get("decision_status"):
+                latest_execution_package_decision_status_by_project[key] = str(latest_row.get("decision_status"))
             if latest_id or latest_row.get("package_id"):
                 latest_execution_package_id_by_project[key] = str(latest_id or latest_row.get("package_id") or "")
             if latest_path or latest_row.get("package_file"):
@@ -954,6 +967,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     else:
         execution_package_review_reason = "No pending execution packages."
         execution_package_review_status = "ok"
+    approved_decision_count_total = sum(v.get("approved", 0) for v in execution_package_decision_counts_by_project.values())
+    rejected_decision_count_total = sum(v.get("rejected", 0) for v in execution_package_decision_counts_by_project.values())
+    pending_decision_count_total = sum(v.get("pending", 0) for v in execution_package_decision_counts_by_project.values())
 
     return {
         "summary_generated_at": now,
@@ -998,6 +1014,16 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "review_required_projects": sorted(set(execution_package_review_required_projects)),
             "sealed_count_total": execution_package_sealed_count_total,
             "reason": execution_package_review_reason,
+        },
+        "execution_package_decision_summary": {
+            "decision_surface_status": "ok",
+            "pending_count_total": pending_decision_count_total,
+            "approved_count_total": approved_decision_count_total,
+            "rejected_count_total": rejected_decision_count_total,
+            "decision_counts_by_project": execution_package_decision_counts_by_project,
+            "latest_decision_status_by_project": latest_execution_package_decision_status_by_project,
+            "decision_required_projects": sorted(set(execution_package_decision_required_projects)),
+            "reason": "No execution package decisions recorded." if approved_decision_count_total == 0 and rejected_decision_count_total == 0 else "Execution package decisions available.",
         },
         "resume_status_by_project": resume_status_by_project,
         "resume_status_count": resume_status_count,

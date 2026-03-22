@@ -38,6 +38,8 @@ SUPPORTED_COMMANDS = frozenset({
     "dispatch_status",
     "execution_package_queue",
     "execution_package_details",
+    "execution_package_decide",
+    "execution_package_decision_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -206,6 +208,10 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "aegis_decision": p.get("aegis_decision"),
         "aegis_scope": p.get("aegis_scope"),
         "reason": p.get("reason"),
+        "decision_status": p.get("decision_status"),
+        "decision_timestamp": p.get("decision_timestamp"),
+        "decision_actor": p.get("decision_actor"),
+        "decision_id": p.get("decision_id"),
     }
 
 
@@ -234,6 +240,13 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
         },
         "rollback": {
             "rollback_notes": list(p.get("rollback_notes") or []),
+        },
+        "decision": {
+            "decision_status": p.get("decision_status") or "pending",
+            "decision_timestamp": p.get("decision_timestamp") or "",
+            "decision_actor": p.get("decision_actor") or "",
+            "decision_notes": p.get("decision_notes") or "",
+            "decision_id": p.get("decision_id") or "",
         },
         "metadata": dict(p.get("metadata") or {}),
     }
@@ -525,6 +538,149 @@ def run_command(
                     "review_header": review_header,
                     "package": package,
                     "sections": sections,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_decide":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        decision_status = str(kwargs.get("decision_status") or "").strip().lower()
+        decision_actor = str(kwargs.get("decision_actor") or "").strip()
+        decision_notes = str(kwargs.get("decision_notes") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if decision_status not in ("approved", "rejected"):
+            return _execution_package_error_result(
+                command=cmd,
+                reason="decision_status must be approved or rejected.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not decision_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="decision_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_decision_safe
+
+            result = record_execution_package_decision_safe(
+                project_path=path,
+                package_id=package_id,
+                decision_status=decision_status,
+                decision_actor=decision_actor,
+                decision_notes=decision_notes,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package decision."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            decision = {
+                "decision_status": package.get("decision_status"),
+                "decision_timestamp": package.get("decision_timestamp"),
+                "decision_actor": package.get("decision_actor"),
+                "decision_notes": package.get("decision_notes"),
+                "decision_id": package.get("decision_id"),
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; decision_status={decision.get('decision_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package decision recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "decision": decision,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_decision_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; decision_status={package.get('decision_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package decision status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "decision": {
+                        "decision_status": package.get("decision_status"),
+                        "decision_timestamp": package.get("decision_timestamp"),
+                        "decision_actor": package.get("decision_actor"),
+                        "decision_notes": package.get("decision_notes"),
+                        "decision_id": package.get("decision_id"),
+                    },
                 },
             )
         except Exception as e:
