@@ -123,6 +123,22 @@ TRACE_SUMMARY_KEYS = (
     "trace_reason",
     "generated_at",
 )
+EXECUTION_PACKAGE_HARDENING_SUMMARY_KEYS = (
+    "duplicate_success_blocked_count_total",
+    "retry_ready_count_total",
+    "repair_required_count_total",
+    "rollback_repair_failed_count_total",
+    "integrity_verified_count_total",
+    "integrity_issues_count_total",
+)
+EXECUTION_PACKAGE_HARDENING_KEYS = (
+    "retry_policy",
+    "idempotency",
+    "failure_summary",
+    "recovery_summary",
+    "rollback_repair",
+    "integrity_verification",
+)
 
 
 def _check_keys(payload: dict[str, Any], required: tuple[str, ...]) -> list[str]:
@@ -202,6 +218,27 @@ def check_trace_summary_shape(payload: dict[str, Any]) -> dict[str, Any]:
         "missing_keys": missing,
         "payload_type": "cross_artifact_trace_summary",
     }
+
+
+def check_execution_package_hardening_summary_shape(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate Phase 8 execution-package hardening summary keys exist."""
+    missing = _check_keys(payload or {}, EXECUTION_PACKAGE_HARDENING_SUMMARY_KEYS)
+    return {
+        "valid": len(missing) == 0,
+        "missing_keys": missing,
+        "payload_type": "execution_package_execution_summary",
+    }
+
+
+def check_execution_package_hardening_shape(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate Phase 8 execution-package hardening fields exist."""
+    if not isinstance(record, dict):
+        return {"valid": True, "issues": [], "payload_type": "execution_package", "skipped": "not a dict"}
+    issues: list[str] = []
+    for key in EXECUTION_PACKAGE_HARDENING_KEYS:
+        if key not in record:
+            issues.append(f"missing key: {key}")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "execution_package"}
 
 
 def check_patch_proposal_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
@@ -446,6 +483,13 @@ def run_integrity_check(
     if not r["valid"]:
         all_valid = False
 
+    execution_summary = dash.get("execution_package_execution_summary") or {}
+    r = check_execution_package_hardening_summary_shape(execution_summary)
+    r["source"] = "dashboard_execution_package_execution_summary"
+    results.append(r)
+    if not r["valid"]:
+        all_valid = False
+
     # Phase 38: Release readiness shape (review-aware)
     release_readiness = dash.get("release_readiness_summary") or {}
     r = check_release_readiness_shape(release_readiness)
@@ -516,6 +560,31 @@ def run_integrity_check(
                     if not r["valid"]:
                         all_valid = False
             break
+    except Exception:
+        pass
+
+    try:
+        from NEXUS.registry import PROJECTS
+        from NEXUS.execution_package_registry import list_execution_package_journal_entries, read_execution_package
+
+        for proj_key in list(PROJECTS.keys())[:2]:
+            path = PROJECTS.get(proj_key, {}).get("path")
+            if not path:
+                continue
+            rows = list_execution_package_journal_entries(project_path=path, n=1)
+            if not rows:
+                continue
+            package_id = rows[0].get("package_id")
+            if not package_id:
+                continue
+            pkg = read_execution_package(project_path=path, package_id=package_id)
+            if pkg:
+                r = check_execution_package_hardening_shape(pkg)
+                r["source"] = "execution_package"
+                results.append(r)
+                if not r["valid"]:
+                    all_valid = False
+                break
     except Exception:
         pass
 

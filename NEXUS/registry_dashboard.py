@@ -260,6 +260,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     execution_package_execution_failed_projects: list[str] = []
     execution_package_execution_blocked_projects: list[str] = []
     execution_package_execution_rolled_back_projects: list[str] = []
+    execution_package_duplicate_success_block_count_by_project: dict[str, int] = {}
+    execution_package_retry_ready_count_by_project: dict[str, int] = {}
+    execution_package_repair_required_count_by_project: dict[str, int] = {}
+    execution_package_rollback_repair_failed_count_by_project: dict[str, int] = {}
+    execution_package_integrity_verified_count_by_project: dict[str, int] = {}
+    execution_package_integrity_issues_count_by_project: dict[str, int] = {}
     resume_status_by_project: dict[str, str] = {}
     resume_status_count: dict[str, int] = {}
     heartbeat_status_by_project: dict[str, str] = {}
@@ -380,6 +386,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             release_counts = {"pending": 0, "released": 0, "blocked": 0}
             handoff_counts = {"pending": 0, "authorized": 0, "blocked": 0}
             execution_counts = {"pending": 0, "succeeded": 0, "failed": 0, "blocked": 0, "rolled_back": 0}
+            duplicate_success_block_count = 0
+            retry_ready_count_project = 0
+            repair_required_count_project = 0
+            rollback_repair_failed_count = 0
+            integrity_verified_count = 0
+            integrity_issues_count = 0
             for row in execution_package_rows:
                 ds = str(row.get("decision_status") or "pending").strip().lower()
                 if ds not in decision_counts:
@@ -401,11 +413,30 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 if xs not in execution_counts:
                     xs = "pending"
                 execution_counts[xs] += 1
+                if str((row.get("failure_summary") or {}).get("failure_class") or "") == "duplicate_success_block":
+                    duplicate_success_block_count += 1
+                if str((row.get("recovery_summary") or {}).get("recovery_status") or "") == "retry_ready":
+                    retry_ready_count_project += 1
+                if str((row.get("recovery_summary") or {}).get("recovery_status") or "") == "repair_required":
+                    repair_required_count_project += 1
+                if str((row.get("rollback_repair") or {}).get("rollback_repair_status") or "") == "failed":
+                    rollback_repair_failed_count += 1
+                integrity_status = str((row.get("integrity_verification") or {}).get("integrity_status") or "")
+                if integrity_status == "verified":
+                    integrity_verified_count += 1
+                if integrity_status in ("issues_detected", "verification_failed"):
+                    integrity_issues_count += 1
             execution_package_decision_counts_by_project[key] = decision_counts
             execution_package_eligibility_counts_by_project[key] = eligibility_counts
             execution_package_release_counts_by_project[key] = release_counts
             execution_package_handoff_counts_by_project[key] = handoff_counts
             execution_package_execution_counts_by_project[key] = execution_counts
+            execution_package_duplicate_success_block_count_by_project[key] = duplicate_success_block_count
+            execution_package_retry_ready_count_by_project[key] = retry_ready_count_project
+            execution_package_repair_required_count_by_project[key] = repair_required_count_project
+            execution_package_rollback_repair_failed_count_by_project[key] = rollback_repair_failed_count
+            execution_package_integrity_verified_count_by_project[key] = integrity_verified_count
+            execution_package_integrity_issues_count_by_project[key] = integrity_issues_count
             latest_id = loaded.get("execution_package_id")
             latest_path = loaded.get("execution_package_path")
             latest_row = execution_package_rows[0] if execution_package_rows else {}
@@ -1060,6 +1091,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     blocked_execution_count_total = sum(v.get("blocked", 0) for v in execution_package_execution_counts_by_project.values())
     rolled_back_execution_count_total = sum(v.get("rolled_back", 0) for v in execution_package_execution_counts_by_project.values())
     pending_execution_count_total = sum(v.get("pending", 0) for v in execution_package_execution_counts_by_project.values())
+    duplicate_success_block_count_total = sum(execution_package_duplicate_success_block_count_by_project.values())
+    retry_ready_execution_count_total = sum(execution_package_retry_ready_count_by_project.values())
+    repair_required_execution_count_total = sum(execution_package_repair_required_count_by_project.values())
+    rollback_repair_failed_count_total = sum(execution_package_rollback_repair_failed_count_by_project.values())
+    integrity_verified_count_total = sum(execution_package_integrity_verified_count_by_project.values())
+    integrity_issues_count_total = sum(execution_package_integrity_issues_count_by_project.values())
 
     return {
         "summary_generated_at": now,
@@ -1156,7 +1193,19 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "failed_count_total": failed_execution_count_total,
             "blocked_count_total": blocked_execution_count_total,
             "rolled_back_count_total": rolled_back_execution_count_total,
+            "duplicate_success_blocked_count_total": duplicate_success_block_count_total,
+            "retry_ready_count_total": retry_ready_execution_count_total,
+            "repair_required_count_total": repair_required_execution_count_total,
+            "rollback_repair_failed_count_total": rollback_repair_failed_count_total,
+            "integrity_verified_count_total": integrity_verified_count_total,
+            "integrity_issues_count_total": integrity_issues_count_total,
             "execution_counts_by_project": execution_package_execution_counts_by_project,
+            "duplicate_success_blocked_count_by_project": execution_package_duplicate_success_block_count_by_project,
+            "retry_ready_count_by_project": execution_package_retry_ready_count_by_project,
+            "repair_required_count_by_project": execution_package_repair_required_count_by_project,
+            "rollback_repair_failed_count_by_project": execution_package_rollback_repair_failed_count_by_project,
+            "integrity_verified_count_by_project": execution_package_integrity_verified_count_by_project,
+            "integrity_issues_count_by_project": execution_package_integrity_issues_count_by_project,
             "latest_execution_status_by_project": latest_execution_package_execution_status_by_project,
             "latest_execution_target_by_project": latest_execution_package_execution_target_by_project,
             "succeeded_projects": sorted(set(execution_package_execution_succeeded_projects)),

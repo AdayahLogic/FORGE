@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from NEXUS.execution_package_hardening import normalize_rollback_repair, summarize_failure
+
 
 EXECUTION_RUN_DIRNAME = "execution_runs"
 
@@ -109,6 +111,7 @@ def execute_execution_package(
     target_id = str(p.get("execution_executor_target_id") or p.get("handoff_executor_target_id") or p.get("runtime_target_id") or "local").strip().lower()
     run_dir = _get_execution_run_dir(project_path)
     if not run_dir:
+        failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
         return {
             "execution_status": "failed",
             "execution_reason": {"code": "runtime_start_failed", "message": "Execution run directory unavailable."},
@@ -116,6 +119,8 @@ def execute_execution_package(
             "rollback_status": "not_needed",
             "rollback_timestamp": "",
             "rollback_reason": {"code": "", "message": ""},
+            "failure_summary": failure_summary,
+            "rollback_repair": normalize_rollback_repair(None),
             "runtime_artifact": {},
             "execution_finished_at": _utc_now_iso(),
         }
@@ -144,6 +149,7 @@ def execute_execution_package(
         )
     except Exception as e:
         _append_log(log_path, [f"[error] runtime_start_failure={e}"])
+        failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
         return {
             "execution_status": "failed",
             "execution_reason": {"code": "runtime_start_failed", "message": "Controlled runtime boundary failed to start."},
@@ -158,6 +164,8 @@ def execute_execution_package(
             "rollback_status": "not_needed",
             "rollback_timestamp": "",
             "rollback_reason": {"code": "", "message": ""},
+            "failure_summary": failure_summary,
+            "rollback_repair": normalize_rollback_repair(None),
             "runtime_artifact": {},
             "execution_finished_at": _utc_now_iso(),
         }
@@ -178,6 +186,18 @@ def execute_execution_package(
         failure_class = "runtime_execution_failure"
         if rollback.get("rollback_status") == "failed":
             failure_class = "rollback_failure"
+        rollback_repair = normalize_rollback_repair(None)
+        if rollback.get("rollback_status") == "failed":
+            rollback_repair = normalize_rollback_repair(
+                {
+                    "rollback_repair_status": "pending",
+                    "rollback_repair_timestamp": rollback.get("rollback_timestamp") or _utc_now_iso(),
+                    "rollback_repair_reason": {
+                        "code": "rollback_repair_required",
+                        "message": "Rollback repair requires manual handling after rollback failure.",
+                    },
+                }
+            )
         return {
             "execution_status": "rolled_back" if rollback.get("rollback_status") == "completed" else "failed",
             "execution_reason": {
@@ -197,6 +217,8 @@ def execute_execution_package(
             "rollback_status": rollback.get("rollback_status") or "not_needed",
             "rollback_timestamp": rollback.get("rollback_timestamp") or "",
             "rollback_reason": rollback.get("rollback_reason") or {"code": "", "message": ""},
+            "failure_summary": summarize_failure(failure_class=failure_class, timestamp=_utc_now_iso()),
+            "rollback_repair": rollback_repair,
             "runtime_artifact": {
                 "artifact_type": "execution_log",
                 "execution_id": execution_id,
@@ -220,6 +242,8 @@ def execute_execution_package(
         "rollback_status": "not_needed",
         "rollback_timestamp": "",
         "rollback_reason": {"code": "", "message": ""},
+        "failure_summary": summarize_failure(failure_class="", timestamp=""),
+        "rollback_repair": normalize_rollback_repair(None),
         "runtime_artifact": {
             "artifact_type": "execution_log",
             "execution_id": execution_id,
@@ -235,6 +259,7 @@ def execute_execution_package_safe(**kwargs: Any) -> dict[str, Any]:
     try:
         return execute_execution_package(**kwargs)
     except Exception as e:
+        failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
         return {
             "execution_status": "failed",
             "execution_reason": {"code": "runtime_start_failed", "message": f"Controlled runtime execution failed: {e}"},
@@ -242,6 +267,8 @@ def execute_execution_package_safe(**kwargs: Any) -> dict[str, Any]:
             "rollback_status": "not_needed",
             "rollback_timestamp": "",
             "rollback_reason": {"code": "", "message": ""},
+            "failure_summary": failure_summary,
+            "rollback_repair": normalize_rollback_repair(None),
             "runtime_artifact": {},
             "execution_finished_at": _utc_now_iso(),
         }

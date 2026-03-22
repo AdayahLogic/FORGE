@@ -240,6 +240,13 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "execution_id": p.get("execution_id"),
         "execution_executor_target_id": p.get("execution_executor_target_id"),
         "execution_executor_target_name": p.get("execution_executor_target_name"),
+        "idempotency_status": ((p.get("idempotency") or {}).get("idempotency_status") or "active"),
+        "retry_policy_status": ((p.get("retry_policy") or {}).get("policy_status") or "default_no_retry"),
+        "failure_class": ((p.get("failure_summary") or {}).get("failure_class") or ""),
+        "failure_stage": ((p.get("failure_summary") or {}).get("failure_stage") or ""),
+        "recovery_status": ((p.get("recovery_summary") or {}).get("recovery_status") or "not_needed"),
+        "rollback_repair_status": ((p.get("rollback_repair") or {}).get("rollback_repair_status") or "not_needed"),
+        "integrity_status": ((p.get("integrity_verification") or {}).get("integrity_status") or "not_verified"),
     }
 
 
@@ -320,8 +327,38 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "rollback_status": p.get("rollback_status") or "not_needed",
             "rollback_timestamp": p.get("rollback_timestamp") or "",
             "rollback_reason": p.get("rollback_reason") or {"code": "", "message": ""},
+            "retry_policy": dict(p.get("retry_policy") or {}),
+            "idempotency": dict(p.get("idempotency") or {}),
+            "failure_summary": dict(p.get("failure_summary") or {}),
+            "recovery_summary": dict(p.get("recovery_summary") or {}),
+            "rollback_repair": dict(p.get("rollback_repair") or {}),
+            "integrity_verification": dict(p.get("integrity_verification") or {}),
         },
         "metadata": dict(p.get("metadata") or {}),
+    }
+
+
+def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    return {
+        "package_id": p.get("package_id"),
+        "created_at": p.get("created_at"),
+        "package_status": p.get("package_status"),
+        "review_status": p.get("review_status"),
+        "runtime_target_id": p.get("runtime_target_id"),
+        "decision_status": p.get("decision_status"),
+        "eligibility_status": p.get("eligibility_status"),
+        "release_status": p.get("release_status"),
+        "handoff_status": p.get("handoff_status"),
+        "execution_status": p.get("execution_status"),
+        "failure_class": ((p.get("failure_summary") or {}).get("failure_class") or ""),
+        "recovery_status": ((p.get("recovery_summary") or {}).get("recovery_status") or "not_needed"),
+        "retry_policy_status": ((p.get("retry_policy") or {}).get("policy_status") or "default_no_retry"),
+        "retry_authorized": bool((p.get("retry_policy") or {}).get("retry_authorized", False)),
+        "idempotency_status": ((p.get("idempotency") or {}).get("idempotency_status") or "active"),
+        "duplicate_success_blocked": bool((p.get("idempotency") or {}).get("duplicate_success_blocked", False)),
+        "rollback_repair_status": ((p.get("rollback_repair") or {}).get("rollback_repair_status") or "not_needed"),
+        "integrity_status": ((p.get("integrity_verification") or {}).get("integrity_status") or "not_verified"),
     }
 
 
@@ -537,9 +574,10 @@ def run_command(
 
             limit = max(1, min(int(n or 20), 50))
             packages = list_execution_package_journal_entries(project_path=path, n=limit)
+            queue_rows = [_build_execution_package_queue_row(pkg) for pkg in packages]
             pending_count = sum(
                 1
-                for pkg in packages
+                for pkg in queue_rows
                 if str(pkg.get("review_status") or "") in ("pending", "review_pending")
                 or str(pkg.get("package_status") or "") in ("pending", "review_pending")
             )
@@ -554,7 +592,7 @@ def run_command(
                     "project_path": path,
                     "count": len(packages),
                     "pending_count": pending_count,
-                    "packages": packages,
+                    "packages": queue_rows,
                 },
             )
         except Exception as e:
@@ -1246,6 +1284,12 @@ def run_command(
                 "rollback_status": package.get("rollback_status"),
                 "rollback_timestamp": package.get("rollback_timestamp"),
                 "rollback_reason": package.get("rollback_reason") or {"code": "", "message": ""},
+                "retry_policy": package.get("retry_policy") or {},
+                "idempotency": package.get("idempotency") or {},
+                "failure_summary": package.get("failure_summary") or {},
+                "recovery_summary": package.get("recovery_summary") or {},
+                "rollback_repair": package.get("rollback_repair") or {},
+                "integrity_verification": package.get("integrity_verification") or {},
             }
             return _result(
                 command=cmd,
@@ -1325,6 +1369,12 @@ def run_command(
                         "rollback_status": package.get("rollback_status"),
                         "rollback_timestamp": package.get("rollback_timestamp"),
                         "rollback_reason": package.get("rollback_reason") or {"code": "", "message": ""},
+                        "retry_policy": package.get("retry_policy") or {},
+                        "idempotency": package.get("idempotency") or {},
+                        "failure_summary": package.get("failure_summary") or {},
+                        "recovery_summary": package.get("recovery_summary") or {},
+                        "rollback_repair": package.get("rollback_repair") or {},
+                        "integrity_verification": package.get("integrity_verification") or {},
                     },
                 },
             )

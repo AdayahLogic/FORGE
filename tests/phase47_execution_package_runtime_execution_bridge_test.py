@@ -263,7 +263,8 @@ def test_execution_request_blocks_for_invalid_conditions():
 
             _write_package(tmp, "pkg-succeeded", execution_status="succeeded")
             already_succeeded = run_command("execution_package_execute_request", project_path=str(tmp), execution_package_id="pkg-succeeded", execution_actor="operator_x")
-            assert already_succeeded["payload"]["execution"]["execution_reason"]["code"] == "already_succeeded"
+            assert already_succeeded["payload"]["execution"]["execution_reason"]["code"] == "duplicate_success_blocked"
+            assert already_succeeded["payload"]["execution"]["execution_receipt"]["failure_class"] == "duplicate_success_block"
 
             _write_package(tmp, "pkg-bad-target", handoff_target="remote_worker")
             bad_target = run_command("execution_package_execute_request", project_path=str(tmp), execution_package_id="pkg-bad-target", execution_actor="operator_x")

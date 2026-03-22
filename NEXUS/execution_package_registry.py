@@ -14,6 +14,22 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from NEXUS.execution_package_hardening import (
+    VALID_EXECUTION_FAILURE_CLASSES,
+    build_default_hardening_fields,
+    derive_idempotency_key,
+    evaluate_recovery_summary,
+    normalize_failure_summary,
+    normalize_idempotency,
+    normalize_integrity_verification,
+    normalize_recovery_summary,
+    normalize_retry_policy,
+    normalize_rollback_repair,
+    summarize_failure,
+    utc_now_iso,
+    verify_terminal_execution_integrity,
+)
+
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
 EXECUTION_PACKAGE_DIRNAME = "execution_packages"
@@ -21,7 +37,7 @@ MAX_EXECUTION_PACKAGE_LIST_LIMIT = 50
 
 
 def _utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    return utc_now_iso()
 
 
 def _build_execution_package_journal_record(normalized: dict[str, Any], package_path: str | None) -> dict[str, Any]:
@@ -72,6 +88,12 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "rollback_status": normalized.get("rollback_status"),
         "rollback_timestamp": normalized.get("rollback_timestamp"),
         "rollback_reason": normalized.get("rollback_reason"),
+        "retry_policy": normalized.get("retry_policy"),
+        "idempotency": normalized.get("idempotency"),
+        "failure_summary": normalized.get("failure_summary"),
+        "recovery_summary": normalized.get("recovery_summary"),
+        "rollback_repair": normalized.get("rollback_repair"),
+        "integrity_verification": normalized.get("integrity_verification"),
     }
 
 
@@ -173,15 +195,6 @@ def _normalize_rollback_reason(value: Any) -> dict[str, str]:
     }
 
 
-VALID_EXECUTION_FAILURE_CLASSES = (
-    "preflight_block",
-    "aegis_block",
-    "runtime_start_failure",
-    "runtime_execution_failure",
-    "rollback_failure",
-)
-
-
 def _normalize_failure_class(value: Any) -> str:
     s = str(value or "").strip().lower()
     return s if s in VALID_EXECUTION_FAILURE_CLASSES else ""
@@ -222,6 +235,18 @@ def _empty_execution_receipt(*, result_status: str = "", failure_class: str = ""
     )
 
 
+def _summarize_execution_receipt(value: Any) -> dict[str, Any]:
+    receipt = _normalize_execution_receipt(value)
+    return {
+        "result_status": receipt.get("result_status") or "",
+        "exit_code": receipt.get("exit_code"),
+        "files_touched_count": receipt.get("files_touched_count") or 0,
+        "artifacts_written_count": receipt.get("artifacts_written_count") or 0,
+        "failure_class": receipt.get("failure_class") or "",
+        "rollback_summary": dict(receipt.get("rollback_summary") or {}),
+    }
+
+
 def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Normalize execution package to stable review-only contract shape.
@@ -235,6 +260,15 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
     review_checklist = p.get("review_checklist") or []
     if not isinstance(review_checklist, list):
         review_checklist = []
+    defaults = build_default_hardening_fields(p)
+    retry_policy = normalize_retry_policy(p.get("retry_policy"))
+    idempotency = normalize_idempotency(p.get("idempotency"), package=p)
+    failure_summary = normalize_failure_summary(p.get("failure_summary"))
+    recovery_summary = normalize_recovery_summary(p.get("recovery_summary"))
+    rollback_repair = normalize_rollback_repair(p.get("rollback_repair"))
+    integrity_verification = normalize_integrity_verification(p.get("integrity_verification"))
+    if not idempotency.get("idempotency_key"):
+        idempotency["idempotency_key"] = derive_idempotency_key(p)
 
     return {
         "package_id": package_id,
@@ -310,6 +344,12 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "rollback_status": str(p.get("rollback_status") or "not_needed").strip().lower(),
         "rollback_timestamp": str(p.get("rollback_timestamp") or ""),
         "rollback_reason": _normalize_rollback_reason(p.get("rollback_reason")),
+        "retry_policy": retry_policy or defaults["retry_policy"],
+        "idempotency": idempotency or defaults["idempotency"],
+        "failure_summary": failure_summary or defaults["failure_summary"],
+        "recovery_summary": recovery_summary or defaults["recovery_summary"],
+        "rollback_repair": rollback_repair or defaults["rollback_repair"],
+        "integrity_verification": integrity_verification or defaults["integrity_verification"],
     }
 
 
@@ -360,10 +400,16 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "execution_version": str(r.get("execution_version") or "v1"),
         "execution_executor_target_id": str(r.get("execution_executor_target_id") or ""),
         "execution_executor_target_name": str(r.get("execution_executor_target_name") or ""),
-        "execution_receipt": _normalize_execution_receipt(r.get("execution_receipt")),
+        "execution_receipt": _summarize_execution_receipt(r.get("execution_receipt")),
         "rollback_status": str(r.get("rollback_status") or "not_needed").strip().lower(),
         "rollback_timestamp": str(r.get("rollback_timestamp") or ""),
         "rollback_reason": _normalize_rollback_reason(r.get("rollback_reason")),
+        "retry_policy": normalize_retry_policy(r.get("retry_policy")),
+        "idempotency": normalize_idempotency(r.get("idempotency"), package=r),
+        "failure_summary": normalize_failure_summary(r.get("failure_summary")),
+        "recovery_summary": normalize_recovery_summary(r.get("recovery_summary")),
+        "rollback_repair": normalize_rollback_repair(r.get("rollback_repair")),
+        "integrity_verification": normalize_integrity_verification(r.get("integrity_verification")),
     }
 
 
@@ -787,8 +833,14 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
     p = normalize_execution_package(package)
     target_id = str(p.get("handoff_executor_target_id") or p.get("runtime_target_id") or "").strip().lower()
     target_name = str(p.get("handoff_executor_target_name") or p.get("runtime_target_name") or target_id)
+    retry_policy = normalize_retry_policy(p.get("retry_policy"))
+    idempotency = normalize_idempotency(p.get("idempotency"), package=p)
 
     def _blocked(code: str, message: str, *, failure_class: str = "preflight_block", aegis_result: dict[str, Any] | None = None) -> dict[str, Any]:
+        timestamp = _utc_now_iso()
+        failure_summary = summarize_failure(failure_class=failure_class, timestamp=timestamp)
+        rollback_repair = normalize_rollback_repair(None)
+        integrity = normalize_integrity_verification(None)
         return {
             "execution_status": "blocked",
             "execution_reason": {"code": code, "message": message},
@@ -798,6 +850,18 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
             "execution_receipt": _empty_execution_receipt(result_status="blocked", failure_class=failure_class),
             "rollback_status": "not_needed",
             "rollback_reason": {"code": "", "message": ""},
+            "failure_summary": failure_summary,
+            "rollback_repair": rollback_repair,
+            "integrity_verification": integrity,
+            "recovery_summary": evaluate_recovery_summary(
+                execution_status="blocked",
+                failure_summary=failure_summary,
+                retry_policy=retry_policy,
+                rollback_repair=rollback_repair,
+                integrity_verification=integrity,
+            ),
+            "retry_policy": retry_policy,
+            "idempotency": idempotency,
         }
 
     if not bool(p.get("sealed")):
@@ -811,7 +875,22 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
     if str(p.get("handoff_status") or "").strip().lower() != "authorized":
         return _blocked("handoff_not_authorized", "Package handoff must be authorized before execution.")
     if str(p.get("execution_status") or "").strip().lower() == "succeeded":
-        return _blocked("already_succeeded", "Package execution_status must not already be succeeded.")
+        if retry_policy.get("retry_authorized") is not True:
+            idempotency["idempotency_status"] = "duplicate_success_blocked"
+            idempotency["duplicate_success_blocked"] = True
+            idempotency["last_success_execution_id"] = str(p.get("execution_id") or idempotency.get("last_success_execution_id") or "")
+            return _blocked(
+                "duplicate_success_blocked",
+                "Package already succeeded; repeated execution is blocked unless a future retry policy explicitly authorizes it.",
+                failure_class="duplicate_success_block",
+            )
+        if retry_policy.get("max_retry_attempts", 0) <= retry_policy.get("retry_count", 0):
+            return _blocked(
+                "retry_exhausted",
+                "Package retry limit has been exhausted.",
+                failure_class="retry_exhausted",
+            )
+        idempotency["idempotency_status"] = "retry_window_open"
 
     runtime_target = {}
     try:
@@ -877,6 +956,12 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
         "execution_receipt": _empty_execution_receipt(result_status="ready"),
         "rollback_status": "not_needed",
         "rollback_reason": {"code": "", "message": ""},
+        "failure_summary": normalize_failure_summary(None),
+        "recovery_summary": normalize_recovery_summary(None),
+        "rollback_repair": normalize_rollback_repair(None),
+        "integrity_verification": normalize_integrity_verification(None),
+        "retry_policy": retry_policy,
+        "idempotency": idempotency,
     }
 
 
@@ -1041,6 +1126,9 @@ def record_execution_package_execution(
     execution_id = str(uuid.uuid4())
     started_at = _utc_now_iso()
     evaluation = evaluate_execution_package_execution(package)
+    retry_policy = normalize_retry_policy(package.get("retry_policy"))
+    idempotency = normalize_idempotency(package.get("idempotency"), package=package)
+    prior_execution_status = str(package.get("execution_status") or "").strip().lower()
     package["execution_actor"] = actor
     package["execution_id"] = execution_id
     package["execution_version"] = "v1"
@@ -1049,6 +1137,12 @@ def record_execution_package_execution(
     package["execution_executor_target_id"] = str(evaluation.get("execution_executor_target_id") or "")
     package["execution_executor_target_name"] = str(evaluation.get("execution_executor_target_name") or "")
     package["execution_aegis_result"] = _normalize_handoff_aegis_result(evaluation.get("execution_aegis_result"))
+    package["retry_policy"] = normalize_retry_policy(evaluation.get("retry_policy") or retry_policy)
+    package["idempotency"] = normalize_idempotency(evaluation.get("idempotency") or idempotency, package=package)
+    package["failure_summary"] = normalize_failure_summary(evaluation.get("failure_summary"))
+    package["recovery_summary"] = normalize_recovery_summary(evaluation.get("recovery_summary"))
+    package["rollback_repair"] = normalize_rollback_repair(evaluation.get("rollback_repair"))
+    package["integrity_verification"] = normalize_integrity_verification(evaluation.get("integrity_verification"))
 
     if evaluation.get("execution_status") == "blocked":
         package["execution_status"] = "blocked"
@@ -1059,6 +1153,14 @@ def record_execution_package_execution(
         package["rollback_timestamp"] = ""
         package["rollback_reason"] = _normalize_rollback_reason(evaluation.get("rollback_reason"))
     else:
+        if prior_execution_status in ("succeeded", "failed", "blocked", "rolled_back") and package["retry_policy"].get("retry_authorized"):
+            package["retry_policy"] = normalize_retry_policy(
+                {
+                    **(package.get("retry_policy") or {}),
+                    "retry_count": int((package.get("retry_policy") or {}).get("retry_count") or 0) + 1,
+                    "policy_status": "retry_authorized",
+                }
+            )
         try:
             from NEXUS.execution_package_executor import execute_execution_package_safe
 
@@ -1083,15 +1185,48 @@ def record_execution_package_execution(
         package["execution_reason"] = _normalize_execution_reason(exec_result.get("execution_reason"))
         package["execution_receipt"] = _normalize_execution_receipt(exec_result.get("execution_receipt"))
         package["execution_finished_at"] = str(exec_result.get("execution_finished_at") or _utc_now_iso())
+        if package["execution_started_at"] and package["execution_finished_at"] and package["execution_started_at"] > package["execution_finished_at"]:
+            package["execution_started_at"] = package["execution_finished_at"]
         package["execution_timestamp"] = package["execution_finished_at"]
         package["rollback_status"] = str(exec_result.get("rollback_status") or "not_needed")
         package["rollback_timestamp"] = str(exec_result.get("rollback_timestamp") or "")
         package["rollback_reason"] = _normalize_rollback_reason(exec_result.get("rollback_reason"))
+        package["failure_summary"] = normalize_failure_summary(exec_result.get("failure_summary"))
+        package["rollback_repair"] = normalize_rollback_repair(exec_result.get("rollback_repair"))
         runtime_artifact = exec_result.get("runtime_artifact")
         if isinstance(runtime_artifact, dict) and runtime_artifact:
             artifacts = list(package.get("runtime_artifacts") or [])
             artifacts.append(runtime_artifact)
             package["runtime_artifacts"] = [x for x in artifacts[:20] if isinstance(x, dict)]
+        if package["execution_status"] == "succeeded":
+            package["idempotency"] = normalize_idempotency(
+                {
+                    **(package.get("idempotency") or {}),
+                    "idempotency_status": "active",
+                    "last_success_execution_id": execution_id,
+                    "duplicate_success_blocked": False,
+                },
+                package=package,
+            )
+        if package["execution_status"] in ("blocked", "failed", "rolled_back", "succeeded"):
+            package["integrity_verification"] = verify_terminal_execution_integrity(package)
+            package["recovery_summary"] = evaluate_recovery_summary(
+                execution_status=package["execution_status"],
+                failure_summary=package.get("failure_summary"),
+                retry_policy=package.get("retry_policy"),
+                rollback_repair=package.get("rollback_repair"),
+                integrity_verification=package.get("integrity_verification"),
+            )
+
+    if package.get("execution_status") == "blocked":
+        package["integrity_verification"] = verify_terminal_execution_integrity(package)
+        package["recovery_summary"] = evaluate_recovery_summary(
+            execution_status=package["execution_status"],
+            failure_summary=package.get("failure_summary"),
+            retry_policy=package.get("retry_policy"),
+            rollback_repair=package.get("rollback_repair"),
+            integrity_verification=package.get("integrity_verification"),
+        )
 
     normalized = normalize_execution_package(package)
     package_path = get_execution_package_file_path(project_path, package_id)
