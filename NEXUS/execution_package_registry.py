@@ -53,6 +53,14 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "release_id": normalized.get("release_id"),
         "release_reason": normalized.get("release_reason"),
         "release_version": normalized.get("release_version"),
+        "handoff_status": normalized.get("handoff_status"),
+        "handoff_timestamp": normalized.get("handoff_timestamp"),
+        "handoff_actor": normalized.get("handoff_actor"),
+        "handoff_id": normalized.get("handoff_id"),
+        "handoff_reason": normalized.get("handoff_reason"),
+        "handoff_version": normalized.get("handoff_version"),
+        "handoff_executor_target_id": normalized.get("handoff_executor_target_id"),
+        "handoff_executor_target_name": normalized.get("handoff_executor_target_name"),
     }
 
 
@@ -114,6 +122,26 @@ def _normalize_release_reason(value: Any) -> dict[str, str]:
         "code": str(value.get("code") or ""),
         "message": str(value.get("message") or ""),
     }
+
+
+def _normalize_handoff_reason(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {"code": "", "message": ""}
+    return {
+        "code": str(value.get("code") or ""),
+        "message": str(value.get("message") or ""),
+    }
+
+
+def _normalize_handoff_aegis_result(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    try:
+        from AEGIS.aegis_contract import normalize_aegis_result
+
+        return normalize_aegis_result(value)
+    except Exception:
+        return {}
 
 
 def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any]:
@@ -179,6 +207,16 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "release_id": str(p.get("release_id") or ""),
         "release_reason": _normalize_release_reason(p.get("release_reason")),
         "release_version": str(p.get("release_version") or "v1"),
+        "handoff_status": str(p.get("handoff_status") or "pending").strip().lower(),
+        "handoff_timestamp": str(p.get("handoff_timestamp") or ""),
+        "handoff_actor": str(p.get("handoff_actor") or ""),
+        "handoff_notes": str(p.get("handoff_notes") or ""),
+        "handoff_id": str(p.get("handoff_id") or ""),
+        "handoff_reason": _normalize_handoff_reason(p.get("handoff_reason")),
+        "handoff_version": str(p.get("handoff_version") or "v1"),
+        "handoff_executor_target_id": str(p.get("handoff_executor_target_id") or ""),
+        "handoff_executor_target_name": str(p.get("handoff_executor_target_name") or ""),
+        "handoff_aegis_result": _normalize_handoff_aegis_result(p.get("handoff_aegis_result")),
     }
 
 
@@ -213,6 +251,14 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "release_id": str(r.get("release_id") or ""),
         "release_reason": _normalize_release_reason(r.get("release_reason")),
         "release_version": str(r.get("release_version") or "v1"),
+        "handoff_status": str(r.get("handoff_status") or "pending").strip().lower(),
+        "handoff_timestamp": str(r.get("handoff_timestamp") or ""),
+        "handoff_actor": str(r.get("handoff_actor") or ""),
+        "handoff_id": str(r.get("handoff_id") or ""),
+        "handoff_reason": _normalize_handoff_reason(r.get("handoff_reason")),
+        "handoff_version": str(r.get("handoff_version") or "v1"),
+        "handoff_executor_target_id": str(r.get("handoff_executor_target_id") or ""),
+        "handoff_executor_target_name": str(r.get("handoff_executor_target_name") or ""),
     }
 
 
@@ -484,6 +530,153 @@ def evaluate_execution_package_release(package: dict[str, Any] | None) -> dict[s
     }
 
 
+def evaluate_execution_package_handoff(
+    package: dict[str, Any] | None,
+    *,
+    executor_target_id: str | None,
+) -> dict[str, Any]:
+    """Evaluate whether a released package can be handed to a future executor without executing it."""
+    p = normalize_execution_package(package)
+    target_id = str(executor_target_id or "").strip().lower()
+    empty = {
+        "handoff_executor_target_id": target_id,
+        "handoff_executor_target_name": "",
+        "handoff_aegis_result": {},
+    }
+
+    if not bool(p.get("sealed")):
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "not_sealed", "message": "Package must remain sealed to be handed off."},
+            **empty,
+        }
+    if str(p.get("decision_status") or "").strip().lower() != "approved":
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "decision_not_approved", "message": "Package decision must be approved before handoff."},
+            **empty,
+        }
+    eligibility_status = str(p.get("eligibility_status") or "").strip().lower()
+    if eligibility_status == "pending":
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "eligibility_pending", "message": "Package eligibility must not be pending before handoff."},
+            **empty,
+        }
+    if eligibility_status != "eligible":
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "eligibility_not_eligible", "message": "Package eligibility must be eligible before handoff."},
+            **empty,
+        }
+    if str(p.get("release_status") or "").strip().lower() != "released":
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "release_not_released", "message": "Package release status must be released before handoff."},
+            **empty,
+        }
+    execution_summary = p.get("execution_summary") or {}
+    runtime_artifacts = p.get("runtime_artifacts") or []
+    if bool(execution_summary.get("can_execute")) or len(runtime_artifacts) > 0:
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "execution_detected", "message": "Package indicates execution has already occurred."},
+            **empty,
+        }
+
+    runtime_target = {}
+    try:
+        from NEXUS.runtime_target_registry import RUNTIME_TARGET_REGISTRY
+
+        runtime_target = RUNTIME_TARGET_REGISTRY.get(target_id) or {}
+    except Exception:
+        runtime_target = {}
+    capabilities = [str(x).strip().lower() for x in (runtime_target.get("capabilities") or []) if str(x).strip()]
+    target_name = str(runtime_target.get("display_name") or runtime_target.get("canonical_name") or "")
+    if (
+        not runtime_target
+        or str(runtime_target.get("active_or_planned") or "").strip().lower() not in ("active", "planned")
+        or "execute" not in capabilities
+        or target_id == "windows_review_package"
+    ):
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {
+                "code": "executor_target_invalid",
+                "message": "Executor target must exist, be active or planned, support execute, and not be windows_review_package.",
+            },
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name,
+            "handoff_aegis_result": {},
+        }
+
+    try:
+        from AEGIS.aegis_contract import normalize_aegis_result
+        from AEGIS.aegis_core import evaluate_action_safe
+
+        candidate_paths = [str(x) for x in (p.get("candidate_paths") or []) if str(x).strip()][:50]
+        routing = p.get("routing_summary") or {}
+        tool_name = str(routing.get("tool_name") or "").strip().lower()
+        aegis_request = {
+            "project_name": p.get("project_name"),
+            "project_path": p.get("project_path"),
+            "runtime_target_id": target_id,
+            "action": p.get("requested_action") or "adapter_dispatch_call",
+            "action_mode": "execution",
+            "requires_human_approval": bool(p.get("requires_human_approval")),
+            "candidate_paths": candidate_paths,
+            "requested_reads": candidate_paths,
+        }
+        if tool_name:
+            aegis_request["tool_family"] = "file_write" if ("write" in tool_name or "patch" in tool_name) else "file_read"
+        aegis_result = normalize_aegis_result(evaluate_action_safe(request=aegis_request))
+    except Exception:
+        aegis_result = _normalize_handoff_aegis_result(None)
+
+    aegis_decision = str(aegis_result.get("aegis_decision") or "").strip().lower()
+    workspace_valid = aegis_result.get("workspace_valid")
+    file_guard_status = str(aegis_result.get("file_guard_status") or "").strip().lower()
+    if aegis_decision in ("deny", "error_fallback"):
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "aegis_blocked", "message": "AEGIS denied or failed handoff re-evaluation."},
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name or target_id,
+            "handoff_aegis_result": aegis_result,
+        }
+    if workspace_valid is False:
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "workspace_invalid", "message": "AEGIS workspace validation failed during handoff re-evaluation."},
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name or target_id,
+            "handoff_aegis_result": aegis_result,
+        }
+    if file_guard_status in ("deny", "error_fallback"):
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "file_guard_blocked", "message": "AEGIS file guard blocked handoff re-evaluation."},
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name or target_id,
+            "handoff_aegis_result": aegis_result,
+        }
+    if aegis_decision not in ("allow", "approval_required"):
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {"code": "aegis_blocked", "message": "AEGIS did not return an allowed handoff decision."},
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name or target_id,
+            "handoff_aegis_result": aegis_result,
+        }
+    return {
+        "handoff_status": "authorized",
+        "handoff_reason": {"code": "authorized", "message": "Package is authorized for future executor handoff."},
+        "handoff_executor_target_id": target_id,
+        "handoff_executor_target_name": target_name or target_id,
+        "handoff_aegis_result": aegis_result,
+    }
+
+
 def record_execution_package_eligibility(
     *,
     project_path: str | None,
@@ -575,3 +768,55 @@ def record_execution_package_release_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_release(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package release.", "package": None}
+
+
+def record_execution_package_handoff(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    handoff_actor: str,
+    executor_target_id: str,
+    handoff_notes: str = "",
+) -> dict[str, Any]:
+    """Evaluate and persist package handoff status using package JSON as the source of truth."""
+    actor = str(handoff_actor or "").strip()
+    target_id = str(executor_target_id or "").strip().lower()
+    if not actor:
+        return {"status": "error", "reason": "handoff_actor required.", "package": None}
+    if not target_id:
+        return {"status": "error", "reason": "executor_target_id required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    evaluation = evaluate_execution_package_handoff(package, executor_target_id=target_id)
+    package["handoff_status"] = evaluation.get("handoff_status") or "pending"
+    package["handoff_timestamp"] = _utc_now_iso()
+    package["handoff_actor"] = actor
+    package["handoff_notes"] = str(handoff_notes or "")
+    package["handoff_id"] = str(uuid.uuid4())
+    package["handoff_reason"] = _normalize_handoff_reason(evaluation.get("handoff_reason"))
+    package["handoff_version"] = "v1"
+    package["handoff_executor_target_id"] = str(evaluation.get("handoff_executor_target_id") or target_id)
+    package["handoff_executor_target_name"] = str(evaluation.get("handoff_executor_target_name") or target_id)
+    package["handoff_aegis_result"] = _normalize_handoff_aegis_result(evaluation.get("handoff_aegis_result"))
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package handoff recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package handoff.", "package": None}
+
+
+def record_execution_package_handoff_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_handoff(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package handoff.", "package": None}

@@ -44,6 +44,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_eligibility_status",
     "execution_package_release_request",
     "execution_package_release_status",
+    "execution_package_handoff_request",
+    "execution_package_handoff_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -224,6 +226,12 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "release_timestamp": p.get("release_timestamp"),
         "release_reason": p.get("release_reason") or {"code": "", "message": ""},
         "release_id": p.get("release_id"),
+        "handoff_status": p.get("handoff_status"),
+        "handoff_timestamp": p.get("handoff_timestamp"),
+        "handoff_reason": p.get("handoff_reason") or {"code": "", "message": ""},
+        "handoff_id": p.get("handoff_id"),
+        "handoff_executor_target_id": p.get("handoff_executor_target_id"),
+        "handoff_executor_target_name": p.get("handoff_executor_target_name"),
     }
 
 
@@ -275,6 +283,18 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "release_id": p.get("release_id") or "",
             "release_reason": p.get("release_reason") or {"code": "", "message": ""},
             "release_version": p.get("release_version") or "v1",
+        },
+        "handoff": {
+            "handoff_status": p.get("handoff_status") or "pending",
+            "handoff_timestamp": p.get("handoff_timestamp") or "",
+            "handoff_actor": p.get("handoff_actor") or "",
+            "handoff_notes": p.get("handoff_notes") or "",
+            "handoff_id": p.get("handoff_id") or "",
+            "handoff_reason": p.get("handoff_reason") or {"code": "", "message": ""},
+            "handoff_version": p.get("handoff_version") or "v1",
+            "handoff_executor_target_id": p.get("handoff_executor_target_id") or "",
+            "handoff_executor_target_name": p.get("handoff_executor_target_name") or "",
+            "handoff_aegis_result": dict(p.get("handoff_aegis_result") or {}),
         },
         "metadata": dict(p.get("metadata") or {}),
     }
@@ -976,6 +996,159 @@ def run_command(
                         "release_id": package.get("release_id"),
                         "release_reason": package.get("release_reason") or {"code": "", "message": ""},
                         "release_version": package.get("release_version"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_handoff_request":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        handoff_actor = str(kwargs.get("handoff_actor") or "").strip()
+        executor_target_id = str(kwargs.get("executor_target_id") or "").strip()
+        handoff_notes = str(kwargs.get("handoff_notes") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not executor_target_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="executor_target_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not handoff_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="handoff_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_handoff_safe
+
+            result = record_execution_package_handoff_safe(
+                project_path=path,
+                package_id=package_id,
+                handoff_actor=handoff_actor,
+                executor_target_id=executor_target_id,
+                handoff_notes=handoff_notes,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package handoff."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            handoff = {
+                "handoff_status": package.get("handoff_status"),
+                "handoff_timestamp": package.get("handoff_timestamp"),
+                "handoff_actor": package.get("handoff_actor"),
+                "handoff_notes": package.get("handoff_notes"),
+                "handoff_id": package.get("handoff_id"),
+                "handoff_reason": package.get("handoff_reason") or {"code": "", "message": ""},
+                "handoff_version": package.get("handoff_version"),
+                "handoff_executor_target_id": package.get("handoff_executor_target_id"),
+                "handoff_executor_target_name": package.get("handoff_executor_target_name"),
+                "handoff_aegis_result": package.get("handoff_aegis_result") or {},
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; handoff_status={handoff.get('handoff_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package handoff recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "handoff": handoff,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_handoff_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; handoff_status={package.get('handoff_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package handoff status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "handoff": {
+                        "handoff_status": package.get("handoff_status"),
+                        "handoff_timestamp": package.get("handoff_timestamp"),
+                        "handoff_actor": package.get("handoff_actor"),
+                        "handoff_notes": package.get("handoff_notes"),
+                        "handoff_id": package.get("handoff_id"),
+                        "handoff_reason": package.get("handoff_reason") or {"code": "", "message": ""},
+                        "handoff_version": package.get("handoff_version"),
+                        "handoff_executor_target_id": package.get("handoff_executor_target_id"),
+                        "handoff_executor_target_name": package.get("handoff_executor_target_name"),
+                        "handoff_aegis_result": package.get("handoff_aegis_result") or {},
                     },
                 },
             )
