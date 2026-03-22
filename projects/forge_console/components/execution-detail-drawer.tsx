@@ -1,0 +1,109 @@
+import type { PackageDetailSnapshot } from "../lib/forge-types";
+
+type Props = {
+  open: boolean;
+  detail: PackageDetailSnapshot | null;
+  onToggle: () => void;
+};
+
+function DetailCard({
+  title,
+  value,
+}: {
+  title: string;
+  value: Record<string, unknown> | unknown[];
+}) {
+  const entries = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item] as const)
+    : Object.entries(value);
+  return (
+    <div className="detail-card">
+      <h4>{title}</h4>
+      <div className="detail-list">
+        {entries.length === 0 ? (
+          <div className="muted">No stored data.</div>
+        ) : (
+          entries.map(([key, item]) => (
+            <div className="detail-row" key={key}>
+              <span>{key}</span>
+              <strong className="mono">
+                {typeof item === "object" && item !== null
+                  ? JSON.stringify(item)
+                  : String(item ?? "")}
+              </strong>
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
+  const reviewHeader = (detail?.review_header ?? {}) as Record<string, unknown>;
+  const sections = (detail?.sections ?? {}) as Record<string, unknown>;
+  return (
+    <section className={`drawer-panel ${open ? "open" : "closed"}`}>
+      <div className="drawer-header">
+        <div>
+          <div className="eyebrow">Execution Detail Drawer</div>
+          <h3 style={{ margin: "4px 0 0" }}>
+            {detail?.package_id ? `Package ${detail.package_id}` : "No package selected"}
+          </h3>
+        </div>
+        <button className="refresh-button" onClick={onToggle} type="button">
+          {open ? "Collapse Drawer" : "Open Drawer"}
+        </button>
+      </div>
+      {open ? (
+        <div className="drawer-body">
+          <div className="detail-grid">
+            <DetailCard title="Review Header" value={reviewHeader} />
+            <DetailCard
+              title="Scope"
+              value={(sections.scope as Record<string, unknown>) ?? {}}
+            />
+            <DetailCard
+              title="Approval"
+              value={(sections.approval as Record<string, unknown>) ?? {}}
+            />
+            <DetailCard
+              title="Safety"
+              value={(sections.safety as Record<string, unknown>) ?? {}}
+            />
+            <DetailCard
+              title="Rollback"
+              value={(sections.rollback as Record<string, unknown>) ?? {}}
+            />
+            <DetailCard
+              title="Execution Receipt"
+              value={(sections.execution as Record<string, unknown>) ?? {}}
+            />
+            <DetailCard title="Evaluation" value={detail?.evaluation ?? {}} />
+            <DetailCard title="Local Analysis" value={detail?.local_analysis ?? {}} />
+          </div>
+          <div className="section-title" style={{ marginTop: 18 }}>
+            <div>
+              <div className="eyebrow">Timeline</div>
+              <h3>Audit Trail</h3>
+            </div>
+          </div>
+          <div className="audit-list">
+            {(detail?.timeline ?? []).map((item, index) => (
+              <div className="audit-item" key={`${index}-${String(item.created_at ?? "")}`}>
+                <div className="chip-row">
+                  <span className="chip info">{String(item.created_at ?? "unknown")}</span>
+                  <span className="chip">{String(item.review_status ?? "pending")}</span>
+                  <span className="chip">{String(item.decision_status ?? "pending")}</span>
+                  <span className="chip">{String(item.execution_status ?? "pending")}</span>
+                  <span className="chip">{String(item.evaluation_status ?? "pending")}</span>
+                  <span className="chip">{String(item.local_analysis_status ?? "pending")}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </section>
+  );
+}

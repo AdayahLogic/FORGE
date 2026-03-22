@@ -1,0 +1,434 @@
+"""
+Forge Console bridge.
+
+Additive read-mostly adapter between the Forge Console Next routes and the
+existing Forge command/state surfaces. The browser never reads Forge state
+directly; routes call this bridge and the bridge reads only from existing
+command outputs plus persisted project/package state.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+from typing import Any
+
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from NEXUS.command_surface import run_command
+from NEXUS.execution_package_registry import (
+    list_execution_package_journal_entries,
+    read_execution_package,
+)
+from NEXUS.project_state import load_project_state
+from NEXUS.registry import PROJECTS
+
+
+ALLOWED_CONTROL_ACTIONS = {
+    "complete_review": {
+        "confirmation_phrase": "CONFIRM COMPLETE REVIEW",
+        "requires_project": True,
+    },
+    "complete_approval": {
+        "confirmation_phrase": "CONFIRM COMPLETE APPROVAL",
+        "requires_project": True,
+    },
+}
+
+
+def _json_default(value: Any) -> Any:
+    if isinstance(value, Path):
+        return str(value)
+    return str(value)
+
+
+def _result(status: str, payload: dict[str, Any], message: str = "") -> dict[str, Any]:
+    return {
+        "status": status,
+        "message": message,
+        "payload": payload,
+    }
+
+
+def _resolve_project(project_key: str | None) -> tuple[str | None, dict[str, Any] | None]:
+    key = str(project_key or "").strip().lower()
+    if not key:
+        return None, None
+    if key not in PROJECTS:
+        return key, None
+    return key, PROJECTS[key]
+
+
+def _project_rows_from_dashboard(dashboard: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    dispatch_by_project = dashboard.get("dispatch_status_by_project") or {}
+    governance_by_project = dashboard.get("governance_status_by_project") or {}
+    enforcement_by_project = dashboard.get("enforcement_status_by_project") or {}
+    lifecycle_by_project = dashboard.get("project_lifecycle_by_project") or {}
+    queue_by_project = dashboard.get("queue_status_by_project") or {}
+    review_summary = dashboard.get("execution_package_review_summary") or {}
+    latest_package_id = review_summary.get("latest_package_id_by_project") or {}
+    latest_package_path = review_summary.get("latest_package_path_by_project") or {}
+    latest_eval = (dashboard.get("execution_package_evaluation_summary") or {}).get("latest_evaluation_status_by_project") or {}
+    latest_analysis = (dashboard.get("execution_package_local_analysis_summary") or {}).get("latest_analysis_status_by_project") or {}
+    health_by_project = dashboard.get("execution_status_by_project") or {}
+    for key in sorted(PROJECTS.keys()):
+        meta = PROJECTS.get(key) or {}
+        rows.append(
+            {
+                "project_key": key,
+                "project_name": meta.get("name") or key,
+                "description": meta.get("description") or "",
+                "workspace_type": meta.get("workspace_type") or "",
+                "dispatch_status": dispatch_by_project.get(key) or "none",
+                "governance_status": governance_by_project.get(key) or "none",
+                "enforcement_status": enforcement_by_project.get(key) or "none",
+                "lifecycle_status": lifecycle_by_project.get(key) or "none",
+                "queue_status": queue_by_project.get(key) or "none",
+                "current_package_id": latest_package_id.get(key) or "",
+                "current_package_path": latest_package_path.get(key) or "",
+                "latest_evaluation_status": latest_eval.get(key) or "pending",
+                "latest_local_analysis_status": latest_analysis.get(key) or "pending",
+                "executor_health": health_by_project.get(key) or "unknown",
+            }
+        )
+    return rows
+
+
+def _executor_health_summary(dashboard: dict[str, Any]) -> dict[str, Any]:
+    exec_env = dashboard.get("execution_environment_summary") or {}
+    runtime_infra = dashboard.get("runtime_infrastructure_summary") or {}
+    execution_summary = dashboard.get("execution_package_execution_summary") or {}
+    return {
+        "execution_environment_status": exec_env.get("execution_environment_status") or "unknown",
+        "environment_reason": exec_env.get("reason") or "",
+        "runtime_infrastructure_status": runtime_infra.get("runtime_infrastructure_status") or runtime_infra.get("status") or "unknown",
+        "runtime_reason": runtime_infra.get("reason") or runtime_infra.get("summary_reason") or "",
+        "integrity_verified_count_total": execution_summary.get("integrity_verified_count_total", 0),
+        "integrity_issues_count_total": execution_summary.get("integrity_issues_count_total", 0),
+        "blocked_execution_count_total": execution_summary.get("blocked_count_total", 0),
+    }
+
+
+def build_studio_snapshot() -> dict[str, Any]:
+    dashboard_res = run_command("dashboard_summary")
+    dashboard = dashboard_res.get("payload") or {}
+    approval_res = run_command("pending_approvals")
+    approval = approval_res.get("payload") or {}
+    lifecycle_res = run_command("approval_lifecycle_status")
+    lifecycle = lifecycle_res.get("payload") or {}
+    review_summary = dashboard.get("execution_package_review_summary") or {}
+    decision_summary = dashboard.get("execution_package_decision_summary") or {}
+    eligibility_summary = dashboard.get("execution_package_eligibility_summary") or {}
+    release_summary = dashboard.get("execution_package_release_summary") or {}
+    handoff_summary = dashboard.get("execution_package_handoff_summary") or {}
+    execution_summary = dashboard.get("execution_package_execution_summary") or {}
+    evaluation_summary = dashboard.get("execution_package_evaluation_summary") or {}
+    local_analysis_summary = dashboard.get("execution_package_local_analysis_summary") or {}
+    project_rows = _project_rows_from_dashboard(dashboard)
+    package_counts = {
+        "review_pending": review_summary.get("pending_count_total", 0),
+        "decision_pending": decision_summary.get("pending_count_total", 0),
+        "eligibility_pending": eligibility_summary.get("pending_count_total", 0),
+        "release_pending": release_summary.get("pending_count_total", 0),
+        "handoff_pending": handoff_summary.get("pending_count_total", 0),
+        "execution_pending": execution_summary.get("pending_count_total", 0),
+        "execution_blocked": execution_summary.get("blocked_count_total", 0),
+        "execution_failed": execution_summary.get("failed_count_total", 0),
+        "execution_succeeded": execution_summary.get("succeeded_count_total", 0),
+    }
+    return {
+        "generated_at": dashboard.get("summary_generated_at") or "",
+        "studio_name": dashboard.get("studio_name") or "FORGE",
+        "overview": {
+            "studio_health": (dashboard.get("release_readiness_summary") or {}).get("release_readiness_status") or "unknown",
+            "aegis_posture": dashboard.get("aegis_summary") or {},
+            "queue_counts": {
+                "queued_projects": len(dashboard.get("queued_projects") or []),
+                "review_required_projects": len(review_summary.get("review_required_projects") or []),
+                "approval_pending_total": approval.get("pending_count_total", 0),
+                "reapproval_required_total": lifecycle.get("reapproval_required_count", 0),
+            },
+            "package_counts": package_counts,
+            "evaluation_counts": {
+                "pending": evaluation_summary.get("pending_count_total", 0),
+                "completed": evaluation_summary.get("completed_count_total", 0),
+                "blocked": evaluation_summary.get("blocked_count_total", 0),
+                "error": evaluation_summary.get("error_count_total", 0),
+                "bands": {
+                    "execution_quality": evaluation_summary.get("execution_quality_band_count_total") or {},
+                    "integrity": evaluation_summary.get("integrity_band_count_total") or {},
+                    "rollback_quality": evaluation_summary.get("rollback_quality_band_count_total") or {},
+                    "failure_risk": evaluation_summary.get("failure_risk_band_count_total") or {},
+                },
+            },
+            "local_analysis_counts": {
+                "pending": local_analysis_summary.get("pending_count_total", 0),
+                "completed": local_analysis_summary.get("completed_count_total", 0),
+                "blocked": local_analysis_summary.get("blocked_count_total", 0),
+                "error": local_analysis_summary.get("error_count_total", 0),
+                "confidence_bands": local_analysis_summary.get("confidence_band_count_total") or {},
+                "next_actions": local_analysis_summary.get("suggested_next_action_count_total") or {},
+            },
+            "project_count": (dashboard.get("project_summary") or {}).get("total", 0) or len(project_rows),
+            "executor_health": _executor_health_summary(dashboard),
+        },
+        "projects": project_rows,
+        "approval_center": {
+            "approval_summary": approval,
+            "approval_lifecycle": lifecycle,
+            "allowed_actions": sorted(ALLOWED_CONTROL_ACTIONS.keys()),
+            "surface_mode": "read_only",
+        },
+        "raw": {
+            "dashboard_summary": dashboard,
+        },
+    }
+
+
+def _normalize_package_queue(project_key: str, project_path: str) -> dict[str, Any]:
+    queue_res = run_command("execution_package_queue", project_path=project_path, project_name=project_key, n=50)
+    queue_payload = queue_res.get("payload") or {}
+    return {
+        "project_key": project_key,
+        "project_path": project_path,
+        "count": queue_payload.get("count", 0),
+        "pending_count": queue_payload.get("pending_count", 0),
+        "packages": queue_payload.get("packages") or [],
+    }
+
+
+def build_project_snapshot(project_key: str) -> dict[str, Any]:
+    key, project = _resolve_project(project_key)
+    if not project:
+        return _result("error", {"project_key": key, "error": "Unknown project."}, "Unknown project.")
+    project_path = str(project.get("path") or "")
+    project_state = load_project_state(project_path)
+    project_summary = (run_command("project_summary", project_path=project_path, project_name=key).get("payload") or {})
+    latest_session = (run_command("latest_session", project_path=project_path, project_name=key).get("payload") or {})
+    health = (run_command("health", project_path=project_path, project_name=key).get("payload") or {})
+    package_queue = _normalize_package_queue(key, project_path)
+    approvals = (run_command("pending_approvals", project_path=project_path, project_name=key).get("payload") or {})
+    current_package_id = str(project_state.get("execution_package_id") or "")
+    current_package = None
+    if current_package_id:
+        current_package = (
+            run_command(
+                "execution_package_details",
+                project_path=project_path,
+                project_name=key,
+                execution_package_id=current_package_id,
+            ).get("payload")
+            or {}
+        )
+    return _result(
+        "ok",
+        {
+            "project_key": key,
+            "project_name": project.get("name") or key,
+            "project_path": project_path,
+            "project_meta": project,
+            "project_summary": project_summary,
+            "project_state": project_state,
+            "latest_session": latest_session,
+            "system_health": health,
+            "package_queue": package_queue,
+            "current_package": current_package,
+            "approval_summary": approvals,
+            "degraded_sources": [
+                source
+                for source, value in (
+                    ("project_state", project_state),
+                    ("project_summary", project_summary),
+                    ("latest_session", latest_session),
+                    ("system_health", health),
+                )
+                if isinstance(value, dict) and value.get("error")
+            ],
+        },
+        "",
+    )
+
+
+def _find_package_project(package_id: str, project_key: str | None = None) -> tuple[str | None, str | None]:
+    if project_key:
+        key, project = _resolve_project(project_key)
+        if project:
+            return key, str(project.get("path") or "")
+    for key in sorted(PROJECTS.keys()):
+        path = str((PROJECTS.get(key) or {}).get("path") or "")
+        if not path:
+            continue
+        if read_execution_package(path, package_id):
+            return key, path
+    return None, None
+
+
+def build_package_snapshot(package_id: str, project_key: str | None = None) -> dict[str, Any]:
+    key, project_path = _find_package_project(package_id, project_key=project_key)
+    if not key or not project_path:
+        return _result(
+            "error",
+            {"package_id": package_id, "project_key": project_key or "", "error": "Execution package not found."},
+            "Execution package not found.",
+        )
+    detail = (
+        run_command(
+            "execution_package_details",
+            project_path=project_path,
+            project_name=key,
+            execution_package_id=package_id,
+        ).get("payload")
+        or {}
+    )
+    evaluation = (
+        run_command(
+            "execution_package_evaluation_status",
+            project_path=project_path,
+            project_name=key,
+            execution_package_id=package_id,
+        ).get("payload")
+        or {}
+    )
+    local_analysis = (
+        run_command(
+            "execution_package_local_analysis_status",
+            project_path=project_path,
+            project_name=key,
+            execution_package_id=package_id,
+        ).get("payload")
+        or {}
+    )
+    package = read_execution_package(project_path, package_id) or {}
+    journal_rows = list_execution_package_journal_entries(project_path, n=50)
+    timeline = []
+    for row in journal_rows:
+        if row.get("package_id") != package_id:
+            continue
+        timeline.append(
+            {
+                "created_at": row.get("created_at") or "",
+                "review_status": row.get("review_status") or "",
+                "decision_status": row.get("decision_status") or "",
+                "eligibility_status": row.get("eligibility_status") or "",
+                "release_status": row.get("release_status") or "",
+                "handoff_status": row.get("handoff_status") or "",
+                "execution_status": row.get("execution_status") or "",
+                "evaluation_status": row.get("evaluation_status") or "",
+                "local_analysis_status": row.get("local_analysis_status") or "",
+            }
+        )
+    return _result(
+        "ok",
+        {
+            "package_id": package_id,
+            "project_key": key,
+            "project_path": project_path,
+            "review_header": detail.get("review_header") or {},
+            "sections": detail.get("sections") or {},
+            "evaluation": evaluation.get("evaluation") or {},
+            "local_analysis": local_analysis.get("local_analysis") or {},
+            "package_json": package,
+            "timeline": timeline,
+        },
+        "",
+    )
+
+
+def execute_control_action(
+    *,
+    action: str,
+    project_key: str | None,
+    confirmed: bool,
+    confirmation_text: str,
+) -> dict[str, Any]:
+    normalized_action = str(action or "").strip().lower()
+    policy = ALLOWED_CONTROL_ACTIONS.get(normalized_action)
+    if not policy:
+        return _result(
+            "error",
+            {
+                "action": normalized_action,
+                "allowed_actions": sorted(ALLOWED_CONTROL_ACTIONS.keys()),
+                "error": "Action not allowed.",
+            },
+            "Action not allowed.",
+        )
+    if not confirmed:
+        return _result(
+            "error",
+            {
+                "action": normalized_action,
+                "error": "Confirmation required.",
+                "required_confirmation_phrase": policy["confirmation_phrase"],
+            },
+            "Confirmation required.",
+        )
+    if str(confirmation_text or "").strip() != policy["confirmation_phrase"]:
+        return _result(
+            "error",
+            {
+                "action": normalized_action,
+                "error": "Confirmation phrase mismatch.",
+                "required_confirmation_phrase": policy["confirmation_phrase"],
+            },
+            "Confirmation phrase mismatch.",
+        )
+    key, project = _resolve_project(project_key)
+    if policy.get("requires_project") and not project:
+        return _result(
+            "error",
+            {
+                "action": normalized_action,
+                "project_key": key,
+                "error": "Known project required.",
+            },
+            "Known project required.",
+        )
+    result = run_command(normalized_action, project_path=str(project.get("path") or ""), project_name=key)
+    return _result(
+        "ok" if result.get("status") == "ok" else "error",
+        {
+            "action": normalized_action,
+            "project_key": key,
+            "result": result,
+            "surface_mode": "supervised_control",
+        },
+        result.get("summary") or "",
+    )
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Forge Console bridge")
+    parser.add_argument("mode", choices=["overview", "project", "package", "control"])
+    parser.add_argument("--project-key", default="")
+    parser.add_argument("--package-id", default="")
+    parser.add_argument("--action", default="")
+    parser.add_argument("--confirmed", action="store_true")
+    parser.add_argument("--confirmation-text", default="")
+    args = parser.parse_args()
+
+    if args.mode == "overview":
+        out = _result("ok", build_studio_snapshot())
+    elif args.mode == "project":
+        out = build_project_snapshot(args.project_key)
+    elif args.mode == "package":
+        out = build_package_snapshot(args.package_id, project_key=args.project_key or None)
+    else:
+        out = execute_control_action(
+            action=args.action,
+            project_key=args.project_key or None,
+            confirmed=bool(args.confirmed),
+            confirmation_text=args.confirmation_text,
+        )
+    sys.stdout.write(json.dumps(out, ensure_ascii=False, default=_json_default))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
