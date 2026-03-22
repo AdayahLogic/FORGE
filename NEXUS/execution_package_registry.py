@@ -29,6 +29,12 @@ from NEXUS.execution_package_hardening import (
     utc_now_iso,
     verify_terminal_execution_integrity,
 )
+from NEXUS.execution_package_evaluation import (
+    evaluate_execution_package_safe,
+    normalize_evaluation_basis,
+    normalize_evaluation_reason,
+    normalize_evaluation_summary,
+)
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
@@ -95,6 +101,14 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "recovery_summary": normalized.get("recovery_summary"),
         "rollback_repair": normalized.get("rollback_repair"),
         "integrity_verification": normalized.get("integrity_verification"),
+        "evaluation_status": normalized.get("evaluation_status"),
+        "evaluation_timestamp": normalized.get("evaluation_timestamp"),
+        "evaluation_actor": normalized.get("evaluation_actor"),
+        "evaluation_id": normalized.get("evaluation_id"),
+        "evaluation_version": normalized.get("evaluation_version"),
+        "evaluation_reason": normalized.get("evaluation_reason"),
+        "evaluation_basis": normalized.get("evaluation_basis"),
+        "evaluation_summary": normalized.get("evaluation_summary"),
     }
 
 
@@ -209,6 +223,13 @@ def _normalize_rollback_reason(value: Any) -> dict[str, str]:
         "code": str(value.get("code") or ""),
         "message": str(value.get("message") or ""),
     }
+
+
+def _normalize_evaluation_status(value: Any) -> str:
+    status = str(value or "pending").strip().lower()
+    if status not in ("pending", "completed", "blocked", "error_fallback"):
+        status = "pending"
+    return status
 
 
 def _normalize_failure_class(value: Any) -> str:
@@ -367,6 +388,14 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "recovery_summary": recovery_summary or defaults["recovery_summary"],
         "rollback_repair": rollback_repair or defaults["rollback_repair"],
         "integrity_verification": integrity_verification or defaults["integrity_verification"],
+        "evaluation_status": _normalize_evaluation_status(p.get("evaluation_status")),
+        "evaluation_timestamp": str(p.get("evaluation_timestamp") or ""),
+        "evaluation_actor": str(p.get("evaluation_actor") or ""),
+        "evaluation_id": str(p.get("evaluation_id") or ""),
+        "evaluation_version": str(p.get("evaluation_version") or "v1"),
+        "evaluation_reason": normalize_evaluation_reason(p.get("evaluation_reason")),
+        "evaluation_basis": normalize_evaluation_basis(p.get("evaluation_basis")),
+        "evaluation_summary": normalize_evaluation_summary(p.get("evaluation_summary")),
     }
 
 
@@ -428,6 +457,14 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "recovery_summary": normalize_recovery_summary(r.get("recovery_summary")),
         "rollback_repair": normalize_rollback_repair(r.get("rollback_repair")),
         "integrity_verification": normalize_integrity_verification(r.get("integrity_verification")),
+        "evaluation_status": _normalize_evaluation_status(r.get("evaluation_status")),
+        "evaluation_timestamp": str(r.get("evaluation_timestamp") or ""),
+        "evaluation_actor": str(r.get("evaluation_actor") or ""),
+        "evaluation_id": str(r.get("evaluation_id") or ""),
+        "evaluation_version": str(r.get("evaluation_version") or "v1"),
+        "evaluation_reason": normalize_evaluation_reason(r.get("evaluation_reason")),
+        "evaluation_basis": normalize_evaluation_basis(r.get("evaluation_basis")),
+        "evaluation_summary": normalize_evaluation_summary(r.get("evaluation_summary")),
     }
 
 
@@ -1302,3 +1339,50 @@ def record_execution_package_execution_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_execution(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package execution.", "package": None}
+
+
+def record_execution_package_evaluation(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    evaluation_actor: str,
+) -> dict[str, Any]:
+    """Persist explicit Abacus evaluation derived only from package-local fields."""
+    actor = str(evaluation_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "evaluation_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+
+    evaluation = evaluate_execution_package_safe(package)
+    package["evaluation_status"] = _normalize_evaluation_status(evaluation.get("evaluation_status"))
+    package["evaluation_timestamp"] = _utc_now_iso()
+    package["evaluation_actor"] = actor
+    package["evaluation_id"] = str(uuid.uuid4())
+    package["evaluation_version"] = "v1"
+    package["evaluation_reason"] = normalize_evaluation_reason(evaluation.get("evaluation_reason"))
+    package["evaluation_basis"] = normalize_evaluation_basis(evaluation.get("evaluation_basis"))
+    package["evaluation_summary"] = normalize_evaluation_summary(evaluation.get("evaluation_summary"))
+
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package evaluation recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package evaluation.", "package": None}
+
+
+def record_execution_package_evaluation_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_evaluation(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package evaluation.", "package": None}

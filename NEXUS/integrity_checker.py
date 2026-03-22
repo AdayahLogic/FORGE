@@ -139,6 +139,30 @@ EXECUTION_PACKAGE_HARDENING_KEYS = (
     "rollback_repair",
     "integrity_verification",
 )
+EXECUTION_PACKAGE_EVALUATION_SUMMARY_KEYS = (
+    "evaluation_surface_status",
+    "pending_count_total",
+    "completed_count_total",
+    "blocked_count_total",
+    "error_count_total",
+    "evaluation_counts_by_project",
+    "latest_evaluation_status_by_project",
+    "execution_quality_band_count_total",
+    "integrity_band_count_total",
+    "rollback_quality_band_count_total",
+    "failure_risk_band_count_total",
+    "reason",
+)
+EXECUTION_PACKAGE_EVALUATION_KEYS = (
+    "evaluation_status",
+    "evaluation_timestamp",
+    "evaluation_actor",
+    "evaluation_id",
+    "evaluation_version",
+    "evaluation_reason",
+    "evaluation_basis",
+    "evaluation_summary",
+)
 
 
 def _check_keys(payload: dict[str, Any], required: tuple[str, ...]) -> list[str]:
@@ -239,6 +263,45 @@ def check_execution_package_hardening_shape(record: dict[str, Any] | None) -> di
         if key not in record:
             issues.append(f"missing key: {key}")
     return {"valid": len(issues) == 0, "issues": issues, "payload_type": "execution_package"}
+
+
+def check_execution_package_evaluation_summary_shape(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate Phase 11 execution-package evaluation dashboard summary keys exist."""
+    missing = _check_keys(payload or {}, EXECUTION_PACKAGE_EVALUATION_SUMMARY_KEYS)
+    return {
+        "valid": len(missing) == 0,
+        "missing_keys": missing,
+        "payload_type": "execution_package_evaluation_summary",
+    }
+
+
+def check_execution_package_evaluation_shape(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate Phase 11 package-level evaluation fields when present."""
+    if not isinstance(record, dict):
+        return {"valid": True, "issues": [], "payload_type": "execution_package_evaluation", "skipped": "not a dict"}
+    if not any(key in record for key in EXECUTION_PACKAGE_EVALUATION_KEYS):
+        return {
+            "valid": True,
+            "issues": [],
+            "payload_type": "execution_package_evaluation",
+            "skipped": "evaluation fields absent on older package",
+        }
+    issues: list[str] = []
+    for key in EXECUTION_PACKAGE_EVALUATION_KEYS:
+        if key not in record:
+            issues.append(f"missing key: {key}")
+    evaluation_id = str(record.get("evaluation_id") or "").strip()
+    if evaluation_id:
+        try:
+            import uuid
+
+            uuid.UUID(evaluation_id)
+        except Exception:
+            issues.append("evaluation_id must be UUID formatted")
+    reason = record.get("evaluation_reason")
+    if reason is not None and not isinstance(reason, dict):
+        issues.append("evaluation_reason must be dict")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "execution_package_evaluation"}
 
 
 def check_patch_proposal_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
@@ -490,6 +553,13 @@ def run_integrity_check(
     if not r["valid"]:
         all_valid = False
 
+    evaluation_summary = dash.get("execution_package_evaluation_summary") or {}
+    r = check_execution_package_evaluation_summary_shape(evaluation_summary)
+    r["source"] = "dashboard_execution_package_evaluation_summary"
+    results.append(r)
+    if not r["valid"]:
+        all_valid = False
+
     # Phase 38: Release readiness shape (review-aware)
     release_readiness = dash.get("release_readiness_summary") or {}
     r = check_release_readiness_shape(release_readiness)
@@ -581,6 +651,11 @@ def run_integrity_check(
             if pkg:
                 r = check_execution_package_hardening_shape(pkg)
                 r["source"] = "execution_package"
+                results.append(r)
+                if not r["valid"]:
+                    all_valid = False
+                r = check_execution_package_evaluation_shape(pkg)
+                r["source"] = "execution_package_evaluation"
                 results.append(r)
                 if not r["valid"]:
                     all_valid = False

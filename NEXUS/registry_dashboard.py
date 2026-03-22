@@ -266,6 +266,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     execution_package_rollback_repair_failed_count_by_project: dict[str, int] = {}
     execution_package_integrity_verified_count_by_project: dict[str, int] = {}
     execution_package_integrity_issues_count_by_project: dict[str, int] = {}
+    execution_package_evaluation_counts_by_project: dict[str, dict[str, int]] = {}
+    latest_execution_package_evaluation_status_by_project: dict[str, str] = {}
+    execution_quality_band_count_total: dict[str, int] = {"critical": 0, "weak": 0, "mixed": 0, "strong": 0, "excellent": 0}
+    integrity_band_count_total: dict[str, int] = {"critical": 0, "weak": 0, "mixed": 0, "strong": 0, "excellent": 0}
+    rollback_quality_band_count_total: dict[str, int] = {"critical": 0, "weak": 0, "mixed": 0, "strong": 0, "excellent": 0}
+    failure_risk_band_count_total: dict[str, int] = {"low": 0, "guarded": 0, "elevated": 0, "high": 0, "critical": 0}
     resume_status_by_project: dict[str, str] = {}
     resume_status_count: dict[str, int] = {}
     heartbeat_status_by_project: dict[str, str] = {}
@@ -386,6 +392,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             release_counts = {"pending": 0, "released": 0, "blocked": 0}
             handoff_counts = {"pending": 0, "authorized": 0, "blocked": 0}
             execution_counts = {"pending": 0, "succeeded": 0, "failed": 0, "blocked": 0, "rolled_back": 0}
+            evaluation_counts = {"pending": 0, "completed": 0, "blocked": 0, "error_fallback": 0}
             duplicate_success_block_count = 0
             retry_ready_count_project = 0
             repair_required_count_project = 0
@@ -413,6 +420,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 if xs not in execution_counts:
                     xs = "pending"
                 execution_counts[xs] += 1
+                eval_status = str(row.get("evaluation_status") or "pending").strip().lower()
+                if eval_status not in evaluation_counts:
+                    eval_status = "pending"
+                evaluation_counts[eval_status] += 1
                 if str((row.get("failure_summary") or {}).get("failure_class") or "") == "duplicate_success_block":
                     duplicate_success_block_count += 1
                 if str((row.get("recovery_summary") or {}).get("recovery_status") or "") == "retry_ready":
@@ -426,11 +437,25 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                     integrity_verified_count += 1
                 if integrity_status in ("issues_detected", "verification_failed"):
                     integrity_issues_count += 1
+                evaluation_summary = row.get("evaluation_summary") or {}
+                execution_band = str(evaluation_summary.get("execution_quality_band") or "").strip().lower()
+                if execution_band in execution_quality_band_count_total:
+                    execution_quality_band_count_total[execution_band] += 1
+                integrity_band = str(evaluation_summary.get("integrity_band") or "").strip().lower()
+                if integrity_band in integrity_band_count_total:
+                    integrity_band_count_total[integrity_band] += 1
+                rollback_band = str(evaluation_summary.get("rollback_quality_band") or "").strip().lower()
+                if rollback_band in rollback_quality_band_count_total:
+                    rollback_quality_band_count_total[rollback_band] += 1
+                risk_band = str(evaluation_summary.get("failure_risk_band") or "").strip().lower()
+                if risk_band in failure_risk_band_count_total:
+                    failure_risk_band_count_total[risk_band] += 1
             execution_package_decision_counts_by_project[key] = decision_counts
             execution_package_eligibility_counts_by_project[key] = eligibility_counts
             execution_package_release_counts_by_project[key] = release_counts
             execution_package_handoff_counts_by_project[key] = handoff_counts
             execution_package_execution_counts_by_project[key] = execution_counts
+            execution_package_evaluation_counts_by_project[key] = evaluation_counts
             execution_package_duplicate_success_block_count_by_project[key] = duplicate_success_block_count
             execution_package_retry_ready_count_by_project[key] = retry_ready_count_project
             execution_package_repair_required_count_by_project[key] = repair_required_count_project
@@ -454,6 +479,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 latest_execution_package_execution_status_by_project[key] = str(latest_row.get("execution_status"))
             if latest_row.get("execution_executor_target_id"):
                 latest_execution_package_execution_target_by_project[key] = str(latest_row.get("execution_executor_target_id"))
+            if latest_row.get("evaluation_status"):
+                latest_execution_package_evaluation_status_by_project[key] = str(latest_row.get("evaluation_status"))
             if eligibility_counts.get("eligible", 0) > 0:
                 execution_package_eligible_projects.append(key)
             if eligibility_counts.get("ineligible", 0) > 0:
@@ -1097,6 +1124,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     rollback_repair_failed_count_total = sum(execution_package_rollback_repair_failed_count_by_project.values())
     integrity_verified_count_total = sum(execution_package_integrity_verified_count_by_project.values())
     integrity_issues_count_total = sum(execution_package_integrity_issues_count_by_project.values())
+    pending_evaluation_count_total = sum(v.get("pending", 0) for v in execution_package_evaluation_counts_by_project.values())
+    completed_evaluation_count_total = sum(v.get("completed", 0) for v in execution_package_evaluation_counts_by_project.values())
+    blocked_evaluation_count_total = sum(v.get("blocked", 0) for v in execution_package_evaluation_counts_by_project.values())
+    error_evaluation_count_total = sum(v.get("error_fallback", 0) for v in execution_package_evaluation_counts_by_project.values())
 
     return {
         "summary_generated_at": now,
@@ -1213,6 +1244,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "blocked_projects": sorted(set(execution_package_execution_blocked_projects)),
             "rolled_back_projects": sorted(set(execution_package_execution_rolled_back_projects)),
             "reason": "No execution package execution requests recorded." if succeeded_execution_count_total == 0 and failed_execution_count_total == 0 and blocked_execution_count_total == 0 and rolled_back_execution_count_total == 0 else "Execution package execution results available.",
+        },
+        "execution_package_evaluation_summary": {
+            "evaluation_surface_status": "ok",
+            "pending_count_total": pending_evaluation_count_total,
+            "completed_count_total": completed_evaluation_count_total,
+            "blocked_count_total": blocked_evaluation_count_total,
+            "error_count_total": error_evaluation_count_total,
+            "evaluation_counts_by_project": execution_package_evaluation_counts_by_project,
+            "latest_evaluation_status_by_project": latest_execution_package_evaluation_status_by_project,
+            "execution_quality_band_count_total": execution_quality_band_count_total,
+            "integrity_band_count_total": integrity_band_count_total,
+            "rollback_quality_band_count_total": rollback_quality_band_count_total,
+            "failure_risk_band_count_total": failure_risk_band_count_total,
+            "reason": "No execution package evaluations recorded." if completed_evaluation_count_total == 0 and blocked_evaluation_count_total == 0 and error_evaluation_count_total == 0 else "Execution package evaluation results available.",
         },
         "resume_status_by_project": resume_status_by_project,
         "resume_status_count": resume_status_count,

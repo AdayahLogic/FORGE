@@ -48,6 +48,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_handoff_status",
     "execution_package_execute_request",
     "execution_package_execute_status",
+    "execution_package_evaluate",
+    "execution_package_evaluation_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -248,6 +250,11 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "recovery_status": ((p.get("recovery_summary") or {}).get("recovery_status") or "not_needed"),
         "rollback_repair_status": ((p.get("rollback_repair") or {}).get("rollback_repair_status") or "not_needed"),
         "integrity_status": ((p.get("integrity_verification") or {}).get("integrity_status") or "not_verified"),
+        "evaluation_status": p.get("evaluation_status"),
+        "evaluation_timestamp": p.get("evaluation_timestamp"),
+        "evaluation_actor": p.get("evaluation_actor"),
+        "evaluation_id": p.get("evaluation_id"),
+        "evaluation_reason": p.get("evaluation_reason") or {"code": "", "message": ""},
     }
 
 
@@ -353,6 +360,7 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "release_status": p.get("release_status"),
         "handoff_status": p.get("handoff_status"),
         "execution_status": p.get("execution_status"),
+        "evaluation_status": p.get("evaluation_status"),
         "failure_class": ((p.get("failure_summary") or {}).get("failure_class") or ""),
         "recovery_status": ((p.get("recovery_summary") or {}).get("recovery_status") or "not_needed"),
         "retry_policy_status": ((p.get("retry_policy") or {}).get("policy_status") or "default_no_retry"),
@@ -361,6 +369,21 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "duplicate_success_blocked": bool((p.get("idempotency") or {}).get("duplicate_success_blocked", False)),
         "rollback_repair_status": ((p.get("rollback_repair") or {}).get("rollback_repair_status") or "not_needed"),
         "integrity_status": ((p.get("integrity_verification") or {}).get("integrity_status") or "not_verified"),
+        "failure_risk_band": ((p.get("evaluation_summary") or {}).get("failure_risk_band") or ""),
+    }
+
+
+def _build_execution_package_evaluation(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    return {
+        "evaluation_status": p.get("evaluation_status") or "pending",
+        "evaluation_timestamp": p.get("evaluation_timestamp") or "",
+        "evaluation_actor": p.get("evaluation_actor") or "",
+        "evaluation_id": p.get("evaluation_id") or "",
+        "evaluation_version": p.get("evaluation_version") or "v1",
+        "evaluation_reason": p.get("evaluation_reason") or {"code": "", "message": ""},
+        "evaluation_basis": p.get("evaluation_basis") or {},
+        "evaluation_summary": p.get("evaluation_summary") or {},
     }
 
 
@@ -1379,6 +1402,126 @@ def run_command(
                         "rollback_repair": package.get("rollback_repair") or {},
                         "integrity_verification": package.get("integrity_verification") or {},
                     },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_evaluate":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        evaluation_actor = str(kwargs.get("evaluation_actor") or "").strip()
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not evaluation_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="evaluation_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_evaluation_safe
+
+            result = record_execution_package_evaluation_safe(
+                project_path=path,
+                package_id=package_id,
+                evaluation_actor=evaluation_actor,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package evaluation."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            evaluation = _build_execution_package_evaluation(package)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; evaluation_status={evaluation.get('evaluation_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package evaluation recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "evaluation": evaluation,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_evaluation_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            evaluation = _build_execution_package_evaluation(package)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; evaluation_status={evaluation.get('evaluation_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package evaluation status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "evaluation": evaluation,
                 },
             )
         except Exception as e:
