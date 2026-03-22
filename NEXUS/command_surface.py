@@ -50,6 +50,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_execute_status",
     "execution_package_evaluate",
     "execution_package_evaluation_status",
+    "execution_package_local_analysis",
+    "execution_package_local_analysis_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -255,6 +257,11 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "evaluation_actor": p.get("evaluation_actor"),
         "evaluation_id": p.get("evaluation_id"),
         "evaluation_reason": p.get("evaluation_reason") or {"code": "", "message": ""},
+        "local_analysis_status": p.get("local_analysis_status"),
+        "local_analysis_timestamp": p.get("local_analysis_timestamp"),
+        "local_analysis_actor": p.get("local_analysis_actor"),
+        "local_analysis_id": p.get("local_analysis_id"),
+        "local_analysis_reason": p.get("local_analysis_reason") or {"code": "", "message": ""},
     }
 
 
@@ -370,6 +377,8 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "rollback_repair_status": ((p.get("rollback_repair") or {}).get("rollback_repair_status") or "not_needed"),
         "integrity_status": ((p.get("integrity_verification") or {}).get("integrity_status") or "not_verified"),
         "failure_risk_band": ((p.get("evaluation_summary") or {}).get("failure_risk_band") or ""),
+        "local_analysis_status": p.get("local_analysis_status"),
+        "suggested_next_action": ((p.get("local_analysis_summary") or {}).get("suggested_next_action") or ""),
     }
 
 
@@ -384,6 +393,20 @@ def _build_execution_package_evaluation(package: dict[str, Any] | None) -> dict[
         "evaluation_reason": p.get("evaluation_reason") or {"code": "", "message": ""},
         "evaluation_basis": p.get("evaluation_basis") or {},
         "evaluation_summary": p.get("evaluation_summary") or {},
+    }
+
+
+def _build_execution_package_local_analysis(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    return {
+        "local_analysis_status": p.get("local_analysis_status") or "pending",
+        "local_analysis_timestamp": p.get("local_analysis_timestamp") or "",
+        "local_analysis_actor": p.get("local_analysis_actor") or "nemoclaw",
+        "local_analysis_id": p.get("local_analysis_id") or "",
+        "local_analysis_version": p.get("local_analysis_version") or "v1",
+        "local_analysis_reason": p.get("local_analysis_reason") or {"code": "", "message": ""},
+        "local_analysis_basis": p.get("local_analysis_basis") or {},
+        "local_analysis_summary": p.get("local_analysis_summary") or {},
     }
 
 
@@ -1522,6 +1545,118 @@ def run_command(
                     "project_path": path,
                     "package_id": package_id,
                     "evaluation": evaluation,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_local_analysis":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        analysis_actor = str(kwargs.get("analysis_actor") or "").strip() or "nemoclaw"
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_local_analysis_safe
+
+            result = record_execution_package_local_analysis_safe(
+                project_path=path,
+                package_id=package_id,
+                analysis_actor=analysis_actor,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package local analysis."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            local_analysis = _build_execution_package_local_analysis(package)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; local_analysis_status={local_analysis.get('local_analysis_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package local analysis recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "local_analysis": local_analysis,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_local_analysis_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            local_analysis = _build_execution_package_local_analysis(package)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; local_analysis_status={local_analysis.get('local_analysis_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package local analysis status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "local_analysis": local_analysis,
                 },
             )
         except Exception as e:

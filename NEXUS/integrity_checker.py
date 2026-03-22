@@ -163,6 +163,28 @@ EXECUTION_PACKAGE_EVALUATION_KEYS = (
     "evaluation_basis",
     "evaluation_summary",
 )
+EXECUTION_PACKAGE_LOCAL_ANALYSIS_SUMMARY_KEYS = (
+    "analysis_surface_status",
+    "pending_count_total",
+    "completed_count_total",
+    "blocked_count_total",
+    "error_count_total",
+    "analysis_counts_by_project",
+    "latest_analysis_status_by_project",
+    "confidence_band_count_total",
+    "suggested_next_action_count_total",
+    "reason",
+)
+EXECUTION_PACKAGE_LOCAL_ANALYSIS_KEYS = (
+    "local_analysis_status",
+    "local_analysis_timestamp",
+    "local_analysis_actor",
+    "local_analysis_id",
+    "local_analysis_version",
+    "local_analysis_reason",
+    "local_analysis_basis",
+    "local_analysis_summary",
+)
 
 
 def _check_keys(payload: dict[str, Any], required: tuple[str, ...]) -> list[str]:
@@ -302,6 +324,49 @@ def check_execution_package_evaluation_shape(record: dict[str, Any] | None) -> d
     if reason is not None and not isinstance(reason, dict):
         issues.append("evaluation_reason must be dict")
     return {"valid": len(issues) == 0, "issues": issues, "payload_type": "execution_package_evaluation"}
+
+
+def check_execution_package_local_analysis_summary_shape(payload: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate Phase 12 execution-package local analysis dashboard summary keys exist."""
+    missing = _check_keys(payload or {}, EXECUTION_PACKAGE_LOCAL_ANALYSIS_SUMMARY_KEYS)
+    return {
+        "valid": len(missing) == 0,
+        "missing_keys": missing,
+        "payload_type": "execution_package_local_analysis_summary",
+    }
+
+
+def check_execution_package_local_analysis_shape(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Validate Phase 12 package-level local analysis fields when present."""
+    if not isinstance(record, dict):
+        return {"valid": True, "issues": [], "payload_type": "execution_package_local_analysis", "skipped": "not a dict"}
+    if not any(key in record for key in EXECUTION_PACKAGE_LOCAL_ANALYSIS_KEYS):
+        return {
+            "valid": True,
+            "issues": [],
+            "payload_type": "execution_package_local_analysis",
+            "skipped": "local analysis fields absent on older package",
+        }
+    issues: list[str] = []
+    for key in EXECUTION_PACKAGE_LOCAL_ANALYSIS_KEYS:
+        if key not in record:
+            issues.append(f"missing key: {key}")
+    local_analysis_id = str(record.get("local_analysis_id") or "").strip()
+    if local_analysis_id:
+        try:
+            import uuid
+
+            uuid.UUID(local_analysis_id)
+        except Exception:
+            issues.append("local_analysis_id must be UUID formatted")
+    if str(record.get("local_analysis_actor") or "").strip() == "":
+        issues.append("local_analysis_actor must be present")
+    if str(record.get("local_analysis_version") or "").strip() != "v1":
+        issues.append("local_analysis_version must be 'v1'")
+    reason = record.get("local_analysis_reason")
+    if reason is not None and not isinstance(reason, dict):
+        issues.append("local_analysis_reason must be dict")
+    return {"valid": len(issues) == 0, "issues": issues, "payload_type": "execution_package_local_analysis"}
 
 
 def check_patch_proposal_record_shape(record: dict[str, Any] | None) -> dict[str, Any]:
@@ -560,6 +625,13 @@ def run_integrity_check(
     if not r["valid"]:
         all_valid = False
 
+    local_analysis_summary = dash.get("execution_package_local_analysis_summary") or {}
+    r = check_execution_package_local_analysis_summary_shape(local_analysis_summary)
+    r["source"] = "dashboard_execution_package_local_analysis_summary"
+    results.append(r)
+    if not r["valid"]:
+        all_valid = False
+
     # Phase 38: Release readiness shape (review-aware)
     release_readiness = dash.get("release_readiness_summary") or {}
     r = check_release_readiness_shape(release_readiness)
@@ -656,6 +728,11 @@ def run_integrity_check(
                     all_valid = False
                 r = check_execution_package_evaluation_shape(pkg)
                 r["source"] = "execution_package_evaluation"
+                results.append(r)
+                if not r["valid"]:
+                    all_valid = False
+                r = check_execution_package_local_analysis_shape(pkg)
+                r["source"] = "execution_package_local_analysis"
                 results.append(r)
                 if not r["valid"]:
                     all_valid = False

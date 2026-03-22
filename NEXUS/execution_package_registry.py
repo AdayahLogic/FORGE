@@ -35,6 +35,12 @@ from NEXUS.execution_package_evaluation import (
     normalize_evaluation_reason,
     normalize_evaluation_summary,
 )
+from NEXUS.execution_package_local_analysis import (
+    analyze_execution_package_locally_safe,
+    normalize_local_analysis_basis,
+    normalize_local_analysis_reason,
+    normalize_local_analysis_summary,
+)
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
@@ -109,6 +115,14 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "evaluation_reason": normalized.get("evaluation_reason"),
         "evaluation_basis": normalized.get("evaluation_basis"),
         "evaluation_summary": normalized.get("evaluation_summary"),
+        "local_analysis_status": normalized.get("local_analysis_status"),
+        "local_analysis_timestamp": normalized.get("local_analysis_timestamp"),
+        "local_analysis_actor": normalized.get("local_analysis_actor"),
+        "local_analysis_id": normalized.get("local_analysis_id"),
+        "local_analysis_version": normalized.get("local_analysis_version"),
+        "local_analysis_reason": normalized.get("local_analysis_reason"),
+        "local_analysis_basis": normalized.get("local_analysis_basis"),
+        "local_analysis_summary": normalized.get("local_analysis_summary"),
     }
 
 
@@ -226,6 +240,13 @@ def _normalize_rollback_reason(value: Any) -> dict[str, str]:
 
 
 def _normalize_evaluation_status(value: Any) -> str:
+    status = str(value or "pending").strip().lower()
+    if status not in ("pending", "completed", "blocked", "error_fallback"):
+        status = "pending"
+    return status
+
+
+def _normalize_local_analysis_status(value: Any) -> str:
     status = str(value or "pending").strip().lower()
     if status not in ("pending", "completed", "blocked", "error_fallback"):
         status = "pending"
@@ -396,6 +417,14 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "evaluation_reason": normalize_evaluation_reason(p.get("evaluation_reason")),
         "evaluation_basis": normalize_evaluation_basis(p.get("evaluation_basis")),
         "evaluation_summary": normalize_evaluation_summary(p.get("evaluation_summary")),
+        "local_analysis_status": _normalize_local_analysis_status(p.get("local_analysis_status")),
+        "local_analysis_timestamp": str(p.get("local_analysis_timestamp") or ""),
+        "local_analysis_actor": str(p.get("local_analysis_actor") or "nemoclaw"),
+        "local_analysis_id": str(p.get("local_analysis_id") or ""),
+        "local_analysis_version": str(p.get("local_analysis_version") or "v1"),
+        "local_analysis_reason": normalize_local_analysis_reason(p.get("local_analysis_reason")),
+        "local_analysis_basis": normalize_local_analysis_basis(p.get("local_analysis_basis")),
+        "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
     }
 
 
@@ -465,6 +494,14 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "evaluation_reason": normalize_evaluation_reason(r.get("evaluation_reason")),
         "evaluation_basis": normalize_evaluation_basis(r.get("evaluation_basis")),
         "evaluation_summary": normalize_evaluation_summary(r.get("evaluation_summary")),
+        "local_analysis_status": _normalize_local_analysis_status(r.get("local_analysis_status")),
+        "local_analysis_timestamp": str(r.get("local_analysis_timestamp") or ""),
+        "local_analysis_actor": str(r.get("local_analysis_actor") or "nemoclaw"),
+        "local_analysis_id": str(r.get("local_analysis_id") or ""),
+        "local_analysis_version": str(r.get("local_analysis_version") or "v1"),
+        "local_analysis_reason": normalize_local_analysis_reason(r.get("local_analysis_reason")),
+        "local_analysis_basis": normalize_local_analysis_basis(r.get("local_analysis_basis")),
+        "local_analysis_summary": normalize_local_analysis_summary(r.get("local_analysis_summary")),
     }
 
 
@@ -1386,3 +1423,48 @@ def record_execution_package_evaluation_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_evaluation(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package evaluation.", "package": None}
+
+
+def record_execution_package_local_analysis(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    analysis_actor: str,
+) -> dict[str, Any]:
+    """Persist advisory-only NemoClaw local analysis onto a package."""
+    actor = str(analysis_actor or "").strip() or "nemoclaw"
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+
+    analysis = analyze_execution_package_locally_safe(package)
+    package["local_analysis_status"] = _normalize_local_analysis_status(analysis.get("local_analysis_status"))
+    package["local_analysis_timestamp"] = _utc_now_iso()
+    package["local_analysis_actor"] = actor
+    package["local_analysis_id"] = str(uuid.uuid4())
+    package["local_analysis_version"] = "v1"
+    package["local_analysis_reason"] = normalize_local_analysis_reason(analysis.get("local_analysis_reason"))
+    package["local_analysis_basis"] = normalize_local_analysis_basis(analysis.get("local_analysis_basis"))
+    package["local_analysis_summary"] = normalize_local_analysis_summary(analysis.get("local_analysis_summary"))
+
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package local analysis recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package local analysis.", "package": None}
+
+
+def record_execution_package_local_analysis_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_local_analysis(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package local analysis.", "package": None}

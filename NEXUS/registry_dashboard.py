@@ -272,6 +272,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     integrity_band_count_total: dict[str, int] = {"critical": 0, "weak": 0, "mixed": 0, "strong": 0, "excellent": 0}
     rollback_quality_band_count_total: dict[str, int] = {"critical": 0, "weak": 0, "mixed": 0, "strong": 0, "excellent": 0}
     failure_risk_band_count_total: dict[str, int] = {"low": 0, "guarded": 0, "elevated": 0, "high": 0, "critical": 0}
+    execution_package_local_analysis_counts_by_project: dict[str, dict[str, int]] = {}
+    latest_execution_package_local_analysis_status_by_project: dict[str, str] = {}
+    local_analysis_confidence_band_count_total: dict[str, int] = {"low": 0, "guarded": 0, "moderate": 0, "high": 0}
+    local_analysis_suggested_next_action_count_total: dict[str, int] = {}
     resume_status_by_project: dict[str, str] = {}
     resume_status_count: dict[str, int] = {}
     heartbeat_status_by_project: dict[str, str] = {}
@@ -393,6 +397,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             handoff_counts = {"pending": 0, "authorized": 0, "blocked": 0}
             execution_counts = {"pending": 0, "succeeded": 0, "failed": 0, "blocked": 0, "rolled_back": 0}
             evaluation_counts = {"pending": 0, "completed": 0, "blocked": 0, "error_fallback": 0}
+            local_analysis_counts = {"pending": 0, "completed": 0, "blocked": 0, "error_fallback": 0}
             duplicate_success_block_count = 0
             retry_ready_count_project = 0
             repair_required_count_project = 0
@@ -424,6 +429,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 if eval_status not in evaluation_counts:
                     eval_status = "pending"
                 evaluation_counts[eval_status] += 1
+                local_analysis_status = str(row.get("local_analysis_status") or "pending").strip().lower()
+                if local_analysis_status not in local_analysis_counts:
+                    local_analysis_status = "pending"
+                local_analysis_counts[local_analysis_status] += 1
                 if str((row.get("failure_summary") or {}).get("failure_class") or "") == "duplicate_success_block":
                     duplicate_success_block_count += 1
                 if str((row.get("recovery_summary") or {}).get("recovery_status") or "") == "retry_ready":
@@ -450,12 +459,22 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 risk_band = str(evaluation_summary.get("failure_risk_band") or "").strip().lower()
                 if risk_band in failure_risk_band_count_total:
                     failure_risk_band_count_total[risk_band] += 1
+                local_analysis_summary = row.get("local_analysis_summary") or {}
+                confidence_band = str(local_analysis_summary.get("confidence_band") or "").strip().lower()
+                if confidence_band in local_analysis_confidence_band_count_total:
+                    local_analysis_confidence_band_count_total[confidence_band] += 1
+                suggested_next_action = str(local_analysis_summary.get("suggested_next_action") or "").strip().lower()
+                if suggested_next_action:
+                    local_analysis_suggested_next_action_count_total[suggested_next_action] = (
+                        local_analysis_suggested_next_action_count_total.get(suggested_next_action, 0) + 1
+                    )
             execution_package_decision_counts_by_project[key] = decision_counts
             execution_package_eligibility_counts_by_project[key] = eligibility_counts
             execution_package_release_counts_by_project[key] = release_counts
             execution_package_handoff_counts_by_project[key] = handoff_counts
             execution_package_execution_counts_by_project[key] = execution_counts
             execution_package_evaluation_counts_by_project[key] = evaluation_counts
+            execution_package_local_analysis_counts_by_project[key] = local_analysis_counts
             execution_package_duplicate_success_block_count_by_project[key] = duplicate_success_block_count
             execution_package_retry_ready_count_by_project[key] = retry_ready_count_project
             execution_package_repair_required_count_by_project[key] = repair_required_count_project
@@ -481,6 +500,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 latest_execution_package_execution_target_by_project[key] = str(latest_row.get("execution_executor_target_id"))
             if latest_row.get("evaluation_status"):
                 latest_execution_package_evaluation_status_by_project[key] = str(latest_row.get("evaluation_status"))
+            if latest_row.get("local_analysis_status"):
+                latest_execution_package_local_analysis_status_by_project[key] = str(latest_row.get("local_analysis_status"))
             if eligibility_counts.get("eligible", 0) > 0:
                 execution_package_eligible_projects.append(key)
             if eligibility_counts.get("ineligible", 0) > 0:
@@ -1128,6 +1149,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     completed_evaluation_count_total = sum(v.get("completed", 0) for v in execution_package_evaluation_counts_by_project.values())
     blocked_evaluation_count_total = sum(v.get("blocked", 0) for v in execution_package_evaluation_counts_by_project.values())
     error_evaluation_count_total = sum(v.get("error_fallback", 0) for v in execution_package_evaluation_counts_by_project.values())
+    pending_local_analysis_count_total = sum(v.get("pending", 0) for v in execution_package_local_analysis_counts_by_project.values())
+    completed_local_analysis_count_total = sum(v.get("completed", 0) for v in execution_package_local_analysis_counts_by_project.values())
+    blocked_local_analysis_count_total = sum(v.get("blocked", 0) for v in execution_package_local_analysis_counts_by_project.values())
+    error_local_analysis_count_total = sum(v.get("error_fallback", 0) for v in execution_package_local_analysis_counts_by_project.values())
 
     return {
         "summary_generated_at": now,
@@ -1258,6 +1283,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "rollback_quality_band_count_total": rollback_quality_band_count_total,
             "failure_risk_band_count_total": failure_risk_band_count_total,
             "reason": "No execution package evaluations recorded." if completed_evaluation_count_total == 0 and blocked_evaluation_count_total == 0 and error_evaluation_count_total == 0 else "Execution package evaluation results available.",
+        },
+        "execution_package_local_analysis_summary": {
+            "analysis_surface_status": "ok",
+            "pending_count_total": pending_local_analysis_count_total,
+            "completed_count_total": completed_local_analysis_count_total,
+            "blocked_count_total": blocked_local_analysis_count_total,
+            "error_count_total": error_local_analysis_count_total,
+            "analysis_counts_by_project": execution_package_local_analysis_counts_by_project,
+            "latest_analysis_status_by_project": latest_execution_package_local_analysis_status_by_project,
+            "confidence_band_count_total": local_analysis_confidence_band_count_total,
+            "suggested_next_action_count_total": local_analysis_suggested_next_action_count_total,
+            "reason": "No execution package local analyses recorded." if completed_local_analysis_count_total == 0 and blocked_local_analysis_count_total == 0 and error_local_analysis_count_total == 0 else "Execution package local analysis results available.",
         },
         "resume_status_by_project": resume_status_by_project,
         "resume_status_count": resume_status_count,
