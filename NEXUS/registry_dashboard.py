@@ -230,6 +230,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     queue_status_by_project: dict[str, str] = {}
     review_queue_count_by_type: dict[str, int] = {}
     queued_projects: list[str] = []
+    execution_package_counts_by_project: dict[str, int] = {}
+    execution_package_pending_by_project: dict[str, int] = {}
+    latest_execution_package_id_by_project: dict[str, str] = {}
+    latest_execution_package_path_by_project: dict[str, str] = {}
+    execution_package_review_required_projects: list[str] = []
+    execution_package_sealed_count_total = 0
+    execution_package_recent_by_project: dict[str, list[dict[str, Any]]] = {}
     resume_status_by_project: dict[str, str] = {}
     resume_status_count: dict[str, int] = {}
     heartbeat_status_by_project: dict[str, str] = {}
@@ -269,6 +276,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     regression_status_count: dict[str, int] = {}
     prism_status_by_project: dict[str, str] = {}
     prism_recommendation_count: dict[str, int] = {"go": 0, "revise": 0, "hold": 0}
+    from NEXUS.execution_package_registry import list_execution_package_journal_entries
     for key in project_keys:
         path = PROJECTS[key].get("path")
         if not path:
@@ -330,6 +338,26 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             review_queue_count_by_type[q_type] = review_queue_count_by_type.get(q_type, 0) + 1
             if q_status == "queued":
                 queued_projects.append(key)
+            execution_package_rows = list_execution_package_journal_entries(project_path=path, n=10)
+            execution_package_recent_by_project[key] = execution_package_rows
+            execution_package_counts_by_project[key] = len(execution_package_rows)
+            pending_count = sum(
+                1
+                for row in execution_package_rows
+                if str(row.get("review_status") or "") in ("pending", "review_pending")
+                or str(row.get("package_status") or "") in ("pending", "review_pending")
+            )
+            execution_package_pending_by_project[key] = pending_count
+            execution_package_sealed_count_total += sum(1 for row in execution_package_rows if bool(row.get("sealed")))
+            if pending_count > 0:
+                execution_package_review_required_projects.append(key)
+            latest_id = loaded.get("execution_package_id")
+            latest_path = loaded.get("execution_package_path")
+            latest_row = execution_package_rows[0] if execution_package_rows else {}
+            if latest_id or latest_row.get("package_id"):
+                latest_execution_package_id_by_project[key] = str(latest_id or latest_row.get("package_id") or "")
+            if latest_path or latest_row.get("package_file"):
+                latest_execution_package_path_by_project[key] = str(latest_path or latest_row.get("package_file") or "")
             r_status = loaded.get("resume_status") or (loaded.get("resume_result") or {}).get("resume_status") or "none"
             resume_status_by_project[key] = str(r_status)
             resume_status_count[r_status] = resume_status_count.get(r_status, 0) + 1
@@ -919,6 +947,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         prism_result = {}
         last_aegis_decision = None
 
+    pending_count_total = sum(execution_package_pending_by_project.values())
+    if pending_count_total > 0:
+        execution_package_review_reason = f"{pending_count_total} execution package(s) pending human review."
+        execution_package_review_status = "ok"
+    else:
+        execution_package_review_reason = "No pending execution packages."
+        execution_package_review_status = "ok"
+
     return {
         "summary_generated_at": now,
         "studio_name": STUDIO_NAME,
@@ -952,6 +988,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "queue_status_by_project": queue_status_by_project,
         "review_queue_count_by_type": review_queue_count_by_type,
         "queued_projects": queued_projects,
+        "execution_package_review_summary": {
+            "review_surface_status": execution_package_review_status,
+            "pending_count_total": pending_count_total,
+            "packages_by_project": execution_package_recent_by_project,
+            "pending_by_project": execution_package_pending_by_project,
+            "latest_package_id_by_project": latest_execution_package_id_by_project,
+            "latest_package_path_by_project": latest_execution_package_path_by_project,
+            "review_required_projects": sorted(set(execution_package_review_required_projects)),
+            "sealed_count_total": execution_package_sealed_count_total,
+            "reason": execution_package_review_reason,
+        },
         "resume_status_by_project": resume_status_by_project,
         "resume_status_count": resume_status_count,
         "heartbeat_status_by_project": heartbeat_status_by_project,

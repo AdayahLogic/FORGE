@@ -17,6 +17,7 @@ from typing import Any
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
 EXECUTION_PACKAGE_DIRNAME = "execution_packages"
+MAX_EXECUTION_PACKAGE_LIST_LIMIT = 50
 
 
 def get_execution_package_state_dir(project_path: str | None) -> Path | None:
@@ -110,6 +111,32 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
     }
 
 
+def normalize_execution_package_journal_record(record: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize journal record to stable summary-only contract shape."""
+    r = record or {}
+    return {
+        "package_id": str(r.get("package_id") or ""),
+        "project_name": str(r.get("project_name") or ""),
+        "run_id": str(r.get("run_id") or ""),
+        "created_at": str(r.get("created_at") or ""),
+        "package_status": str(r.get("package_status") or "review_pending").strip().lower(),
+        "review_status": str(r.get("review_status") or "pending").strip().lower(),
+        "runtime_target_id": str(r.get("runtime_target_id") or "local"),
+        "requires_human_approval": bool(r.get("requires_human_approval", True)),
+        "approval_id_refs": [str(x) for x in (r.get("approval_id_refs") or []) if str(x).strip()][:20],
+        "sealed": bool(r.get("sealed", True)),
+        "reason": str(r.get("reason") or ""),
+        "package_file": str(r.get("package_file") or ""),
+    }
+
+
+def _is_review_pending_package(record: dict[str, Any] | None) -> bool:
+    r = normalize_execution_package_journal_record(record)
+    review_status = r.get("review_status") or ""
+    package_status = r.get("package_status") or ""
+    return review_status in ("pending", "review_pending") or package_status in ("pending", "review_pending")
+
+
 def write_execution_package(project_path: str | None, package: dict[str, Any]) -> str | None:
     """
     Write a normalized package JSON file and append a journal entry.
@@ -191,7 +218,25 @@ def read_execution_package_journal_tail(project_path: str | None, n: int = 50) -
         try:
             parsed = json.loads(line)
             if isinstance(parsed, dict):
-                out.append(parsed)
+                out.append(normalize_execution_package_journal_record(parsed))
         except json.JSONDecodeError:
             continue
     return out
+
+
+def list_execution_package_journal_entries(project_path: str | None, n: int = 20) -> list[dict[str, Any]]:
+    """List recent execution package journal entries sorted by created_at DESC."""
+    limit = max(1, min(int(n or 20), MAX_EXECUTION_PACKAGE_LIST_LIMIT))
+    rows = read_execution_package_journal_tail(project_path=project_path, n=MAX_EXECUTION_PACKAGE_LIST_LIMIT)
+    rows = [normalize_execution_package_journal_record(r) for r in rows if isinstance(r, dict)]
+    rows.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return rows[:limit]
+
+
+def list_reviewable_execution_packages(project_path: str | None, n: int = 20) -> list[dict[str, Any]]:
+    """List recent pending/reviewable execution package summaries sorted by created_at DESC."""
+    limit = max(1, min(int(n or 20), MAX_EXECUTION_PACKAGE_LIST_LIMIT))
+    rows = read_execution_package_journal_tail(project_path=project_path, n=MAX_EXECUTION_PACKAGE_LIST_LIMIT)
+    reviewable = [normalize_execution_package_journal_record(r) for r in rows if _is_review_pending_package(r)]
+    reviewable.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
+    return reviewable[:limit]

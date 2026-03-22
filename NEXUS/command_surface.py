@@ -36,6 +36,8 @@ SUPPORTED_COMMANDS = frozenset({
     "runtime_select",
     "dispatch_plan",
     "dispatch_status",
+    "execution_package_queue",
+    "execution_package_details",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -165,6 +167,76 @@ def _result(
         "payload": payload if payload is not None else {},
     }
     return out
+
+
+def _execution_package_error_result(
+    *,
+    command: str,
+    reason: str,
+    project_name: str | None,
+    project_path: str | None,
+    package_id: str | None = None,
+) -> dict[str, Any]:
+    return _result(
+        command=command,
+        status="error",
+        project_name=project_name,
+        summary=reason,
+        payload={
+            "status": "error",
+            "reason": reason,
+            "project_path": project_path,
+            "package_id": package_id,
+        },
+    )
+
+
+def _build_execution_package_review_header(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    return {
+        "package_id": p.get("package_id"),
+        "package_kind": p.get("package_kind"),
+        "package_status": p.get("package_status"),
+        "review_status": p.get("review_status"),
+        "sealed": p.get("sealed"),
+        "seal_reason": p.get("seal_reason"),
+        "runtime_target_id": p.get("runtime_target_id"),
+        "requires_human_approval": p.get("requires_human_approval"),
+        "approval_id_refs": p.get("approval_id_refs") or [],
+        "aegis_decision": p.get("aegis_decision"),
+        "aegis_scope": p.get("aegis_scope"),
+        "reason": p.get("reason"),
+    }
+
+
+def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    return {
+        "command_request": dict(p.get("command_request") or {}),
+        "scope": {
+            "candidate_paths": list(p.get("candidate_paths") or []),
+            "expected_outputs": list(p.get("expected_outputs") or []),
+            "dispatch_plan_summary": dict(p.get("dispatch_plan_summary") or {}),
+            "routing_summary": dict(p.get("routing_summary") or {}),
+            "execution_summary": dict(p.get("execution_summary") or {}),
+        },
+        "approval": {
+            "requires_human_approval": bool(p.get("requires_human_approval")),
+            "approval_id_refs": list(p.get("approval_id_refs") or []),
+            "aegis_decision": p.get("aegis_decision") or "",
+            "aegis_scope": p.get("aegis_scope") or "",
+        },
+        "safety": {
+            "sealed": bool(p.get("sealed")),
+            "seal_reason": p.get("seal_reason") or "",
+            "review_checklist": list(p.get("review_checklist") or []),
+            "runtime_artifacts": list(p.get("runtime_artifacts") or []),
+        },
+        "rollback": {
+            "rollback_notes": list(p.get("rollback_notes") or []),
+        },
+        "metadata": dict(p.get("metadata") or {}),
+    }
 
 
 def run_command(
@@ -365,6 +437,104 @@ def run_command(
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "execution_package_queue":
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+            )
+        try:
+            from NEXUS.execution_package_registry import list_execution_package_journal_entries
+
+            limit = max(1, min(int(n or 20), 50))
+            packages = list_execution_package_journal_entries(project_path=path, n=limit)
+            pending_count = sum(
+                1
+                for pkg in packages
+                if str(pkg.get("review_status") or "") in ("pending", "review_pending")
+                or str(pkg.get("package_status") or "") in ("pending", "review_pending")
+            )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"packages={len(packages)}; pending={pending_count}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package queue loaded.",
+                    "project_path": path,
+                    "count": len(packages),
+                    "pending_count": pending_count,
+                    "packages": packages,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+            )
+
+    if cmd == "execution_package_details":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import get_execution_package_file_path, read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            review_header = _build_execution_package_review_header(package)
+            sections = _build_execution_package_sections(package)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; review_status={package.get('review_status')}; sealed={package.get('sealed')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "package_path": get_execution_package_file_path(path, package_id),
+                    "review_header": review_header,
+                    "package": package,
+                    "sections": sections,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
 
     if cmd == "automation_status":
         if not path:
