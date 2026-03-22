@@ -35,6 +35,9 @@ SUPPORTED_COMMANDS = frozenset({
     "project_autopilot_pause",
     "project_autopilot_resume",
     "project_autopilot_stop",
+    "project_autonomy_mode_set",
+    "project_autonomy_mode_status",
+    "project_routing_status",
     "registry_status",
     "dashboard_summary",
     "runtime_targets",
@@ -4969,6 +4972,96 @@ def run_command(
                     "project_path": path,
                     "autopilot": session,
                 },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in ("project_autonomy_mode_set", "project_autonomy_mode_status", "project_routing_status"):
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.autonomy_modes import build_autonomy_mode_state, normalize_autonomy_mode
+            from NEXUS.execution_package_registry import read_execution_package
+            from NEXUS.project_routing import build_project_routing_decision
+
+            loaded = load_project_state(path)
+            if not isinstance(loaded, dict) or loaded.get("load_error"):
+                reason = str((loaded or {}).get("load_error") or "Failed to load project state.")
+                return _result(command=cmd, status="error", project_name=proj_name, summary=reason, payload={"error": reason})
+
+            package_id = str(loaded.get("execution_package_id") or loaded.get("autopilot_last_package_id") or "")
+            active_package = read_execution_package(project_path=path, package_id=package_id) if package_id else None
+
+            if cmd == "project_autonomy_mode_set":
+                requested_mode = normalize_autonomy_mode(kwargs.get("autonomy_mode"))
+                reason = str(kwargs.get("reason") or f"Operator set autonomy mode to {requested_mode}.").strip()
+                mode_state = build_autonomy_mode_state(mode=requested_mode, reason=reason)
+                routing = build_project_routing_decision(
+                    project_key=proj_name or "",
+                    state={**loaded, **mode_state},
+                    active_package=active_package,
+                    autonomy_mode=requested_mode,
+                )
+                update_project_state_fields(
+                    path,
+                    **mode_state,
+                    project_routing_status=routing.get("routing_status"),
+                    project_routing_result=routing,
+                )
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"autonomy_mode={requested_mode}; routing_status={routing.get('routing_status')}",
+                    payload={
+                        "project_path": path,
+                        "autonomy_mode_state": mode_state,
+                        "project_routing": routing,
+                    },
+                )
+
+            if cmd == "project_autonomy_mode_status":
+                current_mode = normalize_autonomy_mode(loaded.get("autonomy_mode"))
+                mode_state = {
+                    **build_autonomy_mode_state(mode=current_mode, reason=loaded.get("autonomy_mode_reason")),
+                    "autonomy_mode_status": loaded.get("autonomy_mode_status") or "active",
+                    "allowed_actions": list(loaded.get("allowed_actions") or []),
+                    "blocked_actions": list(loaded.get("blocked_actions") or []),
+                    "escalation_threshold": loaded.get("escalation_threshold") or build_autonomy_mode_state(mode=current_mode).get("escalation_threshold"),
+                    "approval_required_actions": list(loaded.get("approval_required_actions") or []),
+                }
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"autonomy_mode={mode_state.get('autonomy_mode')}; status={mode_state.get('autonomy_mode_status')}",
+                    payload={"project_path": path, "autonomy_mode_state": mode_state},
+                )
+
+            routing = build_project_routing_decision(
+                project_key=proj_name or "",
+                state=loaded,
+                active_package=active_package,
+                autonomy_mode=loaded.get("autonomy_mode"),
+            )
+            stored_status = str(loaded.get("project_routing_status") or routing.get("routing_status") or "idle")
+            payload = {
+                "project_path": path,
+                "project_routing_status": stored_status,
+                "project_routing": routing,
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"routing_status={stored_status}; action={routing.get('selected_action')}",
+                payload=payload,
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})

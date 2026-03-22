@@ -20,6 +20,12 @@ from NEXUS.execution_package_registry import (
     record_execution_package_release_safe,
     write_execution_package_safe,
 )
+from NEXUS.autonomy_modes import (
+    DEFAULT_AUTONOMY_MODE,
+    build_autonomy_mode_state,
+    normalize_autonomy_mode,
+)
+from NEXUS.project_routing import build_project_routing_decision, select_next_task
 from NEXUS.project_state import load_project_state, update_project_state_fields
 
 
@@ -71,16 +77,7 @@ def _task_label(task: dict[str, Any] | None) -> str:
 
 
 def _select_next_task(state: dict[str, Any]) -> dict[str, Any] | None:
-    queue = _normalize_task_queue(state.get("task_queue_snapshot") or state.get("task_queue"))
-    pending = [
-        item
-        for item in queue
-        if str(item.get("status") or "").strip().lower() in ("", "pending", "queued", "ready")
-    ]
-    if not pending:
-        return None
-    pending.sort(key=lambda item: (int(item.get("priority") or 0), str(item.get("id") or ""), _task_label(item)))
-    return pending[0]
+    return select_next_task(state)
 
 
 def _mark_task_completed(state: dict[str, Any], task_id: str | None) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -152,6 +149,37 @@ def _persist_session(project_path: str, session: dict[str, Any], *, extra_fields
     if extra_fields:
         payload.update(extra_fields)
     update_project_state_fields(project_path, **payload)
+
+
+def _autonomy_state_fields(mode: Any, reason: str | None = None) -> dict[str, Any]:
+    return build_autonomy_mode_state(mode=normalize_autonomy_mode(mode), reason=reason)
+
+
+def _routing_state_fields(
+    *,
+    project_name: str,
+    state: dict[str, Any],
+    session: dict[str, Any],
+    active_package: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    routing = build_project_routing_decision(
+        project_key=project_name,
+        state=state,
+        active_package=active_package,
+        autonomy_mode=state.get("autonomy_mode"),
+    )
+    mode_state = routing.get("mode_state") if isinstance(routing.get("mode_state"), dict) else _autonomy_state_fields(state.get("autonomy_mode"))
+    return {
+        "autonomy_mode": mode_state.get("autonomy_mode"),
+        "autonomy_mode_status": mode_state.get("autonomy_mode_status"),
+        "autonomy_mode_reason": mode_state.get("autonomy_mode_reason"),
+        "allowed_actions": mode_state.get("allowed_actions") or [],
+        "blocked_actions": mode_state.get("blocked_actions") or [],
+        "escalation_threshold": mode_state.get("escalation_threshold"),
+        "approval_required_actions": mode_state.get("approval_required_actions") or [],
+        "project_routing_status": routing.get("routing_status"),
+        "project_routing_result": routing,
+    }
 
 
 def _build_progress_summary(
@@ -479,7 +507,15 @@ def pause_project_autopilot(*, project_path: str, project_name: str) -> dict[str
         next_suggested_step="operator_review",
         operator_review_required=True,
     )
-    _persist_session(project_path, session)
+    _persist_session(
+        project_path,
+        session,
+        extra_fields=_routing_state_fields(
+            project_name=project_name,
+            state=load_project_state(project_path),
+            session=session,
+        ),
+    )
     return {"status": "ok", "reason": "Autopilot paused.", "session": session}
 
 
@@ -499,7 +535,15 @@ def stop_project_autopilot(*, project_path: str, project_name: str) -> dict[str,
         next_suggested_step="stop",
         operator_review_required=False,
     )
-    _persist_session(project_path, session)
+    _persist_session(
+        project_path,
+        session,
+        extra_fields=_routing_state_fields(
+            project_name=project_name,
+            state=load_project_state(project_path),
+            session=session,
+        ),
+    )
     return {"status": "ok", "reason": "Autopilot stopped.", "session": session}
 
 
@@ -533,6 +577,7 @@ def start_project_autopilot(
         "autopilot_escalation_reason": "",
         "autopilot_progress_summary": {},
     }
+    autonomy_mode = normalize_autonomy_mode(autopilot_mode if autopilot_mode in (DEFAULT_AUTONOMY_MODE, "assisted_autopilot", "low_risk_autonomous_development") else state.get("autonomy_mode"))
     session["autopilot_progress_summary"] = _build_progress_summary(
         state=state,
         session=session,
@@ -540,7 +585,15 @@ def start_project_autopilot(
         next_suggested_step="run",
         operator_review_required=False,
     )
-    _persist_session(project_path, session)
+    _persist_session(
+        project_path,
+        session,
+        extra_fields=_routing_state_fields(
+            project_name=project_name,
+            state={**state, "autonomy_mode": autonomy_mode},
+            session=session,
+        ),
+    )
     return _run_project_autopilot_loop(project_path=project_path, project_name=project_name, session=session)
 
 
@@ -564,7 +617,15 @@ def resume_project_autopilot(*, project_path: str, project_name: str) -> dict[st
     session["autopilot_stop_reason"] = ""
     session["autopilot_escalation_reason"] = ""
     session["autopilot_updated_at"] = _now_iso()
-    _persist_session(project_path, session)
+    _persist_session(
+        project_path,
+        session,
+        extra_fields=_routing_state_fields(
+            project_name=project_name,
+            state=state,
+            session=session,
+        ),
+    )
     return _run_project_autopilot_loop(project_path=project_path, project_name=project_name, session=session)
 
 
@@ -582,7 +643,11 @@ def _run_project_autopilot_loop(
             session["autopilot_stop_reason"] = "project_state_load_failed"
             session["autopilot_updated_at"] = _now_iso()
             session["autopilot_last_result"] = {"status": "error", "reason": "project_state_load_failed"}
-            _persist_session(project_path, session)
+            _persist_session(
+                project_path,
+                session,
+                extra_fields=_routing_state_fields(project_name=project_name, state={}, session=session),
+            )
             return {"status": "error", "reason": "Failed to load project state during autopilot run.", "session": session}
 
         if session["autopilot_iteration_count"] >= session["autopilot_iteration_limit"]:
@@ -597,7 +662,11 @@ def _run_project_autopilot_loop(
                 next_suggested_step="stop",
                 operator_review_required=False,
             )
-            _persist_session(project_path, session)
+            _persist_session(
+                project_path,
+                session,
+                extra_fields=_routing_state_fields(project_name=project_name, state=state, session=session),
+            )
             return {"status": "ok", "reason": "Autopilot iteration limit reached.", "session": session}
 
         session["autopilot_status"] = "running"
@@ -619,7 +688,11 @@ def _run_project_autopilot_loop(
                 next_suggested_step="stop",
                 operator_review_required=False,
             )
-            _persist_session(project_path, session)
+            _persist_session(
+                project_path,
+                session,
+                extra_fields=_routing_state_fields(project_name=project_name, state=state, session=session),
+            )
             return {"status": "ok", "reason": "No next bounded task available.", "session": session}
 
         if not active_package and task:
@@ -642,7 +715,11 @@ def _run_project_autopilot_loop(
                     next_suggested_step="stop",
                     operator_review_required=True,
                 )
-                _persist_session(project_path, session)
+                _persist_session(
+                    project_path,
+                    session,
+                    extra_fields=_routing_state_fields(project_name=project_name, state=state, session=session),
+                )
                 return {"status": "error", "reason": "Autopilot package creation failed.", "session": session}
 
             session["autopilot_last_package_id"] = str(package.get("package_id") or "")
@@ -677,10 +754,67 @@ def _run_project_autopilot_loop(
                 )
                 _persist_session(project_path, session, extra_fields=extra_fields)
                 return {"status": "ok", "reason": "Autopilot escalated for approval resolution.", "session": session}
-            _persist_session(project_path, session, extra_fields=extra_fields)
             active_package = package
         elif active_package:
             session["autopilot_iteration_count"] += 1
+
+        routed_state = {**state, "execution_package_id": (active_package or {}).get("package_id")}
+        routing_fields = _routing_state_fields(
+            project_name=project_name,
+            state=routed_state,
+            session=session,
+            active_package=active_package or {},
+        )
+        routing_result = routing_fields.get("project_routing_result") if isinstance(routing_fields.get("project_routing_result"), dict) else {}
+        selected_action = str(routing_result.get("selected_action") or "").strip().lower()
+        if selected_action in ("pause", "escalate", "stop"):
+            session["autopilot_status"] = "paused" if selected_action == "pause" else ("completed" if selected_action == "stop" else "escalated")
+            session["autopilot_next_action"] = "stop" if selected_action == "stop" else "operator_review"
+            session["autopilot_stop_reason"] = str(routing_result.get("routing_reason") or f"routing_{selected_action}")
+            session["autopilot_escalation_reason"] = (
+                ""
+                if selected_action == "stop"
+                else str(routing_result.get("routing_reason") or f"routing_{selected_action}")
+            )
+            session["autopilot_updated_at"] = _now_iso()
+            session["autopilot_last_result"] = {
+                "status": "routing_controlled",
+                "reason": routing_result.get("routing_reason"),
+                "selected_action": selected_action,
+                "package_id": (active_package or {}).get("package_id") if isinstance(active_package, dict) else "",
+            }
+            session["autopilot_progress_summary"] = _build_progress_summary(
+                state=state,
+                session=session,
+                current_task=task,
+                package=active_package or {},
+                next_suggested_step=session["autopilot_next_action"],
+                operator_review_required=selected_action != "stop",
+            )
+            _persist_session(
+                project_path,
+                session,
+                extra_fields={
+                    **routing_fields,
+                    "execution_package_id": (active_package or {}).get("package_id"),
+                    "execution_package_path": get_execution_package_file_path(project_path, (active_package or {}).get("package_id")),
+                },
+            )
+            return {
+                "status": "ok",
+                "reason": session["autopilot_stop_reason"],
+                "session": session,
+            }
+
+        _persist_session(
+            project_path,
+            session,
+            extra_fields={
+                **routing_fields,
+                "execution_package_id": (active_package or {}).get("package_id"),
+                "execution_package_path": get_execution_package_file_path(project_path, (active_package or {}).get("package_id")),
+            },
+        )
 
         advanced_package, outcome, outcome_reason = _advance_package_pipeline(
             project_path=project_path,
@@ -741,6 +875,12 @@ def _run_project_autopilot_loop(
                     project_path,
                     session,
                     extra_fields={
+                        **_routing_state_fields(
+                            project_name=project_name,
+                            state={**state, "task_queue": task_queue, "task_queue_snapshot": task_queue_snapshot},
+                            session=session,
+                            active_package=current_package,
+                        ),
                         "task_queue": task_queue,
                         "task_queue_snapshot": task_queue_snapshot,
                         "execution_package_id": current_package.get("package_id"),
@@ -783,6 +923,12 @@ def _run_project_autopilot_loop(
             project_path,
             session,
             extra_fields={
+                **_routing_state_fields(
+                    project_name=project_name,
+                    state=state,
+                    session=session,
+                    active_package=current_package,
+                ),
                 "execution_package_id": current_package.get("package_id"),
                 "execution_package_path": get_execution_package_file_path(project_path, current_package.get("package_id")),
             },

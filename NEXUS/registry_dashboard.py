@@ -318,6 +318,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     autopilot_status_by_project: dict[str, str] = {}
     iteration_counts_by_project: dict[str, dict[str, int]] = {}
     latest_autopilot_action_by_project: dict[str, str] = {}
+    autonomy_mode_by_project: dict[str, str] = {}
+    routing_status_by_project: dict[str, str] = {}
+    routed_action_by_project: dict[str, str] = {}
+    supervised_mode_count_total = 0
+    assisted_mode_count_total = 0
+    low_risk_mode_count_total = 0
     active_autopilot_projects: list[str] = []
     escalation_count_total = 0
     paused_count_total = 0
@@ -340,6 +346,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "iteration_limit": max(0, int(loaded.get("autopilot_iteration_limit") or 0)),
             }
             latest_autopilot_action_by_project[key] = str(loaded.get("autopilot_next_action") or "")
+            autonomy_mode = str(loaded.get("autonomy_mode") or "supervised_build")
+            autonomy_mode_by_project[key] = autonomy_mode
+            if autonomy_mode == "supervised_build":
+                supervised_mode_count_total += 1
+            elif autonomy_mode == "assisted_autopilot":
+                assisted_mode_count_total += 1
+            elif autonomy_mode == "low_risk_autonomous_development":
+                low_risk_mode_count_total += 1
+            routing_status_by_project[key] = str(loaded.get("project_routing_status") or "idle")
+            routing_result = loaded.get("project_routing_result") if isinstance(loaded.get("project_routing_result"), dict) else {}
+            routed_action_by_project[key] = str(routing_result.get("selected_action") or "")
             if autopilot_status in ("ready", "running", "paused", "escalated", "blocked"):
                 active_autopilot_projects.append(key)
             if autopilot_status == "escalated":
@@ -1193,6 +1210,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "completed_count_total": completed_count_total,
             "blocked_count_total": blocked_count_total,
             "latest_autopilot_action_by_project": latest_autopilot_action_by_project,
+        },
+        "project_autonomy_routing_summary": {
+            "autonomy_routing_surface_status": "ok",
+            "autonomy_mode_by_project": autonomy_mode_by_project,
+            "routing_status_by_project": routing_status_by_project,
+            "routed_action_by_project": routed_action_by_project,
+            "paused_count_total": paused_count_total,
+            "escalated_count_total": escalation_count_total,
+            "low_risk_mode_count_total": low_risk_mode_count_total,
+            "supervised_mode_count_total": supervised_mode_count_total,
+            "assisted_mode_count_total": assisted_mode_count_total,
         },
         "agent_summary": agent_summary,
         "policy_summary": policy_summary,

@@ -146,6 +146,15 @@ def save_project_state(
     autopilot_stop_reason: str | None = None,
     autopilot_escalation_reason: str | None = None,
     autopilot_progress_summary: dict | None = None,
+    autonomy_mode: str | None = None,
+    autonomy_mode_status: str | None = None,
+    autonomy_mode_reason: str | None = None,
+    allowed_actions: list | None = None,
+    blocked_actions: list | None = None,
+    escalation_threshold: str | None = None,
+    approval_required_actions: list | None = None,
+    project_routing_status: str | None = None,
+    project_routing_result: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -198,6 +207,24 @@ def save_project_state(
         autopilot_escalation_reason = previous.get("autopilot_escalation_reason")
     if autopilot_progress_summary is None and isinstance(previous.get("autopilot_progress_summary"), dict):
         autopilot_progress_summary = previous.get("autopilot_progress_summary")
+    if autonomy_mode is None and isinstance(previous.get("autonomy_mode"), str):
+        autonomy_mode = previous.get("autonomy_mode")
+    if autonomy_mode_status is None and isinstance(previous.get("autonomy_mode_status"), str):
+        autonomy_mode_status = previous.get("autonomy_mode_status")
+    if autonomy_mode_reason is None and isinstance(previous.get("autonomy_mode_reason"), str):
+        autonomy_mode_reason = previous.get("autonomy_mode_reason")
+    if allowed_actions is None and isinstance(previous.get("allowed_actions"), list):
+        allowed_actions = previous.get("allowed_actions")
+    if blocked_actions is None and isinstance(previous.get("blocked_actions"), list):
+        blocked_actions = previous.get("blocked_actions")
+    if escalation_threshold is None and isinstance(previous.get("escalation_threshold"), str):
+        escalation_threshold = previous.get("escalation_threshold")
+    if approval_required_actions is None and isinstance(previous.get("approval_required_actions"), list):
+        approval_required_actions = previous.get("approval_required_actions")
+    if project_routing_status is None and isinstance(previous.get("project_routing_status"), str):
+        project_routing_status = previous.get("project_routing_status")
+    if project_routing_result is None and isinstance(previous.get("project_routing_result"), dict):
+        project_routing_result = previous.get("project_routing_result")
 
     # Normalize AEGIS decision into the stable contract shape.
     from AEGIS.aegis_contract import normalize_aegis_result
@@ -358,6 +385,15 @@ def save_project_state(
         "autopilot_stop_reason": autopilot_stop_reason,
         "autopilot_escalation_reason": autopilot_escalation_reason,
         "autopilot_progress_summary": autopilot_progress_summary or {},
+        "autonomy_mode": autonomy_mode,
+        "autonomy_mode_status": autonomy_mode_status,
+        "autonomy_mode_reason": autonomy_mode_reason,
+        "allowed_actions": allowed_actions or [],
+        "blocked_actions": blocked_actions or [],
+        "escalation_threshold": escalation_threshold,
+        "approval_required_actions": approval_required_actions or [],
+        "project_routing_status": project_routing_status,
+        "project_routing_result": project_routing_result or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,
