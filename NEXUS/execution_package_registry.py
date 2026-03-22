@@ -61,6 +61,17 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "handoff_version": normalized.get("handoff_version"),
         "handoff_executor_target_id": normalized.get("handoff_executor_target_id"),
         "handoff_executor_target_name": normalized.get("handoff_executor_target_name"),
+        "execution_status": normalized.get("execution_status"),
+        "execution_timestamp": normalized.get("execution_timestamp"),
+        "execution_actor": normalized.get("execution_actor"),
+        "execution_id": normalized.get("execution_id"),
+        "execution_reason": normalized.get("execution_reason"),
+        "execution_version": normalized.get("execution_version"),
+        "execution_executor_target_id": normalized.get("execution_executor_target_id"),
+        "execution_executor_target_name": normalized.get("execution_executor_target_name"),
+        "rollback_status": normalized.get("rollback_status"),
+        "rollback_timestamp": normalized.get("rollback_timestamp"),
+        "rollback_reason": normalized.get("rollback_reason"),
     }
 
 
@@ -144,6 +155,73 @@ def _normalize_handoff_aegis_result(value: Any) -> dict[str, Any]:
         return {}
 
 
+def _normalize_execution_reason(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {"code": "", "message": ""}
+    return {
+        "code": str(value.get("code") or ""),
+        "message": str(value.get("message") or ""),
+    }
+
+
+def _normalize_rollback_reason(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {"code": "", "message": ""}
+    return {
+        "code": str(value.get("code") or ""),
+        "message": str(value.get("message") or ""),
+    }
+
+
+VALID_EXECUTION_FAILURE_CLASSES = (
+    "preflight_block",
+    "aegis_block",
+    "runtime_start_failure",
+    "runtime_execution_failure",
+    "rollback_failure",
+)
+
+
+def _normalize_failure_class(value: Any) -> str:
+    s = str(value or "").strip().lower()
+    return s if s in VALID_EXECUTION_FAILURE_CLASSES else ""
+
+
+def _normalize_execution_receipt(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        value = {}
+    exit_code = value.get("exit_code")
+    if not isinstance(exit_code, int):
+        try:
+            exit_code = int(exit_code) if exit_code not in (None, "") else None
+        except Exception:
+            exit_code = None
+    return {
+        "result_status": str(value.get("result_status") or ""),
+        "exit_code": exit_code,
+        "log_ref": str(value.get("log_ref") or ""),
+        "files_touched_count": max(0, int(value.get("files_touched_count") or 0)),
+        "artifacts_written_count": max(0, int(value.get("artifacts_written_count") or 0)),
+        "failure_class": _normalize_failure_class(value.get("failure_class")),
+        "stdout_summary": str(value.get("stdout_summary") or ""),
+        "stderr_summary": str(value.get("stderr_summary") or ""),
+        "rollback_summary": dict(value.get("rollback_summary") or {}),
+    }
+
+
+def _empty_execution_receipt(*, result_status: str = "", failure_class: str = "", log_ref: str = "", exit_code: int | None = None) -> dict[str, Any]:
+    return _normalize_execution_receipt(
+        {
+            "result_status": result_status,
+            "exit_code": exit_code,
+            "log_ref": log_ref,
+            "files_touched_count": 0,
+            "artifacts_written_count": 0,
+            "failure_class": failure_class,
+        }
+    )
+
+
 def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Normalize execution package to stable review-only contract shape.
@@ -217,6 +295,21 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "handoff_executor_target_id": str(p.get("handoff_executor_target_id") or ""),
         "handoff_executor_target_name": str(p.get("handoff_executor_target_name") or ""),
         "handoff_aegis_result": _normalize_handoff_aegis_result(p.get("handoff_aegis_result")),
+        "execution_status": str(p.get("execution_status") or "pending").strip().lower(),
+        "execution_timestamp": str(p.get("execution_timestamp") or ""),
+        "execution_actor": str(p.get("execution_actor") or ""),
+        "execution_id": str(p.get("execution_id") or ""),
+        "execution_reason": _normalize_execution_reason(p.get("execution_reason")),
+        "execution_receipt": _normalize_execution_receipt(p.get("execution_receipt")),
+        "execution_version": str(p.get("execution_version") or "v1"),
+        "execution_executor_target_id": str(p.get("execution_executor_target_id") or ""),
+        "execution_executor_target_name": str(p.get("execution_executor_target_name") or ""),
+        "execution_aegis_result": _normalize_handoff_aegis_result(p.get("execution_aegis_result")),
+        "execution_started_at": str(p.get("execution_started_at") or ""),
+        "execution_finished_at": str(p.get("execution_finished_at") or ""),
+        "rollback_status": str(p.get("rollback_status") or "not_needed").strip().lower(),
+        "rollback_timestamp": str(p.get("rollback_timestamp") or ""),
+        "rollback_reason": _normalize_rollback_reason(p.get("rollback_reason")),
     }
 
 
@@ -259,6 +352,18 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "handoff_version": str(r.get("handoff_version") or "v1"),
         "handoff_executor_target_id": str(r.get("handoff_executor_target_id") or ""),
         "handoff_executor_target_name": str(r.get("handoff_executor_target_name") or ""),
+        "execution_status": str(r.get("execution_status") or "pending").strip().lower(),
+        "execution_timestamp": str(r.get("execution_timestamp") or ""),
+        "execution_actor": str(r.get("execution_actor") or ""),
+        "execution_id": str(r.get("execution_id") or ""),
+        "execution_reason": _normalize_execution_reason(r.get("execution_reason")),
+        "execution_version": str(r.get("execution_version") or "v1"),
+        "execution_executor_target_id": str(r.get("execution_executor_target_id") or ""),
+        "execution_executor_target_name": str(r.get("execution_executor_target_name") or ""),
+        "execution_receipt": _normalize_execution_receipt(r.get("execution_receipt")),
+        "rollback_status": str(r.get("rollback_status") or "not_needed").strip().lower(),
+        "rollback_timestamp": str(r.get("rollback_timestamp") or ""),
+        "rollback_reason": _normalize_rollback_reason(r.get("rollback_reason")),
     }
 
 
@@ -677,6 +782,104 @@ def evaluate_execution_package_handoff(
     }
 
 
+def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict[str, Any]:
+    """Evaluate whether a handed-off package may execute through the controlled runtime boundary."""
+    p = normalize_execution_package(package)
+    target_id = str(p.get("handoff_executor_target_id") or p.get("runtime_target_id") or "").strip().lower()
+    target_name = str(p.get("handoff_executor_target_name") or p.get("runtime_target_name") or target_id)
+
+    def _blocked(code: str, message: str, *, failure_class: str = "preflight_block", aegis_result: dict[str, Any] | None = None) -> dict[str, Any]:
+        return {
+            "execution_status": "blocked",
+            "execution_reason": {"code": code, "message": message},
+            "execution_executor_target_id": target_id,
+            "execution_executor_target_name": target_name,
+            "execution_aegis_result": aegis_result or {},
+            "execution_receipt": _empty_execution_receipt(result_status="blocked", failure_class=failure_class),
+            "rollback_status": "not_needed",
+            "rollback_reason": {"code": "", "message": ""},
+        }
+
+    if not bool(p.get("sealed")):
+        return _blocked("not_sealed", "Package must remain sealed to execute.")
+    if str(p.get("decision_status") or "").strip().lower() != "approved":
+        return _blocked("decision_not_approved", "Package decision must be approved before execution.")
+    if str(p.get("eligibility_status") or "").strip().lower() != "eligible":
+        return _blocked("eligibility_not_eligible", "Package eligibility must be eligible before execution.")
+    if str(p.get("release_status") or "").strip().lower() != "released":
+        return _blocked("release_not_released", "Package release status must be released before execution.")
+    if str(p.get("handoff_status") or "").strip().lower() != "authorized":
+        return _blocked("handoff_not_authorized", "Package handoff must be authorized before execution.")
+    if str(p.get("execution_status") or "").strip().lower() == "succeeded":
+        return _blocked("already_succeeded", "Package execution_status must not already be succeeded.")
+
+    runtime_target = {}
+    try:
+        from NEXUS.runtime_target_registry import RUNTIME_TARGET_REGISTRY
+
+        runtime_target = RUNTIME_TARGET_REGISTRY.get(target_id) or {}
+    except Exception:
+        runtime_target = {}
+    capabilities = [str(x).strip().lower() for x in (runtime_target.get("capabilities") or []) if str(x).strip()]
+    target_name = str(runtime_target.get("display_name") or runtime_target.get("canonical_name") or target_name)
+    if (
+        not runtime_target
+        or str(runtime_target.get("active_or_planned") or "").strip().lower() != "active"
+        or "execute" not in capabilities
+        or target_id == "windows_review_package"
+    ):
+        return _blocked(
+            "executor_target_invalid",
+            "Executor target must be active, support execute, and not be windows_review_package.",
+        )
+
+    try:
+        from AEGIS.aegis_contract import normalize_aegis_result
+        from AEGIS.aegis_core import evaluate_action_safe
+
+        candidate_paths = [str(x) for x in (p.get("candidate_paths") or []) if str(x).strip()][:50]
+        routing = p.get("routing_summary") or {}
+        tool_name = str(routing.get("tool_name") or "").strip().lower()
+        aegis_request = {
+            "project_name": p.get("project_name"),
+            "project_path": p.get("project_path"),
+            "runtime_target_id": target_id,
+            "action": p.get("requested_action") or "adapter_dispatch_call",
+            "action_mode": "execution",
+            "requires_human_approval": bool(p.get("requires_human_approval")),
+            "candidate_paths": candidate_paths,
+            "requested_reads": candidate_paths,
+        }
+        if tool_name:
+            aegis_request["tool_family"] = "file_write" if ("write" in tool_name or "patch" in tool_name) else "file_read"
+        aegis_result = normalize_aegis_result(evaluate_action_safe(request=aegis_request))
+    except Exception:
+        aegis_result = _normalize_handoff_aegis_result(None)
+
+    aegis_decision = str(aegis_result.get("aegis_decision") or "").strip().lower()
+    workspace_valid = aegis_result.get("workspace_valid")
+    file_guard_status = str(aegis_result.get("file_guard_status") or "").strip().lower()
+    if aegis_decision in ("deny", "error_fallback"):
+        return _blocked("aegis_blocked", "AEGIS denied or failed execution re-evaluation.", failure_class="aegis_block", aegis_result=aegis_result)
+    if workspace_valid is False:
+        return _blocked("workspace_invalid", "AEGIS workspace validation failed during execution re-evaluation.", failure_class="aegis_block", aegis_result=aegis_result)
+    if file_guard_status in ("deny", "error_fallback"):
+        return _blocked("file_guard_blocked", "AEGIS file guard blocked execution re-evaluation.", failure_class="aegis_block", aegis_result=aegis_result)
+    if aegis_decision not in ("allow", "approval_required"):
+        return _blocked("aegis_blocked", "AEGIS did not return an allowed execution decision.", failure_class="aegis_block", aegis_result=aegis_result)
+
+    return {
+        "execution_status": "ready",
+        "execution_reason": {"code": "ready", "message": "Package is ready for controlled runtime execution."},
+        "execution_executor_target_id": target_id,
+        "execution_executor_target_name": target_name or target_id,
+        "execution_aegis_result": aegis_result,
+        "execution_receipt": _empty_execution_receipt(result_status="ready"),
+        "rollback_status": "not_needed",
+        "rollback_reason": {"code": "", "message": ""},
+    }
+
+
 def record_execution_package_eligibility(
     *,
     project_path: str | None,
@@ -820,3 +1023,94 @@ def record_execution_package_handoff_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_handoff(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package handoff.", "package": None}
+
+
+def record_execution_package_execution(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    execution_actor: str,
+) -> dict[str, Any]:
+    """Evaluate and persist controlled runtime execution state for an authorized package."""
+    actor = str(execution_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "execution_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    execution_id = str(uuid.uuid4())
+    started_at = _utc_now_iso()
+    evaluation = evaluate_execution_package_execution(package)
+    package["execution_actor"] = actor
+    package["execution_id"] = execution_id
+    package["execution_version"] = "v1"
+    package["execution_timestamp"] = started_at
+    package["execution_started_at"] = started_at
+    package["execution_executor_target_id"] = str(evaluation.get("execution_executor_target_id") or "")
+    package["execution_executor_target_name"] = str(evaluation.get("execution_executor_target_name") or "")
+    package["execution_aegis_result"] = _normalize_handoff_aegis_result(evaluation.get("execution_aegis_result"))
+
+    if evaluation.get("execution_status") == "blocked":
+        package["execution_status"] = "blocked"
+        package["execution_reason"] = _normalize_execution_reason(evaluation.get("execution_reason"))
+        package["execution_receipt"] = _normalize_execution_receipt(evaluation.get("execution_receipt"))
+        package["execution_finished_at"] = _utc_now_iso()
+        package["rollback_status"] = "not_needed"
+        package["rollback_timestamp"] = ""
+        package["rollback_reason"] = _normalize_rollback_reason(evaluation.get("rollback_reason"))
+    else:
+        try:
+            from NEXUS.execution_package_executor import execute_execution_package_safe
+
+            exec_result = execute_execution_package_safe(
+                project_path=project_path,
+                package=package,
+                execution_id=execution_id,
+                execution_actor=actor,
+            )
+        except Exception:
+            exec_result = {
+                "execution_status": "failed",
+                "execution_reason": {"code": "runtime_start_failed", "message": "Runtime execution bridge unavailable."},
+                "execution_receipt": _empty_execution_receipt(result_status="failed", failure_class="runtime_start_failure"),
+                "rollback_status": "not_needed",
+                "rollback_timestamp": "",
+                "rollback_reason": {"code": "", "message": ""},
+                "runtime_artifact": {},
+                "execution_finished_at": _utc_now_iso(),
+            }
+        package["execution_status"] = str(exec_result.get("execution_status") or "failed")
+        package["execution_reason"] = _normalize_execution_reason(exec_result.get("execution_reason"))
+        package["execution_receipt"] = _normalize_execution_receipt(exec_result.get("execution_receipt"))
+        package["execution_finished_at"] = str(exec_result.get("execution_finished_at") or _utc_now_iso())
+        package["execution_timestamp"] = package["execution_finished_at"]
+        package["rollback_status"] = str(exec_result.get("rollback_status") or "not_needed")
+        package["rollback_timestamp"] = str(exec_result.get("rollback_timestamp") or "")
+        package["rollback_reason"] = _normalize_rollback_reason(exec_result.get("rollback_reason"))
+        runtime_artifact = exec_result.get("runtime_artifact")
+        if isinstance(runtime_artifact, dict) and runtime_artifact:
+            artifacts = list(package.get("runtime_artifacts") or [])
+            artifacts.append(runtime_artifact)
+            package["runtime_artifacts"] = [x for x in artifacts[:20] if isinstance(x, dict)]
+
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package execution recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package execution.", "package": None}
+
+
+def record_execution_package_execution_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_execution(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package execution.", "package": None}

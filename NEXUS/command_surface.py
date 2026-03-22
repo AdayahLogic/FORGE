@@ -46,6 +46,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_release_status",
     "execution_package_handoff_request",
     "execution_package_handoff_status",
+    "execution_package_execute_request",
+    "execution_package_execute_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -232,6 +234,12 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "handoff_id": p.get("handoff_id"),
         "handoff_executor_target_id": p.get("handoff_executor_target_id"),
         "handoff_executor_target_name": p.get("handoff_executor_target_name"),
+        "execution_status": p.get("execution_status"),
+        "execution_timestamp": p.get("execution_timestamp"),
+        "execution_reason": p.get("execution_reason") or {"code": "", "message": ""},
+        "execution_id": p.get("execution_id"),
+        "execution_executor_target_id": p.get("execution_executor_target_id"),
+        "execution_executor_target_name": p.get("execution_executor_target_name"),
     }
 
 
@@ -295,6 +303,23 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "handoff_executor_target_id": p.get("handoff_executor_target_id") or "",
             "handoff_executor_target_name": p.get("handoff_executor_target_name") or "",
             "handoff_aegis_result": dict(p.get("handoff_aegis_result") or {}),
+        },
+        "execution": {
+            "execution_status": p.get("execution_status") or "pending",
+            "execution_timestamp": p.get("execution_timestamp") or "",
+            "execution_actor": p.get("execution_actor") or "",
+            "execution_id": p.get("execution_id") or "",
+            "execution_reason": p.get("execution_reason") or {"code": "", "message": ""},
+            "execution_receipt": dict(p.get("execution_receipt") or {}),
+            "execution_version": p.get("execution_version") or "v1",
+            "execution_executor_target_id": p.get("execution_executor_target_id") or "",
+            "execution_executor_target_name": p.get("execution_executor_target_name") or "",
+            "execution_aegis_result": dict(p.get("execution_aegis_result") or {}),
+            "execution_started_at": p.get("execution_started_at") or "",
+            "execution_finished_at": p.get("execution_finished_at") or "",
+            "rollback_status": p.get("rollback_status") or "not_needed",
+            "rollback_timestamp": p.get("rollback_timestamp") or "",
+            "rollback_reason": p.get("rollback_reason") or {"code": "", "message": ""},
         },
         "metadata": dict(p.get("metadata") or {}),
     }
@@ -1149,6 +1174,157 @@ def run_command(
                         "handoff_executor_target_id": package.get("handoff_executor_target_id"),
                         "handoff_executor_target_name": package.get("handoff_executor_target_name"),
                         "handoff_aegis_result": package.get("handoff_aegis_result") or {},
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_execute_request":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        execution_actor = str(kwargs.get("execution_actor") or "").strip()
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not execution_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_execution_safe
+
+            result = record_execution_package_execution_safe(
+                project_path=path,
+                package_id=package_id,
+                execution_actor=execution_actor,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package execution."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            execution = {
+                "execution_status": package.get("execution_status"),
+                "execution_timestamp": package.get("execution_timestamp"),
+                "execution_actor": package.get("execution_actor"),
+                "execution_id": package.get("execution_id"),
+                "execution_reason": package.get("execution_reason") or {"code": "", "message": ""},
+                "execution_receipt": package.get("execution_receipt") or {},
+                "execution_version": package.get("execution_version"),
+                "execution_executor_target_id": package.get("execution_executor_target_id"),
+                "execution_executor_target_name": package.get("execution_executor_target_name"),
+                "execution_aegis_result": package.get("execution_aegis_result") or {},
+                "execution_started_at": package.get("execution_started_at"),
+                "execution_finished_at": package.get("execution_finished_at"),
+                "rollback_status": package.get("rollback_status"),
+                "rollback_timestamp": package.get("rollback_timestamp"),
+                "rollback_reason": package.get("rollback_reason") or {"code": "", "message": ""},
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; execution_status={execution.get('execution_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package execution recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "execution": execution,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_execute_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; execution_status={package.get('execution_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package execution status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "execution": {
+                        "execution_status": package.get("execution_status"),
+                        "execution_timestamp": package.get("execution_timestamp"),
+                        "execution_actor": package.get("execution_actor"),
+                        "execution_id": package.get("execution_id"),
+                        "execution_reason": package.get("execution_reason") or {"code": "", "message": ""},
+                        "execution_receipt": package.get("execution_receipt") or {},
+                        "execution_version": package.get("execution_version"),
+                        "execution_executor_target_id": package.get("execution_executor_target_id"),
+                        "execution_executor_target_name": package.get("execution_executor_target_name"),
+                        "execution_aegis_result": package.get("execution_aegis_result") or {},
+                        "execution_started_at": package.get("execution_started_at"),
+                        "execution_finished_at": package.get("execution_finished_at"),
+                        "rollback_status": package.get("rollback_status"),
+                        "rollback_timestamp": package.get("rollback_timestamp"),
+                        "rollback_reason": package.get("rollback_reason") or {"code": "", "message": ""},
                     },
                 },
             )

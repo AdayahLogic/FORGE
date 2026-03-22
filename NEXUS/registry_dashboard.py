@@ -253,6 +253,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     latest_execution_package_handoff_target_by_project: dict[str, str] = {}
     execution_package_handoff_authorized_projects: list[str] = []
     execution_package_handoff_blocked_projects: list[str] = []
+    execution_package_execution_counts_by_project: dict[str, dict[str, int]] = {}
+    latest_execution_package_execution_status_by_project: dict[str, str] = {}
+    latest_execution_package_execution_target_by_project: dict[str, str] = {}
+    execution_package_execution_succeeded_projects: list[str] = []
+    execution_package_execution_failed_projects: list[str] = []
+    execution_package_execution_blocked_projects: list[str] = []
+    execution_package_execution_rolled_back_projects: list[str] = []
     resume_status_by_project: dict[str, str] = {}
     resume_status_count: dict[str, int] = {}
     heartbeat_status_by_project: dict[str, str] = {}
@@ -372,6 +379,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             eligibility_counts = {"pending": 0, "eligible": 0, "ineligible": 0}
             release_counts = {"pending": 0, "released": 0, "blocked": 0}
             handoff_counts = {"pending": 0, "authorized": 0, "blocked": 0}
+            execution_counts = {"pending": 0, "succeeded": 0, "failed": 0, "blocked": 0, "rolled_back": 0}
             for row in execution_package_rows:
                 ds = str(row.get("decision_status") or "pending").strip().lower()
                 if ds not in decision_counts:
@@ -389,10 +397,15 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 if hs not in handoff_counts:
                     hs = "pending"
                 handoff_counts[hs] += 1
+                xs = str(row.get("execution_status") or "pending").strip().lower()
+                if xs not in execution_counts:
+                    xs = "pending"
+                execution_counts[xs] += 1
             execution_package_decision_counts_by_project[key] = decision_counts
             execution_package_eligibility_counts_by_project[key] = eligibility_counts
             execution_package_release_counts_by_project[key] = release_counts
             execution_package_handoff_counts_by_project[key] = handoff_counts
+            execution_package_execution_counts_by_project[key] = execution_counts
             latest_id = loaded.get("execution_package_id")
             latest_path = loaded.get("execution_package_path")
             latest_row = execution_package_rows[0] if execution_package_rows else {}
@@ -406,6 +419,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 latest_execution_package_handoff_status_by_project[key] = str(latest_row.get("handoff_status"))
             if latest_row.get("handoff_executor_target_id"):
                 latest_execution_package_handoff_target_by_project[key] = str(latest_row.get("handoff_executor_target_id"))
+            if latest_row.get("execution_status"):
+                latest_execution_package_execution_status_by_project[key] = str(latest_row.get("execution_status"))
+            if latest_row.get("execution_executor_target_id"):
+                latest_execution_package_execution_target_by_project[key] = str(latest_row.get("execution_executor_target_id"))
             if eligibility_counts.get("eligible", 0) > 0:
                 execution_package_eligible_projects.append(key)
             if eligibility_counts.get("ineligible", 0) > 0:
@@ -418,6 +435,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 execution_package_handoff_authorized_projects.append(key)
             if handoff_counts.get("blocked", 0) > 0:
                 execution_package_handoff_blocked_projects.append(key)
+            if execution_counts.get("succeeded", 0) > 0:
+                execution_package_execution_succeeded_projects.append(key)
+            if execution_counts.get("failed", 0) > 0:
+                execution_package_execution_failed_projects.append(key)
+            if execution_counts.get("blocked", 0) > 0:
+                execution_package_execution_blocked_projects.append(key)
+            if execution_counts.get("rolled_back", 0) > 0:
+                execution_package_execution_rolled_back_projects.append(key)
             if latest_id or latest_row.get("package_id"):
                 latest_execution_package_id_by_project[key] = str(latest_id or latest_row.get("package_id") or "")
             if latest_path or latest_row.get("package_file"):
@@ -1030,6 +1055,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     authorized_handoff_count_total = sum(v.get("authorized", 0) for v in execution_package_handoff_counts_by_project.values())
     blocked_handoff_count_total = sum(v.get("blocked", 0) for v in execution_package_handoff_counts_by_project.values())
     pending_handoff_count_total = sum(v.get("pending", 0) for v in execution_package_handoff_counts_by_project.values())
+    succeeded_execution_count_total = sum(v.get("succeeded", 0) for v in execution_package_execution_counts_by_project.values())
+    failed_execution_count_total = sum(v.get("failed", 0) for v in execution_package_execution_counts_by_project.values())
+    blocked_execution_count_total = sum(v.get("blocked", 0) for v in execution_package_execution_counts_by_project.values())
+    rolled_back_execution_count_total = sum(v.get("rolled_back", 0) for v in execution_package_execution_counts_by_project.values())
+    pending_execution_count_total = sum(v.get("pending", 0) for v in execution_package_execution_counts_by_project.values())
 
     return {
         "summary_generated_at": now,
@@ -1118,6 +1148,22 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "authorized_projects": sorted(set(execution_package_handoff_authorized_projects)),
             "blocked_projects": sorted(set(execution_package_handoff_blocked_projects)),
             "reason": "No execution package handoff requests recorded." if authorized_handoff_count_total == 0 and blocked_handoff_count_total == 0 else "Execution package handoff results available.",
+        },
+        "execution_package_execution_summary": {
+            "execution_surface_status": "ok",
+            "pending_count_total": pending_execution_count_total,
+            "succeeded_count_total": succeeded_execution_count_total,
+            "failed_count_total": failed_execution_count_total,
+            "blocked_count_total": blocked_execution_count_total,
+            "rolled_back_count_total": rolled_back_execution_count_total,
+            "execution_counts_by_project": execution_package_execution_counts_by_project,
+            "latest_execution_status_by_project": latest_execution_package_execution_status_by_project,
+            "latest_execution_target_by_project": latest_execution_package_execution_target_by_project,
+            "succeeded_projects": sorted(set(execution_package_execution_succeeded_projects)),
+            "failed_projects": sorted(set(execution_package_execution_failed_projects)),
+            "blocked_projects": sorted(set(execution_package_execution_blocked_projects)),
+            "rolled_back_projects": sorted(set(execution_package_execution_rolled_back_projects)),
+            "reason": "No execution package execution requests recorded." if succeeded_execution_count_total == 0 and failed_execution_count_total == 0 and blocked_execution_count_total == 0 and rolled_back_execution_count_total == 0 else "Execution package execution results available.",
         },
         "resume_status_by_project": resume_status_by_project,
         "resume_status_count": resume_status_count,

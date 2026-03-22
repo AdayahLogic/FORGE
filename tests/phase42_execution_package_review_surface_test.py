@@ -115,7 +115,7 @@ def test_execution_package_details_has_stable_sections():
         assert "review_header" in payload
         assert "package" in payload
         sections = payload.get("sections") or {}
-        assert sorted(sections.keys()) == ["approval", "command_request", "decision", "eligibility", "handoff", "metadata", "release", "rollback", "safety", "scope"]
+        assert sorted(sections.keys()) == ["approval", "command_request", "decision", "eligibility", "execution", "handoff", "metadata", "release", "rollback", "safety", "scope"]
         assert sections["command_request"]["summary"] == "Inspect package contents."
         assert sections["scope"]["candidate_paths"] == ["src/module.py"]
         assert sections["approval"]["approval_id_refs"] == ["appr-1"]
@@ -123,6 +123,7 @@ def test_execution_package_details_has_stable_sections():
         assert sections["eligibility"]["eligibility_status"] == "pending"
         assert sections["release"]["release_status"] == "pending"
         assert sections["handoff"]["handoff_status"] == "pending"
+        assert sections["execution"]["execution_status"] == "pending"
         assert sections["safety"]["sealed"] is True
         assert sections["rollback"]["rollback_notes"] == ["Discard if incorrect."]
         assert sections["metadata"]["openclaw_active"] is False
