@@ -12,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from NEXUS.executor_backends import get_executor_backend, get_executor_backend_status
+from NEXUS.executor_backends.contracts import normalize_executor_response_v1
 from NEXUS.execution_package_hardening import normalize_rollback_repair, summarize_failure
 
 
@@ -70,6 +72,17 @@ def _receipt(
     }
 
 
+def _resolve_backend_id(package: dict[str, Any] | None) -> str:
+    p = package or {}
+    execution_backend_id = str(p.get("execution_executor_backend_id") or "").strip().lower()
+    if execution_backend_id:
+        return execution_backend_id
+    metadata = p.get("metadata")
+    if isinstance(metadata, dict):
+        return str(metadata.get("executor_backend_id") or "").strip().lower()
+    return ""
+
+
 def _attempt_rollback(*, log_path: Path | None, rollback_notes: list[str] | None) -> dict[str, Any]:
     notes = [str(x) for x in (rollback_notes or []) if str(x).strip()][:20]
     if not notes:
@@ -99,6 +112,117 @@ def _attempt_rollback(*, log_path: Path | None, rollback_notes: list[str] | None
     }
 
 
+def _map_executor_response_to_execution_result(
+    *,
+    execution_id: str,
+    target_id: str,
+    response: dict[str, Any],
+) -> dict[str, Any]:
+    normalized = normalize_executor_response_v1(response)
+    adapter_status = str(normalized.get("adapter_status") or "").strip().lower()
+    if not normalized.get("backend_id") or adapter_status != "active":
+        failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
+        return {
+            "execution_status": "failed",
+            "execution_reason": {"code": "runtime_start_failed", "message": "Controlled executor adapter is unavailable."},
+            "execution_receipt": _receipt(
+                result_status="failed",
+                exit_code=normalized.get("exit_code"),
+                log_ref=str(normalized.get("log_ref") or ""),
+                files_touched_count=normalized.get("files_touched_count") or 0,
+                artifacts_written_count=normalized.get("artifacts_written_count") or 0,
+                failure_class="runtime_start_failure",
+                stdout_summary=str(normalized.get("stdout_summary") or ""),
+                stderr_summary=str(normalized.get("stderr_summary") or ""),
+                rollback_summary=normalized.get("rollback_summary") or {},
+            ),
+            "rollback_status": "not_needed",
+            "rollback_timestamp": "",
+            "rollback_reason": {"code": "", "message": ""},
+            "failure_summary": failure_summary,
+            "rollback_repair": normalize_rollback_repair(None),
+            "runtime_artifact": dict(normalized.get("runtime_artifact") or {}),
+            "execution_finished_at": _utc_now_iso(),
+        }
+
+    result_status = str(normalized.get("result_status") or "").strip().lower()
+    failure_class = str(normalized.get("failure_class") or "").strip().lower()
+    if result_status == "succeeded" and not failure_class:
+        return {
+            "execution_status": "succeeded",
+            "execution_reason": {"code": "succeeded", "message": "Package executed through the controlled runtime boundary."},
+            "execution_receipt": _receipt(
+                result_status="succeeded",
+                exit_code=normalized.get("exit_code"),
+                log_ref=str(normalized.get("log_ref") or ""),
+                files_touched_count=normalized.get("files_touched_count") or 0,
+                artifacts_written_count=normalized.get("artifacts_written_count") or 0,
+                stdout_summary=str(normalized.get("stdout_summary") or ""),
+                stderr_summary=str(normalized.get("stderr_summary") or ""),
+                rollback_summary=normalized.get("rollback_summary") or {},
+            ),
+            "rollback_status": "not_needed",
+            "rollback_timestamp": "",
+            "rollback_reason": {"code": "", "message": ""},
+            "failure_summary": summarize_failure(failure_class="", timestamp=""),
+            "rollback_repair": normalize_rollback_repair(None),
+            "runtime_artifact": dict(normalized.get("runtime_artifact") or {
+                "artifact_type": "execution_log",
+                "execution_id": execution_id,
+                "log_ref": str(normalized.get("log_ref") or ""),
+                "runtime_target_id": target_id,
+            }),
+            "execution_finished_at": _utc_now_iso(),
+        }
+
+    if failure_class not in ("runtime_execution_failure", "rollback_failure"):
+        failure_class = "runtime_start_failure"
+    rollback_status = "failed" if failure_class == "rollback_failure" else "not_needed"
+    rollback_repair = normalize_rollback_repair(None)
+    if failure_class == "rollback_failure":
+        rollback_repair = normalize_rollback_repair(
+            {
+                "rollback_repair_status": "pending",
+                "rollback_repair_timestamp": _utc_now_iso(),
+                "rollback_repair_reason": {
+                    "code": "rollback_repair_required",
+                    "message": "Rollback repair requires manual handling after rollback failure.",
+                },
+            }
+        )
+    failure_summary = summarize_failure(failure_class=failure_class, timestamp=_utc_now_iso())
+    return {
+        "execution_status": "failed",
+        "execution_reason": {
+            "code": "runtime_execution_failed" if failure_class != "runtime_start_failure" else "runtime_start_failed",
+            "message": "Controlled executor execution failed." if failure_class != "runtime_start_failure" else "Controlled executor failed to start correctly.",
+        },
+        "execution_receipt": _receipt(
+            result_status="failed",
+            exit_code=normalized.get("exit_code"),
+            log_ref=str(normalized.get("log_ref") or ""),
+            files_touched_count=normalized.get("files_touched_count") or 0,
+            artifacts_written_count=normalized.get("artifacts_written_count") or 0,
+            failure_class=failure_class,
+            stdout_summary=str(normalized.get("stdout_summary") or ""),
+            stderr_summary=str(normalized.get("stderr_summary") or ""),
+            rollback_summary=normalized.get("rollback_summary") or {},
+        ),
+        "rollback_status": rollback_status,
+        "rollback_timestamp": _utc_now_iso() if rollback_status == "failed" else "",
+        "rollback_reason": {"code": "rollback_failed", "message": "Rollback/reporting failed."} if rollback_status == "failed" else {"code": "", "message": ""},
+        "failure_summary": failure_summary,
+        "rollback_repair": rollback_repair,
+        "runtime_artifact": dict(normalized.get("runtime_artifact") or {
+            "artifact_type": "execution_log",
+            "execution_id": execution_id,
+            "log_ref": str(normalized.get("log_ref") or ""),
+            "runtime_target_id": target_id,
+        }),
+        "execution_finished_at": _utc_now_iso(),
+    }
+
+
 def execute_execution_package(
     *,
     project_path: str | None,
@@ -109,6 +233,7 @@ def execute_execution_package(
     """Execute through a controlled runtime boundary and return a summary-only result."""
     p = package or {}
     target_id = str(p.get("execution_executor_target_id") or p.get("handoff_executor_target_id") or p.get("runtime_target_id") or "local").strip().lower()
+    backend_id = _resolve_backend_id(p)
     run_dir = _get_execution_run_dir(project_path)
     if not run_dir:
         failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
@@ -133,10 +258,89 @@ def execute_execution_package(
             f"[start] execution_id={execution_id}",
             f"[start] actor={execution_actor}",
             f"[start] target={target_id}",
+            f"[start] backend={backend_id or 'default'}",
             f"[start] package_id={p.get('package_id')}",
             f"[start] started_at={started_at}",
         ],
     )
+
+    if backend_id == "openclaw":
+        backend_status = get_executor_backend_status(backend_id)
+        if str(backend_status.get("adapter_status") or "").strip().lower() != "active":
+            _append_log(log_path, [f"[error] executor_backend_inactive={backend_id}"])
+            failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
+            return {
+                "execution_status": "failed",
+                "execution_reason": {"code": "runtime_start_failed", "message": "Controlled executor backend is inactive."},
+                "execution_receipt": _receipt(
+                    result_status="failed",
+                    exit_code=None,
+                    log_ref=str(log_path),
+                    artifacts_written_count=1,
+                    failure_class="runtime_start_failure",
+                    stderr_summary=f"backend_inactive:{backend_id}",
+                ),
+                "rollback_status": "not_needed",
+                "rollback_timestamp": "",
+                "rollback_reason": {"code": "", "message": ""},
+                "failure_summary": failure_summary,
+                "rollback_repair": normalize_rollback_repair(None),
+                "runtime_artifact": {},
+                "execution_finished_at": _utc_now_iso(),
+            }
+        backend = get_executor_backend(backend_id)
+        executor = (backend or {}).get("executor")
+        if not callable(executor):
+            _append_log(log_path, [f"[error] executor_backend_missing={backend_id}"])
+            failure_summary = summarize_failure(failure_class="runtime_start_failure", timestamp=_utc_now_iso())
+            return {
+                "execution_status": "failed",
+                "execution_reason": {"code": "runtime_start_failed", "message": "Controlled executor backend unavailable."},
+                "execution_receipt": _receipt(
+                    result_status="failed",
+                    exit_code=None,
+                    log_ref=str(log_path),
+                    artifacts_written_count=1,
+                    failure_class="runtime_start_failure",
+                    stderr_summary=f"backend_missing:{backend_id}",
+                ),
+                "rollback_status": "not_needed",
+                "rollback_timestamp": "",
+                "rollback_reason": {"code": "", "message": ""},
+                "failure_summary": failure_summary,
+                "rollback_repair": normalize_rollback_repair(None),
+                "runtime_artifact": {},
+                "execution_finished_at": _utc_now_iso(),
+            }
+        try:
+            backend_response = executor(
+                project_path=project_path,
+                package=p,
+                execution_id=execution_id,
+                execution_actor=execution_actor,
+                log_path=str(log_path),
+            )
+        except Exception as e:
+            backend_response = {
+                "status": "error",
+                "result_status": "failed",
+                "exit_code": None,
+                "stdout_summary": "",
+                "stderr_summary": str(e),
+                "log_ref": str(log_path),
+                "files_touched_count": 0,
+                "artifacts_written_count": 1,
+                "failure_class": "runtime_start_failure",
+                "runtime_artifact": {},
+                "rollback_summary": {},
+                "adapter_status": "error",
+                "backend_id": backend_id,
+            }
+        return _map_executor_response_to_execution_result(
+            execution_id=execution_id,
+            target_id=target_id,
+            response=backend_response,
+        )
 
     try:
         proc = subprocess.run(

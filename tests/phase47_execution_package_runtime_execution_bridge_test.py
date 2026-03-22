@@ -54,6 +54,46 @@ def _patched_executor(result: dict):
         executor_mod.execute_execution_package_safe = original
 
 
+@contextmanager
+def _patched_openclaw_backend(result):
+    import NEXUS.executor_backends as backends_mod
+
+    original = backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"]
+    if callable(result):
+        backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"] = result
+    else:
+        backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"] = lambda **kwargs: result
+    try:
+        yield
+    finally:
+        backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"] = original
+
+
+@contextmanager
+def _patched_openclaw_status(status: str):
+    import NEXUS.executor_backends.openclaw_executor as openclaw_mod
+
+    original = openclaw_mod.ADAPTER_STATUS
+    openclaw_mod.ADAPTER_STATUS = status
+    try:
+        yield
+    finally:
+        openclaw_mod.ADAPTER_STATUS = original
+
+
+@contextmanager
+def _patched_runtime_target_capabilities(target_id: str, capabilities: list[str]):
+    from NEXUS.runtime_target_registry import RUNTIME_TARGET_REGISTRY
+
+    target = RUNTIME_TARGET_REGISTRY[target_id]
+    original = list(target.get("capabilities") or [])
+    target["capabilities"] = list(capabilities)
+    try:
+        yield
+    finally:
+        target["capabilities"] = original
+
+
 def _run(name: str, fn):
     try:
         fn()
@@ -75,9 +115,13 @@ def _write_package(
     handoff_status: str = "authorized",
     handoff_target: str = "local",
     execution_status: str = "pending",
+    executor_backend_id: str = "",
 ) -> str | None:
     from NEXUS.execution_package_registry import write_execution_package_safe
 
+    metadata = {"openclaw_active": executor_backend_id == "openclaw"}
+    if executor_backend_id:
+        metadata["executor_backend_id"] = executor_backend_id
     package = {
         "package_id": package_id,
         "package_version": "1.0",
@@ -108,7 +152,7 @@ def _write_package(
         "review_checklist": ["Confirm package remains sealed."],
         "rollback_notes": ["Revert touched files from the runtime log if execution fails."],
         "runtime_artifacts": [],
-        "metadata": {"openclaw_active": False},
+        "metadata": metadata,
         "decision_status": decision_status,
         "decision_timestamp": "2026-03-22T00:01:00Z" if decision_status != "pending" else "",
         "decision_actor": "operator_a" if decision_status != "pending" else "",
@@ -350,6 +394,162 @@ def test_execution_runtime_failure_and_rollback_states_persist():
         assert rollback_failed_result["payload"]["execution"]["rollback_status"] == "failed"
 
 
+def test_openclaw_execution_succeeds_and_persists_backend():
+    from AEGIS.aegis_contract import build_aegis_result
+    from NEXUS.command_surface import run_command
+    from NEXUS.execution_package_registry import read_execution_package
+
+    with _local_test_dir() as tmp:
+        _write_package(tmp, "pkg-openclaw-success", handoff_target="openclaw", executor_backend_id="openclaw")
+        aegis = build_aegis_result(
+            aegis_decision="allow",
+            aegis_reason="Allowed.",
+            action_mode="execution",
+            project_name="phase47proj",
+            project_path=str(tmp),
+            workspace_valid=True,
+            file_guard_status="allow",
+        )
+        backend_result = {
+            "status": "ok",
+            "result_status": "succeeded",
+            "exit_code": 0,
+            "stdout_summary": "OpenClaw executed.",
+            "stderr_summary": "",
+            "log_ref": str(tmp / "state" / "execution_runs" / "openclaw.log"),
+            "files_touched_count": 0,
+            "artifacts_written_count": 1,
+            "failure_class": "",
+            "runtime_artifact": {"artifact_type": "execution_log", "log_ref": str(tmp / "state" / "execution_runs" / "openclaw.log")},
+            "rollback_summary": {},
+            "adapter_status": "active",
+            "backend_id": "openclaw",
+        }
+        with _patched_aegis(aegis), _patched_openclaw_backend(backend_result):
+            result = run_command(
+                "execution_package_execute_request",
+                project_path=str(tmp),
+                execution_package_id="pkg-openclaw-success",
+                execution_actor="operator_x",
+            )
+        execution = result["payload"]["execution"]
+        assert execution["execution_status"] == "succeeded"
+        assert execution["execution_executor_target_id"] == "openclaw"
+        assert execution["execution_executor_backend_id"] == "openclaw"
+        persisted = read_execution_package(str(tmp), "pkg-openclaw-success")
+        assert persisted is not None
+        assert persisted["execution_executor_target_id"] == "openclaw"
+        assert persisted["execution_executor_backend_id"] == "openclaw"
+
+
+def test_openclaw_target_and_capability_mismatch_block_before_backend():
+    from AEGIS.aegis_contract import build_aegis_result
+    from NEXUS.command_surface import run_command
+
+    called = {"value": False}
+
+    def _backend(**kwargs):
+        called["value"] = True
+        return {"status": "ok", "result_status": "succeeded", "adapter_status": "active", "backend_id": "openclaw"}
+
+    with _local_test_dir() as tmp:
+        aegis = build_aegis_result(
+            aegis_decision="allow",
+            aegis_reason="Allowed.",
+            action_mode="execution",
+            project_name="phase47proj",
+            project_path=str(tmp),
+            workspace_valid=True,
+            file_guard_status="allow",
+        )
+        _write_package(tmp, "pkg-openclaw-mismatch", handoff_target="local", executor_backend_id="openclaw")
+        with _patched_aegis(aegis), _patched_openclaw_backend(_backend):
+            mismatch = run_command(
+                "execution_package_execute_request",
+                project_path=str(tmp),
+                execution_package_id="pkg-openclaw-mismatch",
+                execution_actor="operator_x",
+            )
+        execution = mismatch["payload"]["execution"]
+        assert execution["execution_status"] == "blocked"
+        assert execution["execution_reason"]["code"] == "executor_backend_target_mismatch"
+        assert execution["execution_receipt"]["failure_class"] == "preflight_block"
+        assert called["value"] is False
+
+        _write_package(tmp, "pkg-openclaw-capability", handoff_target="openclaw", executor_backend_id="openclaw")
+        with _patched_aegis(aegis), _patched_openclaw_backend(_backend), _patched_runtime_target_capabilities("openclaw", ["execute"]):
+            capability = run_command(
+                "execution_package_execute_request",
+                project_path=str(tmp),
+                execution_package_id="pkg-openclaw-capability",
+                execution_actor="operator_x",
+            )
+        execution = capability["payload"]["execution"]
+        assert execution["execution_status"] == "blocked"
+        assert execution["execution_reason"]["code"] == "executor_capability_mismatch"
+        assert execution["execution_receipt"]["failure_class"] == "preflight_block"
+        assert called["value"] is False
+
+
+def test_openclaw_does_not_create_dispatch_or_autonomy_path_and_gates_fire_first():
+    from AEGIS.aegis_contract import build_aegis_result
+    from NEXUS.command_surface import run_command
+    from NEXUS.runtimes import RUNTIME_ADAPTERS
+    from NEXUS.runtime_target_registry import RUNTIME_TARGET_REGISTRY
+
+    assert "openclaw" not in RUNTIME_ADAPTERS
+    assert "planning" not in (RUNTIME_TARGET_REGISTRY["openclaw"].get("capabilities") or [])
+    assert "agent_routing" not in (RUNTIME_TARGET_REGISTRY["openclaw"].get("capabilities") or [])
+
+    called = {"value": False}
+
+    def _backend(**kwargs):
+        called["value"] = True
+        return {"status": "ok", "result_status": "succeeded", "adapter_status": "active", "backend_id": "openclaw"}
+
+    with _local_test_dir() as tmp:
+        _write_package(tmp, "pkg-gate-unsealed", sealed=False, handoff_target="openclaw", executor_backend_id="openclaw")
+        allow = build_aegis_result(
+            aegis_decision="allow",
+            aegis_reason="Allowed.",
+            action_mode="execution",
+            project_name="phase47proj",
+            project_path=str(tmp),
+            workspace_valid=True,
+            file_guard_status="allow",
+        )
+        with _patched_aegis(allow), _patched_openclaw_backend(_backend):
+            unsealed = run_command(
+                "execution_package_execute_request",
+                project_path=str(tmp),
+                execution_package_id="pkg-gate-unsealed",
+                execution_actor="operator_x",
+            )
+        assert unsealed["payload"]["execution"]["execution_reason"]["code"] == "not_sealed"
+        assert called["value"] is False
+
+        _write_package(tmp, "pkg-gate-aegis", handoff_target="openclaw", executor_backend_id="openclaw")
+        deny = build_aegis_result(
+            aegis_decision="deny",
+            aegis_reason="Denied.",
+            action_mode="execution",
+            project_name="phase47proj",
+            project_path=str(tmp),
+            workspace_valid=True,
+            file_guard_status="allow",
+        )
+        with _patched_aegis(deny), _patched_openclaw_backend(_backend):
+            blocked = run_command(
+                "execution_package_execute_request",
+                project_path=str(tmp),
+                execution_package_id="pkg-gate-aegis",
+                execution_actor="operator_x",
+            )
+        assert blocked["payload"]["execution"]["execution_reason"]["code"] == "aegis_blocked"
+        assert blocked["payload"]["execution"]["execution_receipt"]["failure_class"] == "aegis_block"
+        assert called["value"] is False
+
+
 def test_execution_status_details_and_dashboard_include_summary_only_execution():
     from AEGIS.aegis_contract import build_aegis_result
     from NEXUS.command_surface import run_command
@@ -414,6 +614,9 @@ def main():
         test_execution_request_marks_succeeded_and_persists_receipt,
         test_execution_request_blocks_for_invalid_conditions,
         test_execution_runtime_failure_and_rollback_states_persist,
+        test_openclaw_execution_succeeds_and_persists_backend,
+        test_openclaw_target_and_capability_mismatch_block_before_backend,
+        test_openclaw_does_not_create_dispatch_or_autonomy_path_and_gates_fire_first,
         test_execution_status_details_and_dashboard_include_summary_only_execution,
     ]
     passed = sum(1 for t in tests if _run(t.__name__, t))

@@ -54,6 +54,33 @@ def _patched_executor(result: dict):
         executor_mod.execute_execution_package_safe = original
 
 
+@contextmanager
+def _patched_openclaw_backend(result):
+    import NEXUS.executor_backends as backends_mod
+
+    original = backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"]
+    if callable(result):
+        backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"] = result
+    else:
+        backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"] = lambda **kwargs: result
+    try:
+        yield
+    finally:
+        backends_mod.EXECUTOR_BACKENDS["openclaw"]["executor"] = original
+
+
+@contextmanager
+def _patched_openclaw_status(status: str):
+    import NEXUS.executor_backends.openclaw_executor as openclaw_mod
+
+    original = openclaw_mod.ADAPTER_STATUS
+    openclaw_mod.ADAPTER_STATUS = status
+    try:
+        yield
+    finally:
+        openclaw_mod.ADAPTER_STATUS = original
+
+
 def _run(name: str, fn):
     try:
         fn()
@@ -72,9 +99,13 @@ def _write_package(
     execution_status: str = "pending",
     retry_policy: dict | None = None,
     execution_id: str = "",
+    executor_backend_id: str = "",
 ) -> str | None:
     from NEXUS.execution_package_registry import write_execution_package_safe
 
+    metadata = {"openclaw_active": executor_backend_id == "openclaw"}
+    if executor_backend_id:
+        metadata["executor_backend_id"] = executor_backend_id
     package = {
         "package_id": package_id,
         "package_version": "1.0",
@@ -105,7 +136,7 @@ def _write_package(
         "review_checklist": ["Confirm package remains sealed."],
         "rollback_notes": ["Use rollback guidance if execution fails."],
         "runtime_artifacts": [],
-        "metadata": {"openclaw_active": False},
+        "metadata": metadata,
         "decision_status": "approved",
         "decision_timestamp": "2026-03-22T00:01:00Z",
         "decision_actor": "operator_a",
@@ -355,6 +386,88 @@ def test_failure_and_rollback_repair_states_are_classified():
         assert execution["recovery_summary"]["recovery_status"] == "repair_required"
 
 
+def test_openclaw_adapter_failure_and_malformed_results_flow_into_existing_failure_classes():
+    from AEGIS.aegis_contract import build_aegis_result
+    from NEXUS.command_surface import run_command
+
+    with _local_test_dir() as tmp:
+        aegis = build_aegis_result(
+            aegis_decision="allow",
+            aegis_reason="Allowed.",
+            action_mode="execution",
+            project_name="phase48proj",
+            project_path=str(tmp),
+            workspace_valid=True,
+            file_guard_status="allow",
+        )
+
+        _write_package(tmp, "pkg-openclaw-fail", handoff_target="openclaw", executor_backend_id="openclaw")
+        backend_failure = {
+            "status": "error",
+            "result_status": "failed",
+            "exit_code": 5,
+            "stdout_summary": "",
+            "stderr_summary": "adapter execution failed",
+            "log_ref": str(tmp / "state" / "execution_runs" / "openclaw_fail.log"),
+            "files_touched_count": 1,
+            "artifacts_written_count": 1,
+            "failure_class": "runtime_execution_failure",
+            "runtime_artifact": {"artifact_type": "execution_log", "log_ref": str(tmp / "state" / "execution_runs" / "openclaw_fail.log")},
+            "rollback_summary": {},
+            "adapter_status": "active",
+            "backend_id": "openclaw",
+        }
+        with _patched_aegis(aegis), _patched_openclaw_backend(backend_failure):
+            failed = run_command("execution_package_execute_request", project_path=str(tmp), execution_package_id="pkg-openclaw-fail", execution_actor="operator_x")
+        execution = failed["payload"]["execution"]
+        assert execution["execution_status"] == "failed"
+        assert execution["execution_executor_backend_id"] == "openclaw"
+        assert execution["failure_summary"]["failure_class"] == "runtime_execution_failure"
+        assert execution["failure_summary"]["failure_stage"] == "execution"
+        assert execution["recovery_summary"]["recovery_status"] == "retry_blocked"
+
+        _write_package(tmp, "pkg-openclaw-malformed", handoff_target="openclaw", executor_backend_id="openclaw")
+        with _patched_aegis(aegis), _patched_openclaw_backend("not-a-dict"):
+            malformed = run_command("execution_package_execute_request", project_path=str(tmp), execution_package_id="pkg-openclaw-malformed", execution_actor="operator_x")
+        execution = malformed["payload"]["execution"]
+        assert execution["execution_status"] == "failed"
+        assert execution["execution_receipt"]["failure_class"] == "runtime_start_failure"
+        assert execution["failure_summary"]["failure_class"] == "runtime_start_failure"
+        assert execution["recovery_summary"]["recovery_status"] == "retry_blocked"
+
+
+def test_openclaw_backend_inactive_fails_closed_without_fallback():
+    from AEGIS.aegis_contract import build_aegis_result
+    from NEXUS.command_surface import run_command
+
+    called = {"value": False}
+
+    def _backend(**kwargs):
+        called["value"] = True
+        return {"status": "ok", "result_status": "succeeded", "adapter_status": "active", "backend_id": "openclaw"}
+
+    with _local_test_dir() as tmp:
+        _write_package(tmp, "pkg-openclaw-inactive", handoff_target="openclaw", executor_backend_id="openclaw")
+        aegis = build_aegis_result(
+            aegis_decision="allow",
+            aegis_reason="Allowed.",
+            action_mode="execution",
+            project_name="phase48proj",
+            project_path=str(tmp),
+            workspace_valid=True,
+            file_guard_status="allow",
+        )
+        with _patched_aegis(aegis), _patched_openclaw_backend(_backend), _patched_openclaw_status("inactive"):
+            result = run_command("execution_package_execute_request", project_path=str(tmp), execution_package_id="pkg-openclaw-inactive", execution_actor="operator_x")
+        execution = result["payload"]["execution"]
+        assert execution["execution_status"] == "failed"
+        assert execution["execution_receipt"]["failure_class"] == "runtime_start_failure"
+        assert execution["failure_summary"]["failure_class"] == "runtime_start_failure"
+        assert execution["execution_executor_backend_id"] == "openclaw"
+        assert execution["execution_executor_target_id"] == "openclaw"
+        assert called["value"] is False
+
+
 def test_integrity_checker_sees_phase8_shape():
     from NEXUS.integrity_checker import check_execution_package_hardening_shape, check_execution_package_hardening_summary_shape
 
@@ -385,6 +498,8 @@ def main():
         test_duplicate_success_is_blocked_without_retry_authorization,
         test_explicit_retry_policy_allows_future_retry_without_new_command,
         test_failure_and_rollback_repair_states_are_classified,
+        test_openclaw_adapter_failure_and_malformed_results_flow_into_existing_failure_classes,
+        test_openclaw_backend_inactive_fails_closed_without_fallback,
         test_integrity_checker_sees_phase8_shape,
     ]
     passed = sum(1 for t in tests if _run(t.__name__, t))

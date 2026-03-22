@@ -85,6 +85,7 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "execution_version": normalized.get("execution_version"),
         "execution_executor_target_id": normalized.get("execution_executor_target_id"),
         "execution_executor_target_name": normalized.get("execution_executor_target_name"),
+        "execution_executor_backend_id": normalized.get("execution_executor_backend_id"),
         "rollback_status": normalized.get("rollback_status"),
         "rollback_timestamp": normalized.get("rollback_timestamp"),
         "rollback_reason": normalized.get("rollback_reason"),
@@ -175,6 +176,21 @@ def _normalize_handoff_aegis_result(value: Any) -> dict[str, Any]:
         return normalize_aegis_result(value)
     except Exception:
         return {}
+
+
+def _normalize_executor_backend_id(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def _resolve_executor_backend_id(package: dict[str, Any] | None) -> str:
+    p = package or {}
+    explicit = _normalize_executor_backend_id(p.get("execution_executor_backend_id"))
+    if explicit:
+        return explicit
+    metadata = p.get("metadata")
+    if isinstance(metadata, dict):
+        return _normalize_executor_backend_id(metadata.get("executor_backend_id"))
+    return ""
 
 
 def _normalize_execution_reason(value: Any) -> dict[str, str]:
@@ -338,6 +354,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "execution_version": str(p.get("execution_version") or "v1"),
         "execution_executor_target_id": str(p.get("execution_executor_target_id") or ""),
         "execution_executor_target_name": str(p.get("execution_executor_target_name") or ""),
+        "execution_executor_backend_id": _normalize_executor_backend_id(p.get("execution_executor_backend_id") or _resolve_executor_backend_id(p)),
         "execution_aegis_result": _normalize_handoff_aegis_result(p.get("execution_aegis_result")),
         "execution_started_at": str(p.get("execution_started_at") or ""),
         "execution_finished_at": str(p.get("execution_finished_at") or ""),
@@ -400,6 +417,7 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "execution_version": str(r.get("execution_version") or "v1"),
         "execution_executor_target_id": str(r.get("execution_executor_target_id") or ""),
         "execution_executor_target_name": str(r.get("execution_executor_target_name") or ""),
+        "execution_executor_backend_id": _normalize_executor_backend_id(r.get("execution_executor_backend_id")),
         "execution_receipt": _summarize_execution_receipt(r.get("execution_receipt")),
         "rollback_status": str(r.get("rollback_status") or "not_needed").strip().lower(),
         "rollback_timestamp": str(r.get("rollback_timestamp") or ""),
@@ -744,6 +762,29 @@ def evaluate_execution_package_handoff(
         runtime_target = {}
     capabilities = [str(x).strip().lower() for x in (runtime_target.get("capabilities") or []) if str(x).strip()]
     target_name = str(runtime_target.get("display_name") or runtime_target.get("canonical_name") or "")
+    backend_id = _resolve_executor_backend_id(p)
+    if backend_id == "openclaw" and target_id != "openclaw":
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {
+                "code": "executor_backend_target_mismatch",
+                "message": "OpenClaw backend requires the openclaw executor target.",
+            },
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name,
+            "handoff_aegis_result": {},
+        }
+    if backend_id == "openclaw" and "controlled_executor" not in capabilities:
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {
+                "code": "executor_capability_mismatch",
+                "message": "OpenClaw backend requires a controlled_executor-capable target.",
+            },
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name,
+            "handoff_aegis_result": {},
+        }
     if (
         not runtime_target
         or str(runtime_target.get("active_or_planned") or "").strip().lower() not in ("active", "planned")
@@ -901,6 +942,17 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
         runtime_target = {}
     capabilities = [str(x).strip().lower() for x in (runtime_target.get("capabilities") or []) if str(x).strip()]
     target_name = str(runtime_target.get("display_name") or runtime_target.get("canonical_name") or target_name)
+    backend_id = _resolve_executor_backend_id(p)
+    if backend_id == "openclaw" and target_id != "openclaw":
+        return _blocked(
+            "executor_backend_target_mismatch",
+            "OpenClaw backend requires the openclaw executor target.",
+        )
+    if backend_id == "openclaw" and "controlled_executor" not in capabilities:
+        return _blocked(
+            "executor_capability_mismatch",
+            "OpenClaw backend requires a controlled_executor-capable target.",
+        )
     if (
         not runtime_target
         or str(runtime_target.get("active_or_planned") or "").strip().lower() != "active"
@@ -1136,6 +1188,7 @@ def record_execution_package_execution(
     package["execution_started_at"] = started_at
     package["execution_executor_target_id"] = str(evaluation.get("execution_executor_target_id") or "")
     package["execution_executor_target_name"] = str(evaluation.get("execution_executor_target_name") or "")
+    package["execution_executor_backend_id"] = _resolve_executor_backend_id(package)
     package["execution_aegis_result"] = _normalize_handoff_aegis_result(evaluation.get("execution_aegis_result"))
     package["retry_policy"] = normalize_retry_policy(evaluation.get("retry_policy") or retry_policy)
     package["idempotency"] = normalize_idempotency(evaluation.get("idempotency") or idempotency, package=package)

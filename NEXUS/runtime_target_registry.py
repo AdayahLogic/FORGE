@@ -40,6 +40,16 @@ RUNTIME_TARGET_REGISTRY: dict[str, dict[str, Any]] = {
         "approval_level": "human_review",
         "description": "Codex as execution target; agent and tool execution via Codex.",
     },
+    "openclaw": {
+        "canonical_name": "openclaw",
+        "display_name": "OpenClaw",
+        "status": "active",
+        "runtime_type": "controlled_executor",
+        "active_or_planned": "active",
+        "capabilities": ["execute", "controlled_executor"],
+        "approval_level": "human_review",
+        "description": "Controlled executor target for reviewed package execution only.",
+    },
     "windows_review_package": {
         "canonical_name": "windows_review_package",
         "display_name": "Windows Review Package",
