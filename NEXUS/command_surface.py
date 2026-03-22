@@ -40,6 +40,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_details",
     "execution_package_decide",
     "execution_package_decision_status",
+    "execution_package_eligibility_check",
+    "execution_package_eligibility_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -212,6 +214,10 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "decision_timestamp": p.get("decision_timestamp"),
         "decision_actor": p.get("decision_actor"),
         "decision_id": p.get("decision_id"),
+        "eligibility_status": p.get("eligibility_status"),
+        "eligibility_timestamp": p.get("eligibility_timestamp"),
+        "eligibility_reason": p.get("eligibility_reason") or {"code": "", "message": ""},
+        "eligibility_check_id": p.get("eligibility_check_id"),
     }
 
 
@@ -247,6 +253,13 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "decision_actor": p.get("decision_actor") or "",
             "decision_notes": p.get("decision_notes") or "",
             "decision_id": p.get("decision_id") or "",
+        },
+        "eligibility": {
+            "eligibility_status": p.get("eligibility_status") or "pending",
+            "eligibility_timestamp": p.get("eligibility_timestamp") or "",
+            "eligibility_reason": p.get("eligibility_reason") or {"code": "", "message": ""},
+            "eligibility_checked_by": p.get("eligibility_checked_by") or "",
+            "eligibility_check_id": p.get("eligibility_check_id") or "",
         },
         "metadata": dict(p.get("metadata") or {}),
     }
@@ -680,6 +693,137 @@ def run_command(
                         "decision_actor": package.get("decision_actor"),
                         "decision_notes": package.get("decision_notes"),
                         "decision_id": package.get("decision_id"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_eligibility_check":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        eligibility_checked_by = str(kwargs.get("eligibility_checked_by") or "").strip()
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not eligibility_checked_by:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="eligibility_checked_by required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_eligibility_safe
+
+            result = record_execution_package_eligibility_safe(
+                project_path=path,
+                package_id=package_id,
+                eligibility_checked_by=eligibility_checked_by,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package eligibility."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            eligibility = {
+                "eligibility_status": package.get("eligibility_status"),
+                "eligibility_timestamp": package.get("eligibility_timestamp"),
+                "eligibility_reason": package.get("eligibility_reason") or {"code": "", "message": ""},
+                "eligibility_checked_by": package.get("eligibility_checked_by"),
+                "eligibility_check_id": package.get("eligibility_check_id"),
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; eligibility_status={eligibility.get('eligibility_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package eligibility recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "eligibility": eligibility,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_eligibility_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; eligibility_status={package.get('eligibility_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package eligibility status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "eligibility": {
+                        "eligibility_status": package.get("eligibility_status"),
+                        "eligibility_timestamp": package.get("eligibility_timestamp"),
+                        "eligibility_reason": package.get("eligibility_reason") or {"code": "", "message": ""},
+                        "eligibility_checked_by": package.get("eligibility_checked_by"),
+                        "eligibility_check_id": package.get("eligibility_check_id"),
                     },
                 },
             )

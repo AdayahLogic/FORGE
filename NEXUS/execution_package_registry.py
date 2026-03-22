@@ -42,6 +42,11 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "decision_timestamp": normalized.get("decision_timestamp"),
         "decision_actor": normalized.get("decision_actor"),
         "decision_id": normalized.get("decision_id"),
+        "eligibility_status": normalized.get("eligibility_status"),
+        "eligibility_timestamp": normalized.get("eligibility_timestamp"),
+        "eligibility_reason": normalized.get("eligibility_reason"),
+        "eligibility_checked_by": normalized.get("eligibility_checked_by"),
+        "eligibility_check_id": normalized.get("eligibility_check_id"),
     }
 
 
@@ -85,6 +90,15 @@ def get_execution_package_file_path(project_path: str | None, package_id: str | 
     if not package_dir or not package_id:
         return None
     return str(package_dir / f"{str(package_id).strip()}.json")
+
+
+def _normalize_eligibility_reason(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {"code": "", "message": ""}
+    return {
+        "code": str(value.get("code") or ""),
+        "message": str(value.get("message") or ""),
+    }
 
 
 def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any]:
@@ -138,6 +152,11 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "decision_actor": str(p.get("decision_actor") or ""),
         "decision_notes": str(p.get("decision_notes") or ""),
         "decision_id": str(p.get("decision_id") or ""),
+        "eligibility_status": str(p.get("eligibility_status") or "pending").strip().lower(),
+        "eligibility_timestamp": str(p.get("eligibility_timestamp") or ""),
+        "eligibility_reason": _normalize_eligibility_reason(p.get("eligibility_reason")),
+        "eligibility_checked_by": str(p.get("eligibility_checked_by") or ""),
+        "eligibility_check_id": str(p.get("eligibility_check_id") or ""),
     }
 
 
@@ -161,6 +180,11 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "decision_timestamp": str(r.get("decision_timestamp") or ""),
         "decision_actor": str(r.get("decision_actor") or ""),
         "decision_id": str(r.get("decision_id") or ""),
+        "eligibility_status": str(r.get("eligibility_status") or "pending").strip().lower(),
+        "eligibility_timestamp": str(r.get("eligibility_timestamp") or ""),
+        "eligibility_reason": _normalize_eligibility_reason(r.get("eligibility_reason")),
+        "eligibility_checked_by": str(r.get("eligibility_checked_by") or ""),
+        "eligibility_check_id": str(r.get("eligibility_check_id") or ""),
     }
 
 
@@ -315,3 +339,120 @@ def record_execution_package_decision_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_decision(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package decision.", "package": None}
+
+
+def evaluate_execution_package_eligibility(package: dict[str, Any] | None) -> dict[str, Any]:
+    """Evaluate whether a package is eligible for future execution without executing anything."""
+    p = normalize_execution_package(package)
+    if str(p.get("decision_status") or "").strip().lower() == "pending":
+        return {
+            "eligibility_status": "pending",
+            "eligibility_reason": {
+                "code": "decision_pending",
+                "message": "Eligibility check requires a non-pending decision.",
+            },
+        }
+    if not bool(p.get("sealed")):
+        return {
+            "eligibility_status": "ineligible",
+            "eligibility_reason": {
+                "code": "not_sealed",
+                "message": "Package must remain sealed to be eligible.",
+            },
+        }
+    if str(p.get("decision_status") or "").strip().lower() != "approved":
+        return {
+            "eligibility_status": "ineligible",
+            "eligibility_reason": {
+                "code": "decision_not_approved",
+                "message": "Package decision must be approved.",
+            },
+        }
+    if not (p.get("approval_id_refs") or []):
+        return {
+            "eligibility_status": "ineligible",
+            "eligibility_reason": {
+                "code": "approval_refs_missing",
+                "message": "Approval references are required.",
+            },
+        }
+    runtime_target_id = str(p.get("runtime_target_id") or "").strip().lower()
+    try:
+        from NEXUS.runtime_target_registry import RUNTIME_TARGET_REGISTRY
+
+        runtime_target = RUNTIME_TARGET_REGISTRY.get(runtime_target_id) or {}
+    except Exception:
+        runtime_target = {}
+    if not runtime_target or str(runtime_target.get("active_or_planned") or "").strip().lower() != "active":
+        return {
+            "eligibility_status": "ineligible",
+            "eligibility_reason": {
+                "code": "runtime_target_invalid",
+                "message": "Runtime target must be known and active.",
+            },
+        }
+    execution_summary = p.get("execution_summary") or {}
+    runtime_artifacts = p.get("runtime_artifacts") or []
+    if bool(execution_summary.get("can_execute")) or len(runtime_artifacts) > 0:
+        return {
+            "eligibility_status": "ineligible",
+            "eligibility_reason": {
+                "code": "execution_detected",
+                "message": "Package indicates execution has already occurred.",
+            },
+        }
+    return {
+        "eligibility_status": "eligible",
+        "eligibility_reason": {
+            "code": "eligible",
+            "message": "Package is eligible for future execution review.",
+        },
+    }
+
+
+def record_execution_package_eligibility(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    eligibility_checked_by: str,
+) -> dict[str, Any]:
+    """Evaluate and persist package eligibility using package-local facts only."""
+    checked_by = str(eligibility_checked_by or "").strip()
+    if not checked_by:
+        return {"status": "error", "reason": "eligibility_checked_by required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    evaluation = evaluate_execution_package_eligibility(package)
+    if evaluation.get("eligibility_status") == "pending":
+        return {
+            "status": "error",
+            "reason": str((evaluation.get("eligibility_reason") or {}).get("message") or "Eligibility check requires a non-pending decision."),
+            "package": package,
+        }
+    package["eligibility_status"] = evaluation.get("eligibility_status") or "pending"
+    package["eligibility_timestamp"] = _utc_now_iso()
+    package["eligibility_reason"] = _normalize_eligibility_reason(evaluation.get("eligibility_reason"))
+    package["eligibility_checked_by"] = checked_by
+    package["eligibility_check_id"] = str(uuid.uuid4())
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id)
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Execution package eligibility recorded.", "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package eligibility.", "package": None}
+
+
+def record_execution_package_eligibility_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_eligibility(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package eligibility.", "package": None}
