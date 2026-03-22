@@ -343,6 +343,8 @@ def run_command(
             dispatch_result_val = loaded.get("dispatch_result") or {}
             dr_status = dispatch_result_val.get("status")
             dr_exec_status = dispatch_result_val.get("execution_status")
+            execution_package_id = loaded.get("execution_package_id") or dispatch_result_val.get("execution_package_id")
+            execution_package_path = loaded.get("execution_package_path") or dispatch_result_val.get("execution_package_path")
             summary_line = f"dispatch_status={dispatch_status_val}; result_status={dr_status}; execution_status={dr_exec_status}"
             return _result(
                 command=cmd,
@@ -352,6 +354,8 @@ def run_command(
                 payload={
                     "dispatch_status": dispatch_status_val,
                     "runtime_target": (dispatch_result_val.get("runtime_target") or dispatch_result_val.get("runtime")),
+                    "execution_package_id": execution_package_id,
+                    "execution_package_path": execution_package_path,
                     "dispatch_result": {
                         "status": dr_status,
                         "execution_status": dr_exec_status,
@@ -3583,6 +3587,8 @@ def run_command(
                 "saved_at": loaded.get("saved_at"),
                 "run_id": loaded.get("run_id"),
                 "execution_ledger_path": loaded.get("execution_ledger_path"),
+                "execution_package_id": loaded.get("execution_package_id"),
+                "execution_package_path": loaded.get("execution_package_path"),
                 "coder_output_path": loaded.get("coder_output_path"),
                 "execution_report_path": loaded.get("execution_report_path"),
                 "full_automation_report_path": loaded.get("full_automation_report_path"),

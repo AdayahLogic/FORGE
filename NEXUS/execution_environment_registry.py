@@ -95,6 +95,7 @@ RUNTIME_TARGET_TO_ENVIRONMENT: dict[str, str] = {
     "local": "local_current",
     "cursor": "local_bounded",
     "codex": "local_bounded",
+    "windows_review_package": "local_bounded",
     "container_worker": "container_planned",
     "remote_worker": "external_runtime_planned",
     "cloud_worker": "external_runtime_planned",

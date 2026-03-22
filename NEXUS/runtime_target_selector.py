@@ -84,6 +84,9 @@ def select_runtime_target(
     elif agent in ("architect", "planner") or task in ("planning", "plan") or action in ("plan", "planning"):
         ideal = "local"
         reason = "Planning or general workflow; target local."
+    elif task in ("review_package", "execution_package") or action in ("review_package", "package_for_review"):
+        ideal = "windows_review_package"
+        reason = "Review-only execution package requested; target windows_review_package."
     # Isolated execution (planned targets) → container_worker ideal, then fallback
     elif task in ("isolated", "container") or action in ("isolated", "container"):
         ideal = "container_worker"
@@ -129,6 +132,7 @@ def get_selection_defaults_summary() -> dict[str, Any]:
             {"inputs": "planning, general workflow", "target": "local"},
             {"inputs": "repo-aware code editing (file_modification, diff_patch)", "target": "cursor"},
             {"inputs": "code generation / refactor drafting (coder)", "target": "codex"},
+            {"inputs": "review-only execution package", "target": "windows_review_package"},
             {"inputs": "isolated execution", "target": "container_worker (planned; fallback local)"},
             {"inputs": "unknown", "target": "local"},
         ],

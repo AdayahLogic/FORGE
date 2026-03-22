@@ -77,6 +77,8 @@ class StudioState(BaseModel):
     dispatch_plan_summary: Dict[str, Any] = {}
     dispatch_status: Optional[str] = None
     dispatch_result: Dict[str, Any] = {}
+    execution_package_id: Optional[str] = None
+    execution_package_path: Optional[str] = None
     runtime_execution_status: Optional[str] = None
     automation_status: Optional[str] = None
     automation_result: Dict[str, Any] = {}

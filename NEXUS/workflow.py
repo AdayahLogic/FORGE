@@ -329,6 +329,8 @@ def runtime_dispatch_node(state: StudioState):
         state.dispatch_status = result.get("dispatch_status", "skipped")
         state.dispatch_result = result.get("dispatch_result", {}) or {}
         state.runtime_execution_status = (state.dispatch_result or {}).get("execution_status")
+        state.execution_package_id = (state.dispatch_result or {}).get("execution_package_id")
+        state.execution_package_path = (state.dispatch_result or {}).get("execution_package_path")
         if "runtime_target" not in state.dispatch_result and result.get("runtime_target"):
             state.dispatch_result = {**state.dispatch_result, "runtime_target": result.get("runtime_target")}
     except Exception:
@@ -343,6 +345,8 @@ def runtime_dispatch_node(state: StudioState):
             "artifacts": [],
             "errors": [{"reason": "exception"}],
         }
+        state.execution_package_id = None
+        state.execution_package_path = None
         state.runtime_execution_status = "failed"
 
     # Phase 15: outcome-learning after dispatch result (passive observer).
@@ -1294,6 +1298,8 @@ def save_persistent_project_state_node(state: StudioState):
             dispatch_plan_summary=state.dispatch_plan_summary,
             dispatch_status=state.dispatch_status,
             dispatch_result=state.dispatch_result,
+            execution_package_id=state.execution_package_id,
+            execution_package_path=state.execution_package_path,
             runtime_execution_status=state.runtime_execution_status,
             automation_status=state.automation_status,
             automation_result=state.automation_result,

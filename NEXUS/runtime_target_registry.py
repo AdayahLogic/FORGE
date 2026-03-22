@@ -40,6 +40,16 @@ RUNTIME_TARGET_REGISTRY: dict[str, dict[str, Any]] = {
         "approval_level": "human_review",
         "description": "Codex as execution target; agent and tool execution via Codex.",
     },
+    "windows_review_package": {
+        "canonical_name": "windows_review_package",
+        "display_name": "Windows Review Package",
+        "status": "active",
+        "runtime_type": "local_review",
+        "active_or_planned": "active",
+        "capabilities": ["review_package", "execution_planning", "approval_handoff"],
+        "approval_level": "human_review",
+        "description": "Windows-local review-only execution package target; produces sealed packages and stops before execution.",
+    },
     "container_worker": {
         "canonical_name": "container_worker",
         "display_name": "Container Worker",

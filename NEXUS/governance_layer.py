@@ -42,6 +42,8 @@ def evaluate_governance_outcome(
     a_status = (automation_status or "").strip().lower()
     dr = dispatch_result or {}
     ar = automation_result or {}
+    package_id = str(dr.get("execution_package_id") or "").strip()
+    package_review_required = bool(dr.get("package_review_required"))
 
     policy_tags: list[str] = []
 
@@ -84,6 +86,16 @@ def evaluate_governance_outcome(
 
     # Dispatch skipped: readiness issue
     if ds == "skipped":
+        if package_id or package_review_required:
+            return {
+                "governance_status": "review_required",
+                "approval_required": bool(dr.get("approval_required")),
+                "review_required": True,
+                "risk_level": "medium",
+                "decision_reason": "Dispatch stopped at a sealed review-only execution package.",
+                "blocked": False,
+                "policy_tags": ["review_package", "human_review"],
+            }
         return {
             "governance_status": "review_required",
             "approval_required": False,
@@ -121,6 +133,16 @@ def evaluate_governance_outcome(
 
     # Accepted (other execution outcomes): approved or light review depending on execution
     if ds == "accepted":
+        if (package_id or package_review_required) and es == "queued":
+            return {
+                "governance_status": "review_required",
+                "approval_required": bool(dr.get("approval_required")),
+                "review_required": True,
+                "risk_level": "medium",
+                "decision_reason": "Dispatch accepted into a review-only package state; no live execution occurred.",
+                "blocked": False,
+                "policy_tags": ["review_package", "human_review"],
+            }
         if es in ("success", "completed", "ok"):
             return {
                 "governance_status": "approved",

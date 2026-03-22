@@ -6,12 +6,27 @@ Run: python tests/hardening_test.py
 
 from __future__ import annotations
 
+import shutil
 import sys
+import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+@contextmanager
+def _local_test_dir():
+    base = ROOT / ".tmp_test_runs"
+    base.mkdir(parents=True, exist_ok=True)
+    path = base / f"hardening_{uuid.uuid4().hex[:8]}"
+    path.mkdir(parents=True, exist_ok=False)
+    try:
+        yield path
+    finally:
+        shutil.rmtree(path, ignore_errors=True)
 
 
 def _run(name: str, fn):
@@ -36,6 +51,7 @@ def test_integrity_checker_approval_shape():
         "approval_types": [],
         "stale_count": 0,
         "approved_pending_apply_count": 0,
+        "reapproval_required_count": 0,
         "reason": "ok",
     }
     r = check_approval_summary_shape(valid)
@@ -63,6 +79,8 @@ def test_integrity_checker_product_shape():
         "learning_linkage_present": False,
         "approval_linkage_present": False,
         "autonomy_linkage_present": False,
+        "patch_linkage_present": False,
+        "helix_linkage_present": False,
         "reason": "ok",
     }
     r = check_product_summary_shape(valid)
@@ -167,14 +185,10 @@ def test_command_integrity_check():
 
 def test_journal_tail_skips_malformed():
     """Prove journal read tail skips malformed JSON lines."""
-    import json
-    import tempfile
-    from pathlib import Path
+    from NEXUS.learning_writer import read_learning_journal_tail
 
-    from NEXUS.learning_writer import read_learning_journal_tail, get_learning_journal_path
-
-    with tempfile.TemporaryDirectory() as td:
-        journal = Path(td) / "state" / "learning_journal.jsonl"
+    with _local_test_dir() as td:
+        journal = td / "state" / "learning_journal.jsonl"
         journal.parent.mkdir(parents=True, exist_ok=True)
         journal.write_text(
             '{"record_type":"a"}\n'
@@ -182,13 +196,7 @@ def test_journal_tail_skips_malformed():
             '{"record_type":"b"}\n',
             encoding="utf-8",
         )
-        # read_learning_journal_tail uses get_learning_journal_path(project_path)
-        # which expects a project path. We need to pass td as project path.
-        # get_learning_journal_path returns state/learning_journal.jsonl under project.
-        # So we pass td and the journal should be td/state/learning_journal.jsonl
-        # But we created td/state/learning_journal.jsonl - so project_path=td would
-        # look for td/state/learning_journal.jsonl. Good.
-        records = read_learning_journal_tail(project_path=td, n=10)
+        records = read_learning_journal_tail(project_path=str(td), n=10)
         # Should get 2 valid records, skip the malformed line
         assert len(records) == 2
         assert records[0].get("record_type") == "a"

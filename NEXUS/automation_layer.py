@@ -40,6 +40,8 @@ def evaluate_automation_outcome(
 
     fallback_runtime_target = None
     followup_items: list[dict[str, Any]] = []
+    package_id = str(dr.get("execution_package_id") or "").strip()
+    package_review_required = bool(dr.get("package_review_required"))
 
     # Core rules (compact, centralized)
     if ds == "accepted" and es == "simulated_execution":
@@ -52,7 +54,31 @@ def evaluate_automation_outcome(
             "followup_items": [],
         }
 
+    if ds == "accepted" and (package_id or package_review_required) and es == "queued":
+        return {
+            "automation_status": "human_review_required",
+            "recommended_action": "review_execution_package",
+            "reason": "Dispatch accepted into a review-only package state; no execution occurred.",
+            "human_review_required": True,
+            "fallback_runtime_target": None,
+            "followup_items": [
+                {"item": f"Review execution package {package_id or '[pending id]' }."},
+            ],
+        }
+
     if ds == "skipped":
+        if package_id or package_review_required:
+            return {
+                "automation_status": "human_review_required",
+                "recommended_action": "review_execution_package",
+                "reason": "Dispatch stopped at a sealed review-only execution package.",
+                "human_review_required": True,
+                "fallback_runtime_target": None,
+                "followup_items": [
+                    {"item": f"Review execution package {package_id or '[pending id]' } before any later activation."},
+                    {"item": "Confirm package scope, approval refs, and rollback notes."},
+                ],
+            }
         return {
             "automation_status": "human_review_required",
             "recommended_action": "inspect_dispatch_readiness",
