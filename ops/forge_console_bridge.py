@@ -21,6 +21,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from NEXUS.command_surface import run_command
+from NEXUS.console_attachment_registry import (
+    build_intake_workspace,
+    ingest_console_attachment_safe,
+    preview_intake_request_safe,
+)
 from NEXUS.execution_package_registry import (
     list_execution_package_journal_entries,
     read_execution_package,
@@ -214,6 +219,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
     health = (run_command("health", project_path=project_path, project_name=key).get("payload") or {})
     package_queue = _normalize_package_queue(key, project_path)
     approvals = (run_command("pending_approvals", project_path=project_path, project_name=key).get("payload") or {})
+    intake_workspace = build_intake_workspace(project_key=key, project_path=project_path)
     current_package_id = str(project_state.get("execution_package_id") or "")
     current_package = None
     if current_package_id:
@@ -240,6 +246,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             "package_queue": package_queue,
             "current_package": current_package,
             "approval_summary": approvals,
+            "intake_workspace": intake_workspace,
             "degraded_sources": [
                 source
                 for source, value in (
@@ -252,6 +259,74 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             ],
         },
         "",
+    )
+
+
+def build_intake_preview(
+    *,
+    project_key: str,
+    objective: str,
+    constraints_json: str,
+    requested_artifacts_json: str,
+    linked_attachment_ids_json: str,
+    autonomy_mode: str,
+) -> dict[str, Any]:
+    key, project = _resolve_project(project_key)
+    if not project:
+        return _result("error", {"project_key": key, "error": "Unknown project."}, "Unknown project.")
+    project_path = str(project.get("path") or "")
+    try:
+        constraints = json.loads(constraints_json or "[]")
+        requested_artifacts = json.loads(requested_artifacts_json or "[]")
+        linked_attachment_ids = json.loads(linked_attachment_ids_json or "[]")
+    except json.JSONDecodeError as exc:
+        return _result(
+            "error",
+            {"project_key": key, "error": f"Invalid preview payload: {exc}"},
+            "Invalid preview payload.",
+        )
+    payload = preview_intake_request_safe(
+        project_key=key,
+        project_path=project_path,
+        objective=objective,
+        constraints=constraints if isinstance(constraints, list) else [],
+        requested_artifacts=requested_artifacts if isinstance(requested_artifacts, list) else [],
+        linked_attachment_ids=linked_attachment_ids if isinstance(linked_attachment_ids, list) else [],
+        autonomy_mode=autonomy_mode,
+    )
+    return _result("ok", payload, "")
+
+
+def upload_attachment(
+    *,
+    project_key: str,
+    file_path: str,
+    file_name: str,
+    file_type: str,
+    source: str,
+    purpose: str,
+    package_id: str = "",
+    request_id: str = "",
+) -> dict[str, Any]:
+    key, project = _resolve_project(project_key)
+    if not project:
+        return _result("error", {"project_key": key, "error": "Unknown project."}, "Unknown project.")
+    project_path = str(project.get("path") or "")
+    result = ingest_console_attachment_safe(
+        project_path=project_path,
+        project_id=key,
+        file_path=file_path,
+        file_name=file_name,
+        file_type=file_type,
+        source=source,
+        purpose=purpose,
+        package_id=package_id or None,
+        request_id=request_id or None,
+    )
+    return _result(
+        "ok" if result.get("status") == "ok" else "error",
+        result,
+        str(result.get("reason") or ""),
     )
 
 
@@ -405,12 +480,26 @@ def execute_control_action(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forge Console bridge")
-    parser.add_argument("mode", choices=["overview", "project", "package", "control"])
+    parser.add_argument(
+        "mode",
+        choices=["overview", "project", "package", "control", "intake_preview", "upload_attachment"],
+    )
     parser.add_argument("--project-key", default="")
     parser.add_argument("--package-id", default="")
     parser.add_argument("--action", default="")
     parser.add_argument("--confirmed", action="store_true")
     parser.add_argument("--confirmation-text", default="")
+    parser.add_argument("--file-path", default="")
+    parser.add_argument("--file-name", default="")
+    parser.add_argument("--file-type", default="")
+    parser.add_argument("--source", default="console_upload")
+    parser.add_argument("--purpose", default="supporting_context")
+    parser.add_argument("--request-id", default="")
+    parser.add_argument("--objective", default="")
+    parser.add_argument("--constraints-json", default="[]")
+    parser.add_argument("--requested-artifacts-json", default="[]")
+    parser.add_argument("--linked-attachment-ids-json", default="[]")
+    parser.add_argument("--autonomy-mode", default="supervised_build")
     args = parser.parse_args()
 
     if args.mode == "overview":
@@ -419,6 +508,26 @@ def main() -> int:
         out = build_project_snapshot(args.project_key)
     elif args.mode == "package":
         out = build_package_snapshot(args.package_id, project_key=args.project_key or None)
+    elif args.mode == "intake_preview":
+        out = build_intake_preview(
+            project_key=args.project_key,
+            objective=args.objective,
+            constraints_json=args.constraints_json,
+            requested_artifacts_json=args.requested_artifacts_json,
+            linked_attachment_ids_json=args.linked_attachment_ids_json,
+            autonomy_mode=args.autonomy_mode,
+        )
+    elif args.mode == "upload_attachment":
+        out = upload_attachment(
+            project_key=args.project_key,
+            file_path=args.file_path,
+            file_name=args.file_name,
+            file_type=args.file_type,
+            source=args.source,
+            purpose=args.purpose,
+            package_id=args.package_id,
+            request_id=args.request_id,
+        )
     else:
         out = execute_control_action(
             action=args.action,

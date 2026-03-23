@@ -4,6 +4,85 @@ export type CommandResult<T> = {
   payload: T;
 };
 
+export type ForgeAttachmentRecord = {
+  attachment_id: string;
+  project_id: string;
+  package_id: string;
+  request_id: string;
+  file_name: string;
+  file_type: string;
+  file_size_bytes: number;
+  source: string;
+  purpose: string;
+  uploaded_at: string;
+  trust_level: string;
+  allowed_consumers: string[];
+  extracted_summary: string;
+  status: string;
+  classification: string;
+  raw_storage_path: string;
+  governance_trace: {
+    origin: string;
+    surface: string;
+    classification_reason: string;
+    classifier_version: string;
+    routing_authority: string;
+    execution_authority: string;
+    notes: string[];
+  };
+};
+
+export type ForgeIntakePreview = {
+  request_id: string;
+  request_kind: string;
+  objective: string;
+  constraints: string[];
+  requested_artifacts: string[];
+  autonomy_mode: string;
+  linked_attachments: Array<{
+    attachment_id: string;
+    file_name: string;
+    status: string;
+    classification: string;
+    allowed_for_request_preview: boolean;
+    extracted_summary: string;
+  }>;
+  readiness: string;
+  warnings: string[];
+  package_preview: {
+    creation_mode: string;
+    package_creation_allowed: boolean;
+    governance_required: boolean;
+    routing_authority: string;
+    execution_authority: string;
+    attachment_input_count: number;
+    attachment_preview_count: number;
+    summary: string;
+  };
+};
+
+export type ForgeIntakeWorkspace = {
+  project_key: string;
+  project_path: string;
+  draft_seed: {
+    request_kind: string;
+    objective: string;
+    constraints: string[];
+    requested_artifacts: string[];
+    autonomy_mode: string;
+    linked_attachment_ids: string[];
+  };
+  attachments: ForgeAttachmentRecord[];
+  governance_notes: {
+    routing_authority: string;
+    execution_authority: string;
+    request_status: string;
+    allowed_actions: string[];
+    blocked_use_cases: string[];
+  };
+  preview: ForgeIntakePreview;
+};
+
 export type ForgeProjectRow = {
   project_key: string;
   project_name: string;
@@ -114,6 +193,7 @@ export type ProjectSnapshot = {
   };
   current_package: PackageDetailSnapshot | null;
   approval_summary: Record<string, unknown>;
+  intake_workspace: ForgeIntakeWorkspace;
   degraded_sources: string[];
 };
 
@@ -146,6 +226,20 @@ export type ForgeUiState = {
   projectSnapshot: ProjectSnapshot | null;
   packageQueue: PackageQueueRow[];
   packageDetail: PackageDetailSnapshot | null;
+  intakeDraft: {
+    requestKind: string;
+    objective: string;
+    constraintsText: string;
+    requestedArtifactsText: string;
+    autonomyMode: string;
+    linkedAttachmentIds: string[];
+    previewing: boolean;
+    uploading: boolean;
+    uploadPurpose: string;
+    lastMessage: string;
+  };
+  intakePreview: ForgeIntakePreview | null;
+  selectedAttachmentId: string;
   approvalCenterState: ApprovalCenterState;
   controlDraft: ControlDraft;
   dataFreshness: DataFreshness;

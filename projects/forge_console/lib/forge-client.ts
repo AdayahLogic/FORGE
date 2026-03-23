@@ -1,5 +1,7 @@
 import type {
   CommandResult,
+  ForgeAttachmentRecord,
+  ForgeIntakePreview,
   ForgeOverviewSnapshot,
   PackageDetailSnapshot,
   ProjectSnapshot,
@@ -49,4 +51,46 @@ export function runControlAction(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function previewIntakeRequest(input: {
+  projectKey: string;
+  objective: string;
+  constraints: string[];
+  requestedArtifacts: string[];
+  linkedAttachmentIds: string[];
+  autonomyMode: string;
+}) {
+  return fetchJson<CommandResult<ForgeIntakePreview>>("/api/forge/intake/preview", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function uploadAttachment(input: {
+  projectKey: string;
+  file: File;
+  purpose: string;
+  source?: string;
+  requestId?: string;
+}) {
+  const formData = new FormData();
+  formData.set("projectKey", input.projectKey);
+  formData.set("purpose", input.purpose);
+  formData.set("source", input.source ?? "console_upload");
+  formData.set("requestId", input.requestId ?? "");
+  formData.set("file", input.file);
+  const response = await fetch("/api/forge/attachment", {
+    method: "POST",
+    body: formData,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    throw new Error(`Request failed: ${response.status}`);
+  }
+  return (await response.json()) as CommandResult<{
+    status: string;
+    reason: string;
+    attachment: ForgeAttachmentRecord;
+  }>;
 }

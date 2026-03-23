@@ -51,6 +51,10 @@ select {
   font: inherit;
 }
 
+textarea {
+  font: inherit;
+}
+
 .console-root {
   min-height: 100vh;
   padding: 28px;
@@ -98,6 +102,12 @@ select {
 .center-canvas {
   grid-area: center;
   padding: 18px;
+}
+
+.center-stack {
+  grid-area: center;
+  display: grid;
+  gap: 18px;
 }
 
 .right-rail {
@@ -387,13 +397,88 @@ select {
 }
 
 .confirmation-input,
-.project-select {
+.project-select,
+.text-area {
   width: 100%;
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid var(--border);
   background: rgba(4, 8, 14, 0.9);
   color: var(--text);
+}
+
+.text-area {
+  resize: vertical;
+}
+
+.intake-grid,
+.form-grid,
+.detail-grid-two,
+.detail-grid-three,
+.attachment-list {
+  display: grid;
+  gap: 12px;
+}
+
+.detail-grid-two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.detail-grid-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.field-span-2 {
+  grid-column: span 2;
+}
+
+.button-row,
+.attachment-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.upload-button {
+  position: relative;
+  overflow: hidden;
+  padding: 11px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: linear-gradient(180deg, rgba(21, 32, 48, 0.98), rgba(13, 18, 27, 0.98));
+  color: var(--text);
+  cursor: pointer;
+}
+
+.upload-button input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.attachment-card {
+  all: unset;
+  cursor: pointer;
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.attachment-card.active {
+  border-color: rgba(110, 212, 255, 0.46);
+  background: linear-gradient(180deg, rgba(18, 30, 48, 0.92), rgba(12, 18, 28, 0.92));
 }
 
 .drawer-panel {
@@ -521,12 +606,23 @@ select {
   .detail-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .detail-grid-two,
+  .detail-grid-three {
+    grid-template-columns: 1fr;
+  }
+
+  .field-span-2 {
+    grid-column: auto;
+  }
 }
 
 @media (max-width: 760px) {
   .overview-grid,
   .metric-grid,
-  .detail-grid {
+  .detail-grid,
+  .detail-grid-two,
+  .detail-grid-three {
     grid-template-columns: 1fr;
   }
 

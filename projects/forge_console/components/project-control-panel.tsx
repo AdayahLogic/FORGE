@@ -29,6 +29,7 @@ export function ProjectControlPanel({
   const state = projectSnapshot?.project_state ?? {};
   const session = projectSnapshot?.latest_session ?? {};
   const health = projectSnapshot?.system_health ?? {};
+  const intake = projectSnapshot?.intake_workspace;
   const currentPackageId =
     typeof state.execution_package_id === "string" ? state.execution_package_id : "";
   return (
@@ -107,6 +108,14 @@ export function ProjectControlPanel({
             <div className="detail-row">
               <span>System Health</span>
               <strong>{String(health.overall_status ?? "unknown")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Attachments</span>
+              <strong>{String(intake?.attachments.length ?? 0)}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Autonomy Mode</span>
+              <strong>{String(state.autonomy_mode ?? intake?.draft_seed.autonomy_mode ?? "unknown")}</strong>
             </div>
           </div>
         </div>

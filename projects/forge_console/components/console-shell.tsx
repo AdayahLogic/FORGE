@@ -5,7 +5,9 @@ import {
   getOverviewSnapshot,
   getPackageSnapshot,
   getProjectSnapshot,
+  previewIntakeRequest,
   runControlAction,
+  uploadAttachment,
 } from "../lib/forge-client";
 import {
   getCurrentPackagePointer,
@@ -19,10 +21,17 @@ import { ExecutionDetailDrawer } from "./execution-detail-drawer";
 import { NemoClawAdvisoryPanel } from "./nemoclaw-advisory-panel";
 import { PackageLifecycleBoard } from "./package-lifecycle-board";
 import { ProjectControlPanel } from "./project-control-panel";
+import { ProjectIntakeWorkspace } from "./project-intake-workspace";
 import { SystemOverview } from "./system-overview";
 
 export function ConsoleShell() {
   const [uiState, setUiState] = useState<ForgeUiState>(createInitialUiState());
+
+  const parseLines = (value: string) =>
+    value
+      .split(/\r?\n/)
+      .map((item) => item.trim())
+      .filter(Boolean);
 
   async function loadPackage(packageId: string, projectKey: string) {
     const response = await getPackageSnapshot(packageId, projectKey);
@@ -38,6 +47,7 @@ export function ConsoleShell() {
   async function loadProject(projectKey: string, preservePackageSelection = false) {
     const response = await getProjectSnapshot(projectKey);
     const project = response.payload;
+    const workspace = project.intake_workspace;
     const currentPointer = getCurrentPackagePointer(project);
     const nextSelectedPackageId =
       preservePackageSelection && uiState.selectedPackageId
@@ -49,6 +59,23 @@ export function ConsoleShell() {
       projectSnapshot: project,
       packageQueue: project.package_queue.packages,
       selectedPackageId: nextSelectedPackageId,
+      intakeDraft: {
+        requestKind: workspace?.draft_seed.request_kind ?? "update_request",
+        objective: workspace?.draft_seed.objective ?? "",
+        constraintsText: (workspace?.draft_seed.constraints ?? []).join("\n"),
+        requestedArtifactsText: (workspace?.draft_seed.requested_artifacts ?? []).join("\n"),
+        autonomyMode: workspace?.draft_seed.autonomy_mode ?? "supervised_build",
+        linkedAttachmentIds: workspace?.draft_seed.linked_attachment_ids ?? [],
+        previewing: false,
+        uploading: false,
+        uploadPurpose: current.intakeDraft.uploadPurpose,
+        lastMessage: "",
+      },
+      intakePreview: workspace?.preview ?? null,
+      selectedAttachmentId:
+        current.selectedAttachmentId ||
+        workspace?.attachments[0]?.attachment_id ||
+        "",
       detailDrawerOpen: Boolean(nextSelectedPackageId),
       degradedSources: project.degraded_sources,
       dataFreshness: response.status === "ok" ? "ready" : "error",
@@ -102,6 +129,93 @@ export function ConsoleShell() {
     startTransition(() => {
       void loadPackage(packageId, uiState.selectedProjectKey);
     });
+  };
+
+  const runPreview = async () => {
+    if (!uiState.selectedProjectKey) {
+      return;
+    }
+    setUiState((current) => ({
+      ...current,
+      intakeDraft: {
+        ...current.intakeDraft,
+        previewing: true,
+        lastMessage: "Building governed request preview...",
+      },
+    }));
+    try {
+      const response = await previewIntakeRequest({
+        projectKey: uiState.selectedProjectKey,
+        objective: uiState.intakeDraft.objective,
+        constraints: parseLines(uiState.intakeDraft.constraintsText),
+        requestedArtifacts: parseLines(uiState.intakeDraft.requestedArtifactsText),
+        linkedAttachmentIds: uiState.intakeDraft.linkedAttachmentIds,
+        autonomyMode: uiState.intakeDraft.autonomyMode,
+      });
+      setUiState((current) => ({
+        ...current,
+        intakePreview: response.payload,
+        intakeDraft: {
+          ...current.intakeDraft,
+          previewing: false,
+          lastMessage:
+            response.payload.package_preview.summary || "Governed request preview ready.",
+        },
+      }));
+    } catch (error) {
+      setUiState((current) => ({
+        ...current,
+        intakeDraft: {
+          ...current.intakeDraft,
+          previewing: false,
+          lastMessage:
+            error instanceof Error ? error.message : "Request preview failed.",
+        },
+      }));
+    }
+  };
+
+  const handleAttachmentUpload = async (file: File) => {
+    if (!uiState.selectedProjectKey) {
+      return;
+    }
+    setUiState((current) => ({
+      ...current,
+      intakeDraft: {
+        ...current.intakeDraft,
+        uploading: true,
+        lastMessage: `Uploading ${file.name}...`,
+      },
+    }));
+    try {
+      const response = await uploadAttachment({
+        projectKey: uiState.selectedProjectKey,
+        file,
+        purpose: uiState.intakeDraft.uploadPurpose,
+      });
+      await loadProject(uiState.selectedProjectKey, true);
+      setUiState((current) => ({
+        ...current,
+        intakeDraft: {
+          ...current.intakeDraft,
+          uploading: false,
+          lastMessage:
+            response.payload.reason || "Attachment stored for governed review.",
+        },
+        selectedAttachmentId:
+          response.payload.attachment?.attachment_id || current.selectedAttachmentId,
+      }));
+    } catch (error) {
+      setUiState((current) => ({
+        ...current,
+        intakeDraft: {
+          ...current.intakeDraft,
+          uploading: false,
+          lastMessage:
+            error instanceof Error ? error.message : "Attachment upload failed.",
+        },
+      }));
+    }
   };
 
   const submitControl = async () => {
@@ -163,13 +277,61 @@ export function ConsoleShell() {
           projects={uiState.overviewSnapshot?.projects ?? []}
           selectedProjectKey={uiState.selectedProjectKey}
         />
-        <PackageLifecycleBoard
-          includeCompleted={uiState.boardFilters.includeCompleted}
-          onSelectPackage={selectPackage}
-          packages={uiState.packageQueue}
-          selectedPackageId={uiState.selectedPackageId}
-          showOnlyRisk={uiState.boardFilters.showOnlyRisk}
-        />
+        <div className="center-stack">
+          <ProjectIntakeWorkspace
+            draft={uiState.intakeDraft}
+            onAttachmentSelect={(attachmentId) =>
+              setUiState((current) => ({
+                ...current,
+                selectedAttachmentId: attachmentId,
+              }))
+            }
+            onAttachmentToggle={(attachmentId) =>
+              setUiState((current) => {
+                const nextIds = current.intakeDraft.linkedAttachmentIds.includes(
+                  attachmentId,
+                )
+                  ? current.intakeDraft.linkedAttachmentIds.filter(
+                      (item) => item !== attachmentId,
+                    )
+                  : [...current.intakeDraft.linkedAttachmentIds, attachmentId];
+                return {
+                  ...current,
+                  intakeDraft: {
+                    ...current.intakeDraft,
+                    linkedAttachmentIds: nextIds,
+                  },
+                };
+              })
+            }
+            onDraftChange={(patch) =>
+              setUiState((current) => ({
+                ...current,
+                intakeDraft: {
+                  ...current.intakeDraft,
+                  ...patch,
+                },
+              }))
+            }
+            onPreview={() => {
+              void runPreview();
+            }}
+            onUpload={(file) => {
+              void handleAttachmentUpload(file);
+            }}
+            preview={uiState.intakePreview}
+            selectedAttachmentId={uiState.selectedAttachmentId}
+            selectedProjectKey={uiState.selectedProjectKey}
+            workspace={uiState.projectSnapshot?.intake_workspace ?? null}
+          />
+          <PackageLifecycleBoard
+            includeCompleted={uiState.boardFilters.includeCompleted}
+            onSelectPackage={selectPackage}
+            packages={uiState.packageQueue}
+            selectedPackageId={uiState.selectedPackageId}
+            showOnlyRisk={uiState.boardFilters.showOnlyRisk}
+          />
+        </div>
         <div className="right-rail">
           <ApprovalControlCenter
             approvalCenterState={{
