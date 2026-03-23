@@ -302,6 +302,22 @@ def _determine_backend_path(
     return f"execution_package_pipeline:{runtime_node}:{executor_target}"
 
 
+def _latest_runtime_target_selection(state: dict[str, Any]) -> dict[str, Any]:
+    dispatch_result = state.get("dispatch_result") if isinstance(state.get("dispatch_result"), dict) else {}
+    selection = dispatch_result.get("runtime_target_selection") if isinstance(dispatch_result.get("runtime_target_selection"), dict) else {}
+    if selection:
+        return dict(selection)
+    execution_bridge = state.get("execution_bridge_summary") if isinstance(state.get("execution_bridge_summary"), dict) else {}
+    return {
+        "status": str(execution_bridge.get("runtime_selection_status") or "").strip().lower(),
+        "selected_target_id": str(execution_bridge.get("selected_runtime_target") or "").strip().lower(),
+        "selection_reason": str(execution_bridge.get("runtime_selection_reason") or "").strip(),
+        "readiness_status": "",
+        "availability_status": "",
+        "denial_reason": "",
+    }
+
+
 def build_project_routing_decision(
     *,
     project_key: str,
@@ -341,6 +357,7 @@ def build_project_routing_decision(
     stop_rail_result = loaded.get("autonomy_stop_rail_result") if isinstance(loaded.get("autonomy_stop_rail_result"), dict) else {}
     stop_rail_status = str(loaded.get("autonomy_stop_rail_status") or stop_rail_result.get("status") or "ok").strip().lower()
     stop_rail_outcome = str(stop_rail_result.get("routing_outcome") or "").strip().lower()
+    runtime_target_selection = _latest_runtime_target_selection(loaded)
 
     decision: dict[str, Any] = {
         "selected_project_key": project_key,
@@ -365,9 +382,13 @@ def build_project_routing_decision(
             "local_analysis_next_action": local_next,
             "autopilot_status": str(loaded.get("autopilot_status") or "").strip().lower(),
             "autonomy_stop_rail_status": stop_rail_status,
+            "selected_runtime_target_id": str(runtime_target_selection.get("selected_target_id") or ""),
+            "runtime_target_selection_status": str(runtime_target_selection.get("status") or ""),
+            "runtime_target_selection_reason": str(runtime_target_selection.get("selection_reason") or ""),
         },
         "mode_state": mode_state,
         "autonomy_stop_rail_result": stop_rail_result,
+        "runtime_target_selection": runtime_target_selection,
     }
 
     if governance_routing_outcome in ("pause", "escalate", "stop") and governance_resolution_state != "resolved":

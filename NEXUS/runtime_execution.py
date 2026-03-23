@@ -7,6 +7,7 @@ runtime adapters and dispatcher paths. Planning/dispatch only; no real execution
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 
@@ -48,6 +49,27 @@ def build_runtime_execution_result(
     if isinstance(extra_fields, dict):
         result.update(extra_fields)
     return result
+
+
+def build_runtime_target_selection_snapshot(selection: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Normalize the execution target-selection contract for persistence on dispatch results.
+    """
+    payload = selection if isinstance(selection, dict) else {}
+    return {
+        "status": str(payload.get("status") or "").strip().lower(),
+        "selected_target_id": str(payload.get("selected_target_id") or "").strip().lower(),
+        "candidate_target_ids": [str(item).strip().lower() for item in (payload.get("candidate_target_ids") or []) if str(item).strip()],
+        "target_type": str(payload.get("target_type") or "").strip().lower(),
+        "capability_match": bool(payload.get("capability_match")),
+        "readiness_status": str(payload.get("readiness_status") or "").strip().lower(),
+        "availability_status": str(payload.get("availability_status") or "").strip().lower(),
+        "denial_reason": str(payload.get("denial_reason") or "").strip(),
+        "selection_reason": str(payload.get("selection_reason") or "").strip(),
+        "routing_outcome": str(payload.get("routing_outcome") or "").strip().lower(),
+        "governance_trace": dict(payload.get("governance_trace") or {}),
+        "recorded_at": str(payload.get("recorded_at") or datetime.now().isoformat()),
+    }
 
 
 def build_runtime_execution_error(

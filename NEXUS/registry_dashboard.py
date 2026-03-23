@@ -325,6 +325,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     runtime_route_count: dict[str, int] = {}
     model_route_by_project: dict[str, str] = {}
     model_route_count: dict[str, int] = {}
+    selected_target_by_project: dict[str, str] = {}
+    target_selection_status_by_project: dict[str, str] = {}
+    target_readiness_by_project: dict[str, str] = {}
+    target_availability_by_project: dict[str, str] = {}
+    target_denial_reason_by_project: dict[str, str] = {}
+    last_target_selection_reason_by_project: dict[str, str] = {}
+    target_selection_status_count: dict[str, int] = {}
     deployment_preflight_count: dict[str, int] = {}
     change_gate_status_count: dict[str, int] = {}
     regression_status_count: dict[str, int] = {}
@@ -420,6 +427,21 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             ds = loaded.get("dispatch_status") or "none"
             dispatch_status_by_project[key] = ds
             dispatch_status_count[ds] = dispatch_status_count.get(ds, 0) + 1
+            dispatch_result = loaded.get("dispatch_result") if isinstance(loaded.get("dispatch_result"), dict) else {}
+            runtime_target_selection = dispatch_result.get("runtime_target_selection") if isinstance(dispatch_result.get("runtime_target_selection"), dict) else {}
+            selected_target_by_project[key] = str(
+                runtime_target_selection.get("selected_target_id")
+                or dispatch_result.get("runtime")
+                or dps.get("runtime_target_id")
+                or ""
+            )
+            selection_status = str(runtime_target_selection.get("status") or "none")
+            target_selection_status_by_project[key] = selection_status
+            target_selection_status_count[selection_status] = target_selection_status_count.get(selection_status, 0) + 1
+            target_readiness_by_project[key] = str(runtime_target_selection.get("readiness_status") or "")
+            target_availability_by_project[key] = str(runtime_target_selection.get("availability_status") or "")
+            target_denial_reason_by_project[key] = str(runtime_target_selection.get("denial_reason") or "")
+            last_target_selection_reason_by_project[key] = str(runtime_target_selection.get("selection_reason") or "")
             a_status = loaded.get("automation_status") or "none"
             automation_status_by_project[key] = a_status
             automation_status_count[a_status] = automation_status_count.get(a_status, 0) + 1
@@ -1407,6 +1429,16 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "capability_summary": capability_summary,
         "runtime_target_summary": runtime_target_summary,
         "runtime_selection_defaults": runtime_selection_defaults,
+        "runtime_target_selection_summary": {
+            "selection_surface_status": "ok",
+            "selected_target_by_project": selected_target_by_project,
+            "selection_status_by_project": target_selection_status_by_project,
+            "readiness_status_by_project": target_readiness_by_project,
+            "availability_status_by_project": target_availability_by_project,
+            "denial_reason_by_project": target_denial_reason_by_project,
+            "last_selection_reason_by_project": last_target_selection_reason_by_project,
+            "selection_status_count": target_selection_status_count,
+        },
         "dispatch_planning_summary": dispatch_planning_summary,
         "dispatch_status_count": dispatch_status_count,
         "dispatch_status_by_project": dispatch_status_by_project,

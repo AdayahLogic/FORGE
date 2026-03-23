@@ -12,10 +12,12 @@ from typing import Any
 from NEXUS.authority_model import build_authority_denial, enforce_component_authority_safe
 from NEXUS.runtimes import RUNTIME_ADAPTERS
 from NEXUS.runtime_execution import (
+    build_runtime_target_selection_snapshot,
     build_runtime_execution_error,
     build_runtime_execution_skipped,
     build_runtime_execution_result,
 )
+from NEXUS.runtime_target_selector import select_runtime_target
 
 
 def _build_review_package_artifact(*, package_id: str | None, package_path: str | None) -> list[dict[str, Any]]:
@@ -84,6 +86,9 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
     """
     exec_block = (dispatch_plan or {}).get("execution") or {}
     runtime_target_id = (exec_block.get("runtime_target_id") or "").strip().lower()
+    routing_block = (dispatch_plan or {}).get("routing") or {}
+    request_block = (dispatch_plan or {}).get("request") or {}
+    governance_block = (dispatch_plan or {}).get("governance") or {}
     project_block = (dispatch_plan or {}).get("project") or {}
     nexus_authority = enforce_component_authority_safe(
         component_name="nexus",
@@ -100,7 +105,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
 
     if nexus_authority.get("status") == "denied":
         blocked = build_runtime_execution_result(
-            runtime=runtime_target_id or "local",
+            runtime=runtime_target_id or "",
             status="blocked",
             message=str((nexus_authority.get("authority_denial") or {}).get("reason") or "Authority enforcement denied runtime dispatch."),
             execution_status="blocked",
@@ -115,25 +120,74 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         )
         return {
             "dispatch_status": "blocked",
-            "runtime_target": runtime_target_id or "local",
+            "runtime_target": runtime_target_id or "",
             "dispatch_result": blocked,
         }
 
+    selection = select_runtime_target(
+        requested_target_id=runtime_target_id or None,
+        agent_name=routing_block.get("agent_name") or routing_block.get("runtime_node"),
+        tool_name=routing_block.get("tool_name"),
+        action_type=request_block.get("request_type"),
+        task_type=request_block.get("task_type"),
+        sensitivity=governance_block.get("risk_level"),
+        review_context=governance_block.get("approval_status"),
+    )
+    selection_snapshot = build_runtime_target_selection_snapshot(selection)
+    selected_target_id = str(selection_snapshot.get("selected_target_id") or "").strip().lower()
+
     if not dispatch_plan or not dispatch_plan.get("ready_for_dispatch", False):
         skipped = build_runtime_execution_skipped(
-            runtime=runtime_target_id or "local",
+            runtime=selected_target_id or runtime_target_id or "",
             message="Dispatch skipped: dispatch plan not ready.",
             reason="not_ready",
         )
         skipped["authority_trace"] = nexus_trace
+        skipped["runtime_target_selection"] = selection_snapshot
         return {
             "dispatch_status": "skipped",
-            "runtime_target": runtime_target_id,
+            "runtime_target": selected_target_id or runtime_target_id,
             "dispatch_result": skipped,
         }
 
-    if not runtime_target_id:
-        runtime_target_id = "local"
+    if selection_snapshot.get("status") == "unavailable":
+        unavailable = build_runtime_execution_skipped(
+            runtime=runtime_target_id or "",
+            message=str(selection_snapshot.get("selection_reason") or "No dispatch-ready runtime target is available."),
+            reason=str(selection_snapshot.get("denial_reason") or "target_unavailable"),
+            execution_mode="manual_only",
+        )
+        unavailable["next_action"] = "select_supported_runtime"
+        unavailable["authority_trace"] = nexus_trace
+        unavailable["runtime_target_selection"] = selection_snapshot
+        return {
+            "dispatch_status": "skipped",
+            "runtime_target": runtime_target_id or "",
+            "dispatch_result": unavailable,
+        }
+
+    if selection_snapshot.get("status") == "denied":
+        blocked = build_runtime_execution_result(
+            runtime=runtime_target_id or "",
+            status="blocked",
+            message=str(selection_snapshot.get("selection_reason") or "Runtime target selection was denied."),
+            execution_status="blocked",
+            execution_mode="manual_only",
+            next_action="human_review",
+            artifacts=[],
+            errors=[{"reason": str(selection_snapshot.get("denial_reason") or "target_selection_denied")}],
+            extra_fields={
+                "authority_trace": nexus_trace,
+                "runtime_target_selection": selection_snapshot,
+            },
+        )
+        return {
+            "dispatch_status": "blocked",
+            "runtime_target": runtime_target_id or "",
+            "dispatch_result": blocked,
+        }
+
+    runtime_target_id = selected_target_id
 
     # AEGIS MVP (Phase 7): policy enforcement gate before any adapter call.
     aegis_res: dict[str, Any] | None = None
@@ -170,6 +224,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             )
             if isinstance(blocked, dict):
                 blocked["aegis"] = aegis_res
+                blocked["runtime_target_selection"] = selection_snapshot
             return {
                 "dispatch_status": "blocked",
                 "runtime_target": runtime_target_id,
@@ -214,6 +269,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(queued, dict):
                 queued["aegis"] = aegis_res
                 queued["authority_trace"] = nexus_trace
+                queued["runtime_target_selection"] = selection_snapshot
                 if approval_id:
                     queued["approval_id"] = approval_id
                     queued["approval_required"] = True
@@ -265,6 +321,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(gated, dict):
                 gated["aegis"] = aegis_res
                 gated["authority_trace"] = nexus_trace
+                gated["runtime_target_selection"] = selection_snapshot
                 if approval_id:
                     gated["approval_id"] = approval_id
                     gated["approval_required"] = True
@@ -300,6 +357,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(packaged, dict):
                 packaged["aegis"] = aegis_res
                 packaged["authority_trace"] = nexus_trace
+                packaged["runtime_target_selection"] = selection_snapshot
                 if package_id:
                     packaged["execution_package_id"] = package_id
                     packaged["execution_package_path"] = package_path
@@ -329,6 +387,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             extra_fields={
                 "authority_denial": aegis_bypass_denial,
                 "authority_trace": nexus_trace,
+                "runtime_target_selection": selection_snapshot,
             },
         )
         return {
@@ -350,6 +409,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         if isinstance(aegis_res, dict):
             no_adapter["aegis"] = aegis_res
         no_adapter["authority_trace"] = nexus_trace
+        no_adapter["runtime_target_selection"] = selection_snapshot
         return {
             "dispatch_status": "no_adapter",
             "runtime_target": runtime_target_id,
@@ -369,6 +429,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             dispatch_result["aegis"] = aegis_res
         if isinstance(dispatch_result, dict):
             dispatch_result["authority_trace"] = nexus_trace
+            dispatch_result["runtime_target_selection"] = selection_snapshot
         if runtime_target_id == "cursor" and isinstance(dispatch_result, dict) and dispatch_result.get("status") != "blocked":
             cursor_bridge_summary = dict(dispatch_result.get("cursor_bridge_summary") or {})
             package_id, package_path = _create_review_only_execution_package(
@@ -422,6 +483,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             err["aegis"] = aegis_res
         if isinstance(err, dict):
             err["authority_trace"] = nexus_trace
+            err["runtime_target_selection"] = selection_snapshot
         return {
             "dispatch_status": "error",
             "runtime_target": runtime_target_id,
