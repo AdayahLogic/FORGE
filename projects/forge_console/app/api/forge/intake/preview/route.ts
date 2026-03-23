@@ -5,24 +5,30 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request) {
   const body = (await request.json()) as {
+    requestKind?: string;
     projectKey?: string;
     objective?: string;
-    constraints?: string[];
-    requestedArtifacts?: string[];
+    projectContext?: string;
+    constraints?: Record<string, unknown>;
+    requestedArtifacts?: Record<string, unknown>;
     linkedAttachmentIds?: string[];
     autonomyMode?: string;
   };
   try {
     const payload = await runForgeBridge([
       "intake_preview",
+      "--request-kind",
+      body.requestKind ?? "update_request",
       "--project-key",
       body.projectKey ?? "",
       "--objective",
       body.objective ?? "",
+      "--project-context",
+      body.projectContext ?? "",
       "--constraints-json",
-      JSON.stringify(body.constraints ?? []),
+      JSON.stringify(body.constraints ?? {}),
       "--requested-artifacts-json",
-      JSON.stringify(body.requestedArtifacts ?? []),
+      JSON.stringify(body.requestedArtifacts ?? {}),
       "--linked-attachment-ids-json",
       JSON.stringify(body.linkedAttachmentIds ?? []),
       "--autonomy-mode",

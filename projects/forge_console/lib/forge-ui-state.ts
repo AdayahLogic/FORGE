@@ -1,6 +1,7 @@
 import type {
   ApprovalCenterState,
   ControlDraft,
+  ForgeConstraintSections,
   ForgeUiState,
 } from "./forge-types";
 
@@ -23,6 +24,16 @@ export function createInitialControlDraft(): ControlDraft {
   };
 }
 
+function createEmptyConstraintSections(): ForgeConstraintSections {
+  return {
+    scope_boundaries: [],
+    risk_notes: [],
+    runtime_preferences: [],
+    output_expectations: [],
+    review_expectations: [],
+  };
+}
+
 export function createInitialUiState(): ForgeUiState {
   return {
     selectedProjectKey: "",
@@ -39,8 +50,12 @@ export function createInitialUiState(): ForgeUiState {
     intakeDraft: {
       requestKind: "update_request",
       objective: "",
-      constraintsText: "",
-      requestedArtifactsText: "implementation_summary\ntest_report\ndiff_review",
+      projectContext: "",
+      structuredConstraints: createEmptyConstraintSections(),
+      requestedArtifacts: {
+        selected: ["implementation_plan", "code_artifacts", "tests", "review_package", "summary_report"],
+        custom: [],
+      },
       autonomyMode: "supervised_build",
       linkedAttachmentIds: [],
       previewing: false,

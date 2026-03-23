@@ -265,8 +265,10 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
 
 def build_intake_preview(
     *,
+    request_kind: str,
     project_key: str,
     objective: str,
+    project_context: str,
     constraints_json: str,
     requested_artifacts_json: str,
     linked_attachment_ids_json: str,
@@ -287,11 +289,13 @@ def build_intake_preview(
             "Invalid preview payload.",
         )
     payload = preview_intake_request_safe(
+        request_kind=request_kind,
         project_key=key,
         project_path=project_path,
         objective=objective,
-        constraints=constraints if isinstance(constraints, list) else [],
-        requested_artifacts=requested_artifacts if isinstance(requested_artifacts, list) else [],
+        project_context=project_context,
+        constraints=constraints if isinstance(constraints, (dict, list)) else {},
+        requested_artifacts=requested_artifacts if isinstance(requested_artifacts, (dict, list)) else {},
         linked_attachment_ids=linked_attachment_ids if isinstance(linked_attachment_ids, list) else [],
         autonomy_mode=autonomy_mode,
     )
@@ -594,7 +598,9 @@ def main() -> int:
     parser.add_argument("--source", default="console_upload")
     parser.add_argument("--purpose", default="supporting_context")
     parser.add_argument("--request-id", default="")
+    parser.add_argument("--request-kind", default="update_request")
     parser.add_argument("--objective", default="")
+    parser.add_argument("--project-context", default="")
     parser.add_argument("--constraints-json", default="[]")
     parser.add_argument("--requested-artifacts-json", default="[]")
     parser.add_argument("--linked-attachment-ids-json", default="[]")
@@ -609,8 +615,10 @@ def main() -> int:
         out = build_package_snapshot(args.package_id, project_key=args.project_key or None)
     elif args.mode == "intake_preview":
         out = build_intake_preview(
+            request_kind=args.request_kind,
             project_key=args.project_key,
             objective=args.objective,
+            project_context=args.project_context,
             constraints_json=args.constraints_json,
             requested_artifacts_json=args.requested_artifacts_json,
             linked_attachment_ids_json=args.linked_attachment_ids_json,

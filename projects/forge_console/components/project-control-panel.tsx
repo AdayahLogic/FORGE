@@ -30,6 +30,7 @@ export function ProjectControlPanel({
   const session = projectSnapshot?.latest_session ?? {};
   const health = projectSnapshot?.system_health ?? {};
   const intake = projectSnapshot?.intake_workspace;
+  const preview = intake?.preview;
   const currentPackageId =
     typeof state.execution_package_id === "string" ? state.execution_package_id : "";
   return (
@@ -116,6 +117,14 @@ export function ProjectControlPanel({
             <div className="detail-row">
               <span>Autonomy Mode</span>
               <strong>{String(state.autonomy_mode ?? intake?.draft_seed.autonomy_mode ?? "unknown")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Intake Preview</span>
+              <strong>{String(preview?.readiness ?? "preview_required")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Requested Outputs</span>
+              <strong>{String(preview?.requested_artifacts.length ?? intake?.draft_seed.requested_artifacts.length ?? 0)}</strong>
             </div>
           </div>
         </div>

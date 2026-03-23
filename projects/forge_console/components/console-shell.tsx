@@ -13,7 +13,11 @@ import {
   getCurrentPackagePointer,
   getSelectedProjectKey,
 } from "../lib/forge-selectors";
-import type { ForgeUiState } from "../lib/forge-types";
+import type {
+  ForgeConstraintSections,
+  ForgeRequestedArtifactsDraft,
+  ForgeUiState,
+} from "../lib/forge-types";
 import { createInitialUiState } from "../lib/forge-ui-state";
 import { AbacusEvaluationPanel } from "./abacus-evaluation-panel";
 import { ApprovalControlCenter } from "./approval-control-center";
@@ -28,11 +32,52 @@ import { SystemOverview } from "./system-overview";
 export function ConsoleShell() {
   const [uiState, setUiState] = useState<ForgeUiState>(createInitialUiState());
 
-  const parseLines = (value: string) =>
-    value
-      .split(/\r?\n/)
-      .map((item) => item.trim())
-      .filter(Boolean);
+  const emptyConstraintSections = (): ForgeConstraintSections => ({
+    scope_boundaries: [],
+    risk_notes: [],
+    runtime_preferences: [],
+    output_expectations: [],
+    review_expectations: [],
+  });
+
+  const normalizeConstraintSections = (
+    value: ForgeConstraintSections | null | undefined,
+  ): ForgeConstraintSections => ({
+    scope_boundaries: value?.scope_boundaries ?? [],
+    risk_notes: value?.risk_notes ?? [],
+    runtime_preferences: value?.runtime_preferences ?? [],
+    output_expectations: value?.output_expectations ?? [],
+    review_expectations: value?.review_expectations ?? [],
+  });
+
+  const normalizeRequestedArtifacts = (
+    value: ForgeRequestedArtifactsDraft | null | undefined,
+    fallback: string[] | null | undefined,
+  ): ForgeRequestedArtifactsDraft => ({
+    selected:
+      value?.selected ??
+      (fallback ?? []).filter(Boolean),
+    custom: value?.custom ?? [],
+  });
+
+  const applyIntakeDraftPatch = (
+    patch:
+      | Partial<ForgeUiState["intakeDraft"]>
+      | ((current: ForgeUiState["intakeDraft"]) => Partial<ForgeUiState["intakeDraft"]>),
+  ) => {
+    setUiState((current) => {
+      const nextPatch = typeof patch === "function" ? patch(current.intakeDraft) : patch;
+      return {
+        ...current,
+        intakePreview: null,
+        intakeDraft: {
+          ...current.intakeDraft,
+          ...nextPatch,
+          lastMessage: "Draft updated. Preview again to refresh governed request intent.",
+        },
+      };
+    });
+  };
 
   async function loadPackage(packageId: string, projectKey: string) {
     const response = await getPackageSnapshot(packageId, projectKey);
@@ -63,8 +108,14 @@ export function ConsoleShell() {
       intakeDraft: {
         requestKind: workspace?.draft_seed.request_kind ?? "update_request",
         objective: workspace?.draft_seed.objective ?? "",
-        constraintsText: (workspace?.draft_seed.constraints ?? []).join("\n"),
-        requestedArtifactsText: (workspace?.draft_seed.requested_artifacts ?? []).join("\n"),
+        projectContext: workspace?.draft_seed.project_context ?? "",
+        structuredConstraints: normalizeConstraintSections(
+          workspace?.draft_seed.structured_constraints ?? emptyConstraintSections(),
+        ),
+        requestedArtifacts: normalizeRequestedArtifacts(
+          workspace?.draft_seed.requested_artifacts_draft,
+          workspace?.draft_seed.requested_artifacts,
+        ),
         autonomyMode: workspace?.draft_seed.autonomy_mode ?? "supervised_build",
         linkedAttachmentIds: workspace?.draft_seed.linked_attachment_ids ?? [],
         previewing: false,
@@ -147,9 +198,11 @@ export function ConsoleShell() {
     try {
       const response = await previewIntakeRequest({
         projectKey: uiState.selectedProjectKey,
+        requestKind: uiState.intakeDraft.requestKind,
         objective: uiState.intakeDraft.objective,
-        constraints: parseLines(uiState.intakeDraft.constraintsText),
-        requestedArtifacts: parseLines(uiState.intakeDraft.requestedArtifactsText),
+        projectContext: uiState.intakeDraft.projectContext,
+        constraints: uiState.intakeDraft.structuredConstraints,
+        requestedArtifacts: uiState.intakeDraft.requestedArtifacts,
         linkedAttachmentIds: uiState.intakeDraft.linkedAttachmentIds,
         autonomyMode: uiState.intakeDraft.autonomyMode,
       });
@@ -288,32 +341,16 @@ export function ConsoleShell() {
               }))
             }
             onAttachmentToggle={(attachmentId) =>
-              setUiState((current) => {
-                const nextIds = current.intakeDraft.linkedAttachmentIds.includes(
-                  attachmentId,
-                )
-                  ? current.intakeDraft.linkedAttachmentIds.filter(
-                      (item) => item !== attachmentId,
-                    )
-                  : [...current.intakeDraft.linkedAttachmentIds, attachmentId];
+              applyIntakeDraftPatch((draft) => {
+                const nextIds = draft.linkedAttachmentIds.includes(attachmentId)
+                  ? draft.linkedAttachmentIds.filter((item) => item !== attachmentId)
+                  : [...draft.linkedAttachmentIds, attachmentId];
                 return {
-                  ...current,
-                  intakeDraft: {
-                    ...current.intakeDraft,
-                    linkedAttachmentIds: nextIds,
-                  },
+                  linkedAttachmentIds: nextIds,
                 };
               })
             }
-            onDraftChange={(patch) =>
-              setUiState((current) => ({
-                ...current,
-                intakeDraft: {
-                  ...current.intakeDraft,
-                  ...patch,
-                },
-              }))
-            }
+            onDraftChange={applyIntakeDraftPatch}
             onPreview={() => {
               void runPreview();
             }}

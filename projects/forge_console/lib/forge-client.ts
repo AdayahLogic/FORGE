@@ -1,8 +1,10 @@
 import type {
   CommandResult,
   ForgeAttachmentRecord,
+  ForgeConstraintSections,
   ForgeIntakePreview,
   ForgeOverviewSnapshot,
+  ForgeRequestedArtifactsDraft,
   PackageDetailSnapshot,
   ProjectSnapshot,
 } from "./forge-types";
@@ -55,9 +57,11 @@ export function runControlAction(input: {
 
 export function previewIntakeRequest(input: {
   projectKey: string;
+  requestKind: string;
   objective: string;
-  constraints: string[];
-  requestedArtifacts: string[];
+  projectContext: string;
+  constraints: ForgeConstraintSections;
+  requestedArtifacts: ForgeRequestedArtifactsDraft;
   linkedAttachmentIds: string[];
   autonomyMode: string;
 }) {

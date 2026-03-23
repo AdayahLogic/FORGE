@@ -1,14 +1,17 @@
 import type {
+  ForgeConstraintSections,
   ForgeIntakePreview,
   ForgeIntakeWorkspace,
+  ForgeRequestedArtifactsDraft,
 } from "../lib/forge-types";
 import { AttachmentDrawer } from "./attachment-drawer";
 
 type IntakeDraft = {
   requestKind: string;
   objective: string;
-  constraintsText: string;
-  requestedArtifactsText: string;
+  projectContext: string;
+  structuredConstraints: ForgeConstraintSections;
+  requestedArtifacts: ForgeRequestedArtifactsDraft;
   autonomyMode: string;
   linkedAttachmentIds: string[];
   previewing: boolean;
@@ -30,17 +33,102 @@ type Props = {
   onUpload: (file: File) => void;
 };
 
+const AUTONOMY_MODE_OPTIONS = [
+  {
+    value: "supervised_build",
+    label: "supervised_build",
+    summary: "Forge prepares governed work and pauses for operator review at key progression points.",
+  },
+  {
+    value: "assisted_autopilot",
+    label: "assisted_autopilot",
+    summary: "Forge may continue through bounded steps, but governance, approval, and elevated-risk triggers still stop or escalate.",
+  },
+  {
+    value: "low_risk_autonomous_development",
+    label: "low_risk_autonomous_development",
+    summary: "Forge may continue only through explicitly low-risk development loops and must escalate ambiguous or risky work.",
+  },
+] as const;
+
+const REQUESTED_ARTIFACT_OPTIONS = [
+  { value: "implementation_plan", label: "Implementation plan" },
+  { value: "code_artifacts", label: "Code artifacts" },
+  { value: "tests", label: "Tests" },
+  { value: "review_package", label: "Review package" },
+  { value: "summary_report", label: "Summary / report" },
+] as const;
+
+const CONSTRAINT_FIELDS = [
+  {
+    key: "scope_boundaries",
+    label: "Scope Boundaries",
+    help: "Define what this request must stay inside or explicitly avoid.",
+  },
+  {
+    key: "risk_notes",
+    label: "Risk Notes",
+    help: "Capture sensitive areas, hazards, or reasons to proceed carefully.",
+  },
+  {
+    key: "runtime_preferences",
+    label: "Runtime Preferences / Restrictions",
+    help: "State environment preferences or runtime limits without making execution decisions in the UI.",
+  },
+  {
+    key: "output_expectations",
+    label: "Output Expectations",
+    help: "Describe what the returned work should contain or prove.",
+  },
+  {
+    key: "review_expectations",
+    label: "Review Expectations",
+    help: "Describe what reviewers should be able to inspect later in Review Center.",
+  },
+] as const;
+
 function getChipClass(value: string) {
   if (["denied", "quarantined", "error"].includes(value)) {
     return "chip danger";
   }
-  if (["needs_input", "ready_with_attachment_limits", "preview_only"].includes(value)) {
+  if (
+    [
+      "needs_input",
+      "ready_with_attachment_limits",
+      "preview_only",
+      "stale_preview",
+    ].includes(value)
+  ) {
     return "chip warn";
   }
   if (["classified", "ready_for_governed_request"].includes(value)) {
     return "chip success";
   }
   return "chip";
+}
+
+function toLines(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function fromLines(value: string[]) {
+  return value.join("\n");
+}
+
+function labelForMissingField(value: string) {
+  const labels: Record<string, string> = {
+    objective: "Objective",
+    project_context: "Project / request context",
+    requested_artifacts: "Requested artifacts",
+    scope_boundaries: "Scope boundaries",
+    output_expectations: "Output expectations",
+    review_expectations: "Review expectations",
+    preview_error: "Preview availability",
+  };
+  return labels[value] ?? value.replace(/_/g, " ");
 }
 
 export function ProjectIntakeWorkspace({
@@ -58,25 +146,29 @@ export function ProjectIntakeWorkspace({
   const attachments = workspace?.attachments ?? [];
   const selectedAttachment =
     attachments.find((item) => item.attachment_id === selectedAttachmentId) ?? attachments[0] ?? null;
-  const effectivePreview = preview ?? workspace?.preview ?? null;
+  const effectivePreview = preview ?? null;
+  const draftMode =
+    AUTONOMY_MODE_OPTIONS.find((item) => item.value === draft.autonomyMode) ??
+    AUTONOMY_MODE_OPTIONS[0];
 
   return (
     <section className="panel center-canvas">
       <div className="section-title">
         <div>
-          <div className="eyebrow">Phase 1 Intake</div>
-          <h3>Project Intake Workspace</h3>
+          <div className="eyebrow">Phase C Intake</div>
+          <h3>Build Request Workspace</h3>
         </div>
         <div className="chip-row">
-          <span className="chip info">Preview only</span>
+          <span className="chip info">Preview first</span>
           <span className="chip">Project {selectedProjectKey || "none"}</span>
+          <span className="chip">UI composes only</span>
         </div>
       </div>
       <div className="intake-grid">
         <div className="detail-grid-two">
           <div className="control-card">
-            <div className="eyebrow">Build Request</div>
-            <div className="form-grid" style={{ marginTop: 10 }}>
+            <div className="eyebrow">Request Composition</div>
+            <div className="form-grid intake-form-grid" style={{ marginTop: 10 }}>
               <label className="field">
                 <span>Request Type</span>
                 <select
@@ -88,18 +180,33 @@ export function ProjectIntakeWorkspace({
                   <option value="create_request">Create request</option>
                 </select>
               </label>
-              <label className="field">
-                <span>Autonomy Mode</span>
-                <select
-                  className="project-select"
-                  value={draft.autonomyMode}
-                  onChange={(event) => onDraftChange({ autonomyMode: event.target.value })}
-                >
-                  <option value="supervised_build">supervised_build</option>
-                  <option value="bounded_low_risk">bounded_low_risk</option>
-                  <option value="manual_only">manual_only</option>
-                </select>
-              </label>
+              <div className="field">
+                <span>Autonomy Intent</span>
+                <div className="autonomy-mode-list">
+                  {AUTONOMY_MODE_OPTIONS.map((option) => {
+                    const active = draft.autonomyMode === option.value;
+                    return (
+                      <button
+                        className={`autonomy-mode-card ${active ? "active" : ""}`}
+                        key={option.value}
+                        onClick={() => onDraftChange({ autonomyMode: option.value })}
+                        type="button"
+                      >
+                        <div className="package-title">
+                          <span>{option.label}</span>
+                          <span className={`chip ${active ? "info" : ""}`}>
+                            {active ? "Selected" : "Available"}
+                          </span>
+                        </div>
+                        <div className="muted">{option.summary}</div>
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="muted">
+                  Selecting a mode only sets governed request intent. Routing, governance, and execution remain backend-controlled.
+                </div>
+              </div>
               <label className="field field-span-2">
                 <span>Objective</span>
                 <textarea
@@ -109,31 +216,97 @@ export function ProjectIntakeWorkspace({
                   onChange={(event) => onDraftChange({ objective: event.target.value })}
                 />
               </label>
-              <label className="field">
-                <span>Constraints</span>
+              <label className="field field-span-2">
+                <span>Project / Request Context</span>
                 <textarea
                   className="text-area"
-                  rows={6}
-                  value={draft.constraintsText}
-                  onChange={(event) => onDraftChange({ constraintsText: event.target.value })}
+                  rows={4}
+                  value={draft.projectContext}
+                  onChange={(event) => onDraftChange({ projectContext: event.target.value })}
                 />
               </label>
-              <label className="field">
+            </div>
+            <div className="detail-card-subsection">
+              <div className="package-title">
+                <span>Structured Constraints</span>
+                <span className="chip warn">Descriptive only</span>
+              </div>
+              <div className="constraint-grid">
+                {CONSTRAINT_FIELDS.map((field) => (
+                  <label className="field" key={field.key}>
+                    <span>{field.label}</span>
+                    <textarea
+                      className="text-area"
+                      rows={4}
+                      value={fromLines(draft.structuredConstraints[field.key])}
+                      onChange={(event) =>
+                        onDraftChange({
+                          structuredConstraints: {
+                            ...draft.structuredConstraints,
+                            [field.key]: toLines(event.target.value),
+                          },
+                        })
+                      }
+                    />
+                    <span className="field-help">{field.help}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="package-title">
                 <span>Requested Artifacts</span>
+                <span className="chip">Preview intent only</span>
+              </div>
+              <div className="artifact-grid">
+                {REQUESTED_ARTIFACT_OPTIONS.map((option) => {
+                  const checked = draft.requestedArtifacts.selected.includes(option.value);
+                  return (
+                    <label className="artifact-option" key={option.value}>
+                      <input
+                        checked={checked}
+                        onChange={() => {
+                          const selected = checked
+                            ? draft.requestedArtifacts.selected.filter((item) => item !== option.value)
+                            : [...draft.requestedArtifacts.selected, option.value];
+                          onDraftChange({
+                            requestedArtifacts: {
+                              ...draft.requestedArtifacts,
+                              selected,
+                            },
+                          });
+                        }}
+                        type="checkbox"
+                      />
+                      <span>{option.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <label className="field" style={{ marginTop: 12 }}>
+                <span>Additional Governed Artifact Requests</span>
                 <textarea
                   className="text-area"
-                  rows={6}
-                  value={draft.requestedArtifactsText}
+                  rows={3}
+                  value={fromLines(draft.requestedArtifacts.custom)}
                   onChange={(event) =>
-                    onDraftChange({ requestedArtifactsText: event.target.value })
+                    onDraftChange({
+                      requestedArtifacts: {
+                        ...draft.requestedArtifacts,
+                        custom: toLines(event.target.value),
+                      },
+                    })
                   }
                 />
+                <span className="field-help">
+                  Use one line per additional output request. This does not create or modify execution packages from the UI.
+                </span>
               </label>
             </div>
             <div className="chip-row" style={{ marginTop: 12 }}>
               <span className="chip info">Routing stays in NEXUS</span>
               <span className="chip">No package created</span>
-              <span className="chip">No execution side effects</span>
+              <span className="chip">No implicit execution</span>
             </div>
             <div className="button-row" style={{ marginTop: 14 }}>
               <button
@@ -144,15 +317,17 @@ export function ProjectIntakeWorkspace({
               >
                 {draft.previewing ? "Previewing..." : "Preview Governed Request"}
               </button>
-              <div className="muted">{draft.lastMessage || "Draft changes stay local until previewed."}</div>
+              <div className="muted">
+                {draft.lastMessage || "Draft changes remain local until you explicitly refresh preview."}
+              </div>
             </div>
           </div>
 
           <div className="control-card">
-            <div className="eyebrow">Attachment Drawer</div>
+            <div className="eyebrow">Linked Attachments</div>
             <AttachmentDrawer
               attachments={attachments}
-              emptyMessage="No governed attachments yet. Phase 1 stores them as review-only artifacts."
+              emptyMessage="No governed attachments yet. Linked inputs remain review-only unless backend preview marks them eligible."
               eyebrow="Attachment Drawer"
               onSelectAttachment={onAttachmentSelect}
               renderListAction={(attachment) => {
@@ -206,58 +381,141 @@ export function ProjectIntakeWorkspace({
           <div className="section-title">
             <div>
               <div className="eyebrow">Governed Preview</div>
-              <h3>Request And Package Preview</h3>
+              <h3>Request Intent Preview</h3>
             </div>
-            {effectivePreview ? (
-              <span className={getChipClass(effectivePreview.readiness)}>
-                {effectivePreview.readiness}
-              </span>
-            ) : null}
+            <span className={getChipClass(effectivePreview?.readiness ?? "stale_preview")}>
+              {effectivePreview?.readiness ?? "preview_required"}
+            </span>
           </div>
           {effectivePreview ? (
             <>
               <div className="chip-row" style={{ marginBottom: 12 }}>
-                <span className="chip info">{effectivePreview.autonomy_mode}</span>
+                <span className="chip info">{effectivePreview.autonomy_mode_detail.label}</span>
                 <span className="chip">{effectivePreview.package_preview.creation_mode}</span>
+                <span className="chip">linked {effectivePreview.package_preview.attachment_input_count}</span>
                 <span className="chip">
-                  linked {effectivePreview.package_preview.attachment_input_count}
+                  preview-eligible {effectivePreview.package_preview.attachment_preview_count}
                 </span>
               </div>
               <div className="detail-grid-three">
                 <div className="detail-card">
-                  <h4>Objective</h4>
-                  <div className="muted">
-                    {effectivePreview.objective || "Objective required before a governed request can be formed."}
+                  <h4>Requested Work</h4>
+                  <div className="detail-list">
+                    <div className="detail-row">
+                      <span>Request Type</span>
+                      <strong>{effectivePreview.request_kind}</strong>
+                    </div>
+                    <div className="detail-row">
+                      <span>Objective</span>
+                      <strong>{effectivePreview.objective || "missing"}</strong>
+                    </div>
+                  </div>
+                  <div className="detail-card-subsection">
+                    <div className="stat-label">Project / Request Context</div>
+                    <div style={{ marginTop: 8 }}>
+                      {effectivePreview.project_context || "Context is still required before the request can be considered ready."}
+                    </div>
                   </div>
                 </div>
                 <div className="detail-card">
-                  <h4>Constraints</h4>
+                  <h4>Constraint Coverage</h4>
                   <div className="detail-list">
-                    {effectivePreview.constraints.length > 0 ? (
-                      effectivePreview.constraints.map((item) => (
-                        <div className="audit-item" key={item}>
-                          {item}
+                    {CONSTRAINT_FIELDS.map((field) => {
+                      const entries = effectivePreview.structured_constraints[field.key];
+                      return (
+                        <div className="detail-card-subsection" key={field.key}>
+                          <div className="stat-label">{field.label}</div>
+                          <div className="detail-list" style={{ marginTop: 8 }}>
+                            {entries.length > 0 ? (
+                              entries.map((item) => (
+                                <div className="audit-item" key={`${field.key}-${item}`}>
+                                  {item}
+                                </div>
+                              ))
+                            ) : (
+                              <div className="audit-item muted">No entries yet.</div>
+                            )}
+                          </div>
                         </div>
-                      ))
-                    ) : (
-                      <div className="audit-item muted">No explicit constraints yet.</div>
-                    )}
+                      );
+                    })}
                   </div>
                 </div>
                 <div className="detail-card">
                   <h4>Requested Artifacts</h4>
                   <div className="detail-list">
-                    {effectivePreview.requested_artifacts.map((item) => (
-                      <div className="audit-item" key={item}>
-                        {item}
-                      </div>
-                    ))}
+                    {effectivePreview.requested_artifact_details.length > 0 ? (
+                      effectivePreview.requested_artifact_details.map((item) => (
+                        <div className="audit-item" key={`${item.source}-${item.artifact_id}`}>
+                          <div className="chip-row" style={{ marginBottom: 8 }}>
+                            <span className="chip info">{item.source}</span>
+                          </div>
+                          <div>{item.label}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="audit-item muted">Select at least one desired output before launch preview can be ready.</div>
+                    )}
                   </div>
                 </div>
               </div>
+
               <div className="detail-grid-two" style={{ marginTop: 12 }}>
                 <div className="detail-card">
-                  <h4>Package Preview</h4>
+                  <h4>Autonomy Intent</h4>
+                  <div className="chip-row" style={{ marginBottom: 10 }}>
+                    <span className="chip info">{effectivePreview.autonomy_mode}</span>
+                    <span className="chip">{draftMode.label}</span>
+                  </div>
+                  <div className="detail-card-subsection">
+                    <div className="stat-label">Operational Meaning</div>
+                    <div style={{ marginTop: 8 }}>{effectivePreview.autonomy_mode_detail.summary}</div>
+                  </div>
+                  <div className="detail-card-subsection">
+                    <div className="stat-label">Operator Guidance</div>
+                    <div style={{ marginTop: 8 }}>{effectivePreview.autonomy_mode_detail.operator_posture}</div>
+                  </div>
+                </div>
+
+                <div className="detail-card">
+                  <h4>Composition Status</h4>
+                  <div className="chip-row" style={{ marginBottom: 10 }}>
+                    <span
+                      className={
+                        effectivePreview.composition_status.is_complete &&
+                        effectivePreview.readiness === "ready_for_governed_request"
+                          ? "chip success"
+                          : "chip warn"
+                      }
+                    >
+                      {effectivePreview.composition_status.is_complete &&
+                      effectivePreview.readiness === "ready_for_governed_request"
+                        ? "Ready for governed request"
+                        : "Not ready for launch"}
+                    </span>
+                    <span className="chip">
+                      warnings {effectivePreview.composition_status.warning_count}
+                    </span>
+                  </div>
+                  <div className="detail-list">
+                    {effectivePreview.composition_status.missing_fields.length > 0 ? (
+                      effectivePreview.composition_status.missing_fields.map((item) => (
+                        <div className="audit-item" key={item}>
+                          Missing: {labelForMissingField(item)}
+                        </div>
+                      ))
+                    ) : (
+                      <div className="audit-item muted">
+                        Required request composition fields are present in the preview payload.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div className="detail-grid-two" style={{ marginTop: 12 }}>
+                <div className="detail-card">
+                  <h4>Package Preview Boundary</h4>
                   <div className="detail-list">
                     <div className="detail-row">
                       <span>Governance Required</span>
@@ -279,6 +537,25 @@ export function ProjectIntakeWorkspace({
                 <div className="detail-card">
                   <h4>Attachment Warnings</h4>
                   <div className="detail-list">
+                    {effectivePreview.linked_attachments.length > 0 ? (
+                      effectivePreview.linked_attachments.map((attachment) => (
+                        <div className="audit-item" key={attachment.attachment_id}>
+                          <div className="chip-row" style={{ marginBottom: 8 }}>
+                            <span className={getChipClass(attachment.status)}>{attachment.status}</span>
+                            <span className="chip">{attachment.classification}</span>
+                            <span className="chip">
+                              {attachment.allowed_for_request_preview ? "preview-eligible" : "preview-limited"}
+                            </span>
+                          </div>
+                          <div>{attachment.file_name}</div>
+                          <div className="muted" style={{ marginTop: 6 }}>
+                            {attachment.extracted_summary || "No extracted summary available."}
+                          </div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="audit-item muted">No attachments linked into the current request composition.</div>
+                    )}
                     {effectivePreview.warnings.length > 0 ? (
                       effectivePreview.warnings.map((warning) => (
                         <div className="audit-item" key={warning}>
@@ -286,9 +563,7 @@ export function ProjectIntakeWorkspace({
                         </div>
                       ))
                     ) : (
-                      <div className="audit-item muted">
-                        Linked attachments are eligible for request preview.
-                      </div>
+                      <div className="audit-item muted">Linked attachments are eligible for governed preview use.</div>
                     )}
                   </div>
                 </div>
@@ -296,7 +571,7 @@ export function ProjectIntakeWorkspace({
             </>
           ) : (
             <div className="audit-item muted">
-              Preview data appears after the first governed request preview.
+              Preview data appears only after you explicitly request a governed preview. Until then, the workspace stays in composition mode and cannot show a ready state.
             </div>
           )}
         </div>

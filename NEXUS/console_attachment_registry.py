@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from NEXUS.autonomy_modes import get_mode_policy, normalize_autonomy_mode
 from NEXUS.path_utils import to_studio_relative_path
 from NEXUS.project_state import ensure_state_folder, load_project_state
 
@@ -49,6 +50,30 @@ QUARANTINE_EXTENSIONS = {
     ".jar",
     ".sh",
 }
+
+DEFAULT_REQUESTED_ARTIFACTS = [
+    "implementation_plan",
+    "code_artifacts",
+    "tests",
+    "review_package",
+    "summary_report",
+]
+REQUESTED_ARTIFACT_LABELS = {
+    "implementation_plan": "Implementation Plan",
+    "code_artifacts": "Code Artifacts",
+    "tests": "Tests",
+    "review_package": "Review Package",
+    "summary_report": "Summary / Report",
+    "implementation_summary": "Implementation Summary",
+    "test_report": "Test Report",
+    "diff_review": "Diff Review",
+    "approved_summary": "Approved Summary",
+}
+REQUIRED_CONSTRAINT_SECTIONS = (
+    "scope_boundaries",
+    "output_expectations",
+    "review_expectations",
+)
 
 
 def _now() -> str:
@@ -255,6 +280,143 @@ def list_console_attachments_safe(project_path: str) -> list[dict[str, Any]]:
         return []
 
 
+def _clean_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        text = str(item or "").strip()
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def _empty_constraint_sections() -> dict[str, list[str]]:
+    return {
+        "scope_boundaries": [],
+        "risk_notes": [],
+        "runtime_preferences": [],
+        "output_expectations": [],
+        "review_expectations": [],
+    }
+
+
+def _normalize_constraint_sections(value: Any) -> dict[str, list[str]]:
+    normalized = _empty_constraint_sections()
+    if isinstance(value, dict):
+        for key in normalized:
+            normalized[key] = _clean_text_list(value.get(key))
+        return normalized
+    flat_constraints = _clean_text_list(value)
+    if flat_constraints:
+        normalized["scope_boundaries"] = flat_constraints
+    return normalized
+
+
+def _flatten_constraint_sections(value: dict[str, list[str]]) -> list[str]:
+    ordered_keys = [
+        ("scope_boundaries", "Scope"),
+        ("risk_notes", "Risk"),
+        ("runtime_preferences", "Runtime"),
+        ("output_expectations", "Output"),
+        ("review_expectations", "Review"),
+    ]
+    flattened: list[str] = []
+    for key, label in ordered_keys:
+        for item in value.get(key) or []:
+            text = str(item or "").strip()
+            if text:
+                flattened.append(f"{label}: {text}")
+    return flattened
+
+
+def _normalize_requested_artifacts(value: Any) -> dict[str, list[str]]:
+    normalized = {
+        "selected": [],
+        "custom": [],
+    }
+    if isinstance(value, dict):
+        normalized["selected"] = _clean_text_list(value.get("selected"))
+        normalized["custom"] = _clean_text_list(value.get("custom"))
+        return normalized
+    normalized["selected"] = _clean_text_list(value)
+    return normalized
+
+
+def _artifact_label(artifact_id: str) -> str:
+    key = str(artifact_id or "").strip()
+    if not key:
+        return ""
+    return REQUESTED_ARTIFACT_LABELS.get(key, key.replace("_", " ").title())
+
+
+def _requested_artifact_details(value: dict[str, list[str]]) -> list[dict[str, str]]:
+    details: list[dict[str, str]] = []
+    for item in value.get("selected") or []:
+        details.append(
+            {
+                "artifact_id": item,
+                "label": _artifact_label(item),
+                "source": "catalog",
+            }
+        )
+    for item in value.get("custom") or []:
+        details.append(
+            {
+                "artifact_id": item,
+                "label": item,
+                "source": "custom",
+            }
+        )
+    return details
+
+
+def _flatten_requested_artifacts(value: dict[str, list[str]]) -> list[str]:
+    return [item["artifact_id"] for item in _requested_artifact_details(value)]
+
+
+def _autonomy_mode_detail(mode: Any) -> dict[str, str]:
+    normalized = normalize_autonomy_mode(mode)
+    policy = get_mode_policy(normalized)
+    posture_map = {
+        "supervised_build": "Operator review at key progression points.",
+        "assisted_autopilot": "Forge may continue within bounded guardrails and escalates when governance or risk requires it.",
+        "low_risk_autonomous_development": "Forge may continue only through explicitly low-risk development loops and stops on ambiguity or elevated risk.",
+    }
+    return {
+        "mode": normalized,
+        "label": normalized.replace("_", " "),
+        "summary": str(policy.get("autonomy_mode_reason") or ""),
+        "operator_posture": posture_map.get(normalized, "Governed operator oversight remains required."),
+    }
+
+
+def _composition_status(
+    *,
+    objective: str,
+    project_context: str,
+    structured_constraints: dict[str, list[str]],
+    requested_artifacts: dict[str, list[str]],
+    warnings: list[str],
+) -> dict[str, Any]:
+    missing_fields: list[str] = []
+    if not str(objective or "").strip():
+        missing_fields.append("objective")
+    if not str(project_context or "").strip():
+        missing_fields.append("project_context")
+    if not _flatten_requested_artifacts(requested_artifacts):
+        missing_fields.append("requested_artifacts")
+    for key in REQUIRED_CONSTRAINT_SECTIONS:
+        if not structured_constraints.get(key):
+            missing_fields.append(key)
+    return {
+        "is_complete": not missing_fields and not warnings,
+        "missing_fields": missing_fields,
+        "warning_count": len(warnings),
+        "stale_preview": False,
+    }
+
+
 def build_attachment_review_context(
     *,
     project_path: str,
@@ -305,16 +467,24 @@ def build_intake_workspace(
 ) -> dict[str, Any]:
     project_state = load_project_state(project_path)
     attachments = list_console_attachments_safe(project_path)
-    autonomy_mode = str(project_state.get("autonomy_mode") or "supervised_build")
+    autonomy_mode = normalize_autonomy_mode(project_state.get("autonomy_mode") or "supervised_build")
     allowed_actions = [str(item) for item in list(project_state.get("allowed_actions") or []) if str(item).strip()]
+    structured_constraints = _empty_constraint_sections()
+    requested_artifacts = {
+        "selected": list(DEFAULT_REQUESTED_ARTIFACTS),
+        "custom": [],
+    }
     return {
         "project_key": project_key,
         "project_path": project_path,
         "draft_seed": {
             "request_kind": "update_request",
             "objective": "",
-            "constraints": [],
-            "requested_artifacts": ["implementation_summary", "test_report", "diff_review"],
+            "project_context": "",
+            "constraints": _flatten_constraint_sections(structured_constraints),
+            "structured_constraints": structured_constraints,
+            "requested_artifacts": _flatten_requested_artifacts(requested_artifacts),
+            "requested_artifacts_draft": requested_artifacts,
             "autonomy_mode": autonomy_mode,
             "linked_attachment_ids": [],
         },
@@ -331,11 +501,13 @@ def build_intake_workspace(
             ],
         },
         "preview": preview_intake_request_safe(
+            request_kind="update_request",
             project_key=project_key,
             project_path=project_path,
             objective="",
-            constraints=[],
-            requested_artifacts=["implementation_summary", "test_report", "diff_review"],
+            project_context="",
+            constraints=structured_constraints,
+            requested_artifacts=requested_artifacts,
             linked_attachment_ids=[],
             autonomy_mode=autonomy_mode,
         ),
@@ -344,11 +516,13 @@ def build_intake_workspace(
 
 def preview_intake_request(
     *,
+    request_kind: str,
     project_key: str,
     project_path: str,
     objective: str,
-    constraints: list[str],
-    requested_artifacts: list[str],
+    project_context: str,
+    constraints: Any,
+    requested_artifacts: Any,
     linked_attachment_ids: list[str],
     autonomy_mode: str,
 ) -> dict[str, Any]:
@@ -361,6 +535,8 @@ def preview_intake_request(
     linked = []
     warnings: list[str] = []
     allowed_link_count = 0
+    structured_constraints = _normalize_constraint_sections(constraints)
+    requested_artifact_state = _normalize_requested_artifacts(requested_artifacts)
     for attachment_id in linked_attachment_ids:
         record = attachments_by_id.get(str(attachment_id or ""))
         if not record:
@@ -386,19 +562,41 @@ def preview_intake_request(
         )
 
     objective_value = str(objective or "").strip()
+    project_context_value = str(project_context or "").strip()
+    flat_constraints = _flatten_constraint_sections(structured_constraints)
+    flat_requested_artifacts = _flatten_requested_artifacts(requested_artifact_state)
+    composition_status = _composition_status(
+        objective=objective_value,
+        project_context=project_context_value,
+        structured_constraints=structured_constraints,
+        requested_artifacts=requested_artifact_state,
+        warnings=warnings,
+    )
     readiness = "needs_input"
-    if objective_value and not warnings:
+    if composition_status["is_complete"]:
         readiness = "ready_for_governed_request"
-    elif objective_value:
+    elif objective_value and flat_requested_artifacts and warnings:
         readiness = "ready_with_attachment_limits"
+    elif objective_value:
+        warnings.append(
+            "Request composition is incomplete. Add project context, scope/output/review constraints, and requested artifacts before launch preview can be considered ready."
+        )
     request_id = f"preview-{uuid.uuid4().hex[:8]}"
     return {
         "request_id": request_id,
-        "request_kind": "preview_only",
+        "request_kind": str(request_kind or "update_request"),
         "objective": objective_value,
-        "constraints": [str(item).strip() for item in constraints if str(item).strip()],
-        "requested_artifacts": [str(item).strip() for item in requested_artifacts if str(item).strip()],
-        "autonomy_mode": str(autonomy_mode or "supervised_build"),
+        "project_context": project_context_value,
+        "constraints": flat_constraints,
+        "structured_constraints": structured_constraints,
+        "requested_artifacts": flat_requested_artifacts,
+        "requested_artifact_details": _requested_artifact_details(requested_artifact_state),
+        "autonomy_mode": normalize_autonomy_mode(autonomy_mode),
+        "autonomy_mode_detail": _autonomy_mode_detail(autonomy_mode),
+        "composition_status": {
+            **composition_status,
+            "warning_count": len(warnings),
+        },
         "linked_attachments": linked,
         "readiness": readiness,
         "warnings": warnings,
@@ -410,7 +608,7 @@ def preview_intake_request(
             "execution_authority": "package_governance_only",
             "attachment_input_count": len(linked),
             "attachment_preview_count": allowed_link_count,
-            "summary": "Console can preview governed request creation, but package creation remains a backend-governed action.",
+            "summary": "Console can preview governed request intent, but package creation, routing, and execution remain backend-governed actions.",
         },
     }
 
@@ -421,11 +619,21 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
     except Exception as exc:
         return {
             "request_id": "",
-            "request_kind": "preview_only",
+            "request_kind": str(kwargs.get("request_kind") or "update_request"),
             "objective": "",
+            "project_context": "",
             "constraints": [],
+            "structured_constraints": _empty_constraint_sections(),
             "requested_artifacts": [],
+            "requested_artifact_details": [],
             "autonomy_mode": str(kwargs.get("autonomy_mode") or "supervised_build"),
+            "autonomy_mode_detail": _autonomy_mode_detail(kwargs.get("autonomy_mode") or "supervised_build"),
+            "composition_status": {
+                "is_complete": False,
+                "missing_fields": ["preview_error"],
+                "warning_count": 1,
+                "stale_preview": False,
+            },
             "linked_attachments": [],
             "readiness": "error",
             "warnings": [f"Preview failed: {exc}"],

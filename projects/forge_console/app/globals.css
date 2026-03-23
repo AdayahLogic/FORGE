@@ -452,6 +452,69 @@ textarea {
   flex-wrap: wrap;
 }
 
+.intake-form-grid {
+  align-items: start;
+}
+
+.constraint-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.artifact-grid,
+.autonomy-mode-list {
+  display: grid;
+  gap: 10px;
+}
+
+.autonomy-mode-card {
+  all: unset;
+  cursor: pointer;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.035);
+  transition:
+    transform 180ms ease,
+    border-color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.autonomy-mode-card:hover {
+  transform: translateY(-1px);
+  border-color: var(--border-strong);
+}
+
+.autonomy-mode-card.active {
+  border-color: rgba(110, 212, 255, 0.46);
+  background: linear-gradient(180deg, rgba(18, 30, 48, 0.92), rgba(12, 18, 28, 0.92));
+}
+
+.artifact-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.artifact-option input {
+  margin: 0;
+}
+
+.field-help {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .upload-button {
   position: relative;
   overflow: hidden;
@@ -622,7 +685,8 @@ textarea {
 
   .detail-grid-two,
   .detail-grid-three,
-  .review-grid {
+  .review-grid,
+  .constraint-grid {
     grid-template-columns: 1fr;
   }
 
@@ -637,7 +701,8 @@ textarea {
   .detail-grid,
   .detail-grid-two,
   .detail-grid-three,
-  .review-grid {
+  .review-grid,
+  .constraint-grid {
     grid-template-columns: 1fr;
   }
 

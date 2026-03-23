@@ -133,10 +133,25 @@ def test_intake_preview_keeps_attachments_governed_and_read_only():
 
             project_snapshot = build_project_snapshot(project_key)
             preview = build_intake_preview(
+                request_kind="update_request",
                 project_key=project_key,
                 objective="Improve Forge Console intake safely.",
-                constraints_json=json.dumps(["Keep NEXUS as the only router."]),
-                requested_artifacts_json=json.dumps(["diff_review", "approved_summary"]),
+                project_context="Forge Console intake workspace for governed build requests.",
+                constraints_json=json.dumps(
+                    {
+                        "scope_boundaries": ["Keep NEXUS as the only router."],
+                        "risk_notes": ["Do not create hidden side effects."],
+                        "runtime_preferences": ["Do not infer execution targets in the UI."],
+                        "output_expectations": ["Return a reviewable implementation package summary."],
+                        "review_expectations": ["Review Center should receive explicit requested outputs."],
+                    }
+                ),
+                requested_artifacts_json=json.dumps(
+                    {
+                        "selected": ["review_package", "summary_report"],
+                        "custom": ["diff_review"],
+                    }
+                ),
                 linked_attachment_ids_json=json.dumps(
                     [accepted["attachment_id"], quarantined["attachment_id"]]
                 ),
@@ -156,8 +171,53 @@ def test_intake_preview_keeps_attachments_governed_and_read_only():
             assert payload["package_preview"]["package_creation_allowed"] is False
             assert payload["package_preview"]["routing_authority"] == "NEXUS"
             assert payload["readiness"] == "ready_with_attachment_limits"
+            assert payload["request_kind"] == "update_request"
+            assert payload["project_context"]
+            assert payload["structured_constraints"]["scope_boundaries"]
+            assert payload["requested_artifact_details"]
+            assert payload["composition_status"]["is_complete"] is False
             assert any("cannot inform request preview" in warning for warning in payload["warnings"])
             assert before == after
+        finally:
+            PROJECTS.pop(project_key, None)
+
+
+def test_intake_preview_requires_structured_completion_before_ready_state():
+    from NEXUS.registry import PROJECTS
+    from ops.forge_console_bridge import build_intake_preview
+
+    with _local_test_dir() as tmp:
+        _write_state(tmp)
+        project_key = f"phase63_{uuid.uuid4().hex[:8]}"
+        PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 63 temp project"}
+        try:
+            preview = build_intake_preview(
+                request_kind="create_request",
+                project_key=project_key,
+                objective="Harden intake workspace.",
+                project_context="",
+                constraints_json=json.dumps(
+                    {
+                        "scope_boundaries": ["Do not duplicate backend logic."],
+                        "risk_notes": [],
+                        "runtime_preferences": [],
+                        "output_expectations": [],
+                        "review_expectations": [],
+                    }
+                ),
+                requested_artifacts_json=json.dumps({"selected": [], "custom": []}),
+                linked_attachment_ids_json=json.dumps([]),
+                autonomy_mode="assisted_autopilot",
+            )
+            assert preview["status"] == "ok"
+            payload = preview["payload"]
+            assert payload["readiness"] == "needs_input"
+            assert payload["composition_status"]["is_complete"] is False
+            assert "project_context" in payload["composition_status"]["missing_fields"]
+            assert "requested_artifacts" in payload["composition_status"]["missing_fields"]
+            assert "output_expectations" in payload["composition_status"]["missing_fields"]
+            assert payload["autonomy_mode"] == "assisted_autopilot"
+            assert payload["autonomy_mode_detail"]["summary"]
         finally:
             PROJECTS.pop(project_key, None)
 
@@ -165,6 +225,7 @@ def test_intake_preview_keeps_attachments_governed_and_read_only():
 def main():
     tests = [
         test_intake_preview_keeps_attachments_governed_and_read_only,
+        test_intake_preview_requires_structured_completion_before_ready_state,
     ]
     passed = sum(1 for t in tests if _run(t.__name__, t))
     print(f"\n{passed}/{len(tests)} passed")

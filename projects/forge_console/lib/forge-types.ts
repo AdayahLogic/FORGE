@@ -4,6 +4,39 @@ export type CommandResult<T> = {
   payload: T;
 };
 
+export type ForgeConstraintSections = {
+  scope_boundaries: string[];
+  risk_notes: string[];
+  runtime_preferences: string[];
+  output_expectations: string[];
+  review_expectations: string[];
+};
+
+export type ForgeRequestedArtifactsDraft = {
+  selected: string[];
+  custom: string[];
+};
+
+export type ForgeRequestedArtifactDetail = {
+  artifact_id: string;
+  label: string;
+  source: "catalog" | "custom";
+};
+
+export type ForgeAutonomyModeDetail = {
+  mode: string;
+  label: string;
+  summary: string;
+  operator_posture: string;
+};
+
+export type ForgeCompositionStatus = {
+  is_complete: boolean;
+  missing_fields: string[];
+  warning_count: number;
+  stale_preview: boolean;
+};
+
 export type ForgeAttachmentRecord = {
   attachment_id: string;
   project_id: string;
@@ -84,9 +117,14 @@ export type ForgeIntakePreview = {
   request_id: string;
   request_kind: string;
   objective: string;
+  project_context: string;
   constraints: string[];
+  structured_constraints: ForgeConstraintSections;
   requested_artifacts: string[];
+  requested_artifact_details: ForgeRequestedArtifactDetail[];
   autonomy_mode: string;
+  autonomy_mode_detail: ForgeAutonomyModeDetail;
+  composition_status: ForgeCompositionStatus;
   linked_attachments: Array<{
     attachment_id: string;
     file_name: string;
@@ -115,8 +153,11 @@ export type ForgeIntakeWorkspace = {
   draft_seed: {
     request_kind: string;
     objective: string;
+    project_context: string;
     constraints: string[];
+    structured_constraints: ForgeConstraintSections;
     requested_artifacts: string[];
+    requested_artifacts_draft: ForgeRequestedArtifactsDraft;
     autonomy_mode: string;
     linked_attachment_ids: string[];
   };
@@ -278,8 +319,9 @@ export type ForgeUiState = {
   intakeDraft: {
     requestKind: string;
     objective: string;
-    constraintsText: string;
-    requestedArtifactsText: string;
+    projectContext: string;
+    structuredConstraints: ForgeConstraintSections;
+    requestedArtifacts: ForgeRequestedArtifactsDraft;
     autonomyMode: string;
     linkedAttachmentIds: string[];
     previewing: boolean;
