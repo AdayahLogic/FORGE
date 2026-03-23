@@ -100,6 +100,7 @@ def run_helix_pipeline(
     pipeline_status = "planned"
     execution_package_refs: list[str] = []
     helix_contract: dict[str, Any] = {}
+    contract_validation: dict[str, Any] = {}
     authority_trace = evaluate_component_authority_safe(
         component_name="helix",
         requested_actions=[
@@ -145,6 +146,7 @@ def run_helix_pipeline(
             "product_id_refs": [],
             "execution_package_refs": [],
             "helix_contract": {},
+            "contract_validation": {"contract_status": "invalid", "validation_path": "blocked_before_package_binding"},
             "authority_trace": authority_trace,
             "failure_handling_summary": build_failure_handling_summary(
                 stage_results=[],
@@ -183,6 +185,7 @@ def run_helix_pipeline(
             "product_id_refs": [],
             "execution_package_refs": [],
             "helix_contract": {},
+            "contract_validation": {"contract_status": "invalid", "validation_path": "blocked_before_package_binding"},
             "authority_trace": authority_trace,
             "failure_handling_summary": build_failure_handling_summary(
                 stage_results=[],
@@ -343,10 +346,20 @@ def run_helix_pipeline(
         stop_reason=stop_reason,
         requires_surgeon=requires_surgeon,
     )
+    trace_metadata = {
+        "trace_id": helix_id,
+        "project_name": project_name,
+        "run_id": run_id,
+        "requested_outcome": requested_outcome[:300],
+        "pipeline_status": pipeline_status,
+        "stop_reason": stop_reason,
+    }
     helix_contract = build_helix_contract_envelope(
         input_contract=input_contract,
         output_contract=output_contract,
         package_id_refs=execution_package_refs,
+        authority_trace=authority_trace,
+        trace_metadata=trace_metadata,
     )
     contract_validation = validate_helix_contract_envelope(helix_contract)
     failure_handling_summary = build_failure_handling_summary(
@@ -376,6 +389,7 @@ def run_helix_pipeline(
                 },
                 package_reason="HELIX contract review package created for governed downstream handling.",
                 helix_contract=helix_contract,
+                contract_validation=contract_validation,
                 authority_trace=authority_trace,
                 failure_handling_summary=failure_handling_summary,
             )
@@ -389,13 +403,16 @@ def run_helix_pipeline(
             input_contract=input_contract,
             output_contract=output_contract,
             package_id_refs=execution_package_refs,
+            authority_trace=authority_trace,
+            trace_metadata=trace_metadata,
         )
+        contract_validation = validate_helix_contract_envelope(helix_contract)
         failure_handling_summary = build_failure_handling_summary(
             stage_results=stage_results,
             pipeline_status=pipeline_status,
             stop_reason=stop_reason,
             authority_trace=authority_trace,
-            contract_validation=validate_helix_contract_envelope(helix_contract),
+            contract_validation=contract_validation,
         )
 
     record = normalize_helix_record({
@@ -418,6 +435,7 @@ def run_helix_pipeline(
         "product_id_refs": product_id_refs,
         "execution_package_refs": execution_package_refs,
         "helix_contract": helix_contract,
+        "contract_validation": contract_validation,
         "authority_trace": authority_trace,
         "failure_handling_summary": failure_handling_summary,
     })

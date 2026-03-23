@@ -103,6 +103,11 @@ def test_execution_package_registry_round_trip():
             "project_path": str(tmp),
             "runtime_target_id": "local",
             "command_request": {"summary": "hello"},
+            "helix_contract_summary": {
+                "contract_status": "valid",
+                "validation_path": "package_binding_allowed",
+                "trace_id": "helix-trace-1",
+            },
         })
         assert normalized["package_kind"] == "review_only_execution_envelope"
         assert normalized["sealed"] is True
@@ -111,9 +116,11 @@ def test_execution_package_registry_round_trip():
         loaded = read_execution_package(str(tmp), normalized["package_id"])
         assert loaded is not None
         assert loaded["package_id"] == normalized["package_id"]
+        assert loaded["helix_contract_summary"]["contract_status"] == "valid"
         tail = read_execution_package_journal_tail(str(tmp), n=5)
         assert len(tail) == 1
         assert tail[0]["package_id"] == normalized["package_id"]
+        assert tail[0]["helix_contract_summary"]["trace_id"] == "helix-trace-1"
 
 
 def test_dispatch_requires_human_approval_creates_review_package():
@@ -170,6 +177,7 @@ def test_windows_review_package_target_stops_at_package():
             assert persisted["runtime_target_id"] == "windows_review_package"
             assert persisted["sealed"] is True
             assert persisted["metadata"]["openclaw_active"] is False
+            assert persisted["helix_contract_summary"] == {}
         finally:
             if previous_env is None:
                 os.environ.pop("FORGE_ENV", None)

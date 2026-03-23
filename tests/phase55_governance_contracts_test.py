@@ -57,6 +57,7 @@ def test_helix_contract_builds_and_packages_review_output():
 
     from NEXUS.helix_pipeline import run_helix_pipeline
     from NEXUS.helix_registry import read_helix_journal_tail
+    from NEXUS.execution_package_registry import read_execution_package
 
     with _local_test_dir() as tmp:
         state_dir = tmp / "state"
@@ -80,9 +81,61 @@ def test_helix_contract_builds_and_packages_review_output():
         assert result["helix_contract"]["contract_version"] == "1.0"
         assert result["authority_trace"]["component_role"] == "generation_only"
         assert result["helix_contract"]["package_enforcement"]["required"] is True
+        assert result["contract_validation"]["contract_status"] == "valid"
+        assert result["contract_validation"]["validation_path"] == "package_binding_allowed"
         assert result["execution_package_refs"]
+        package = read_execution_package(str(tmp), result["execution_package_refs"][0])
+        assert package is not None
+        assert package["helix_contract_summary"]["contract_status"] == "valid"
+        assert package["helix_contract_summary"]["component_role"] == "generation_only"
         record = read_helix_journal_tail(str(tmp), n=1)[-1]
         assert record["helix_contract"]["package_enforcement"]["package_status"] == "packaged"
+        assert record["contract_validation"]["package_binding_status"] == "validated_for_review_package"
+
+
+def test_helix_contract_validation_blocks_invalid_output():
+    from NEXUS.helix_contracts import validate_helix_contract_envelope
+
+    result = validate_helix_contract_envelope(
+        {
+            "contract_version": "1.0",
+            "input_schema_version": "1.0",
+            "output_schema_version": "1.0",
+            "input_contract": {
+                "project_name": "phase55proj",
+                "run_id": "run-1",
+                "task": "Ship contract validation",
+                "project_state": {},
+                "loaded_context": {},
+                "prior_evaluations": [],
+            },
+            "output_contract": {
+                "task_summary": "Ship contract validation",
+                "plans": {"implementation_steps": []},
+                "code_generation": {"patch_request_present": False, "target_files": []},
+                "validation": {},
+                "pipeline_status": "completed",
+                "stop_reason": "completed",
+                "requires_surgeon": False,
+            },
+            "package_enforcement": {
+                "required": True,
+                "binding_path": "review_sealed_package_flow",
+            },
+            "authority_trace": {
+                "component_name": "helix",
+                "authority_status": "authorized",
+            },
+            "trace_metadata": {
+                "project_name": "phase55proj",
+                "trace_id": "helix-123",
+            },
+        }
+    )
+    assert result["contract_status"] == "invalid"
+    assert result["validation_path"] == "blocked_before_package_binding"
+    assert result["package_binding_status"] == "validation_failed"
+    assert "output_contract.risk_flags" in result["missing_fields"]
 
 
 def test_recovery_engine_pauses_on_governance_enforcement_conflict():
@@ -140,6 +193,7 @@ def main():
     tests = [
         test_authority_model_blocks_role_overreach,
         test_helix_contract_builds_and_packages_review_output,
+        test_helix_contract_validation_blocks_invalid_output,
         test_recovery_engine_pauses_on_governance_enforcement_conflict,
         test_meta_engine_governance_uses_required_priority_order,
         test_memory_layer_records_reusable_patterns_without_self_modifying,

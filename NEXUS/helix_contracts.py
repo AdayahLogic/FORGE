@@ -4,10 +4,31 @@ Explicit HELIX input/output contracts and execution-package bridge helpers.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 
 HELIX_CONTRACT_VERSION = "1.0"
+HELIX_INPUT_SCHEMA_VERSION = "1.0"
+HELIX_OUTPUT_SCHEMA_VERSION = "1.0"
+HELIX_REQUIRED_INPUT_FIELDS = {
+    "project_name": str,
+    "run_id": str,
+    "task": str,
+    "project_state": dict,
+    "loaded_context": dict,
+    "prior_evaluations": list,
+}
+HELIX_REQUIRED_OUTPUT_FIELDS = {
+    "task_summary": str,
+    "plans": dict,
+    "code_generation": dict,
+    "validation": dict,
+    "risk_flags": list,
+    "pipeline_status": str,
+    "stop_reason": str,
+    "requires_surgeon": bool,
+}
 
 
 def _trim_text(value: Any, limit: int = 500) -> str:
@@ -117,17 +138,30 @@ def build_helix_contract_envelope(
     input_contract: dict[str, Any],
     output_contract: dict[str, Any],
     package_id_refs: list[str] | None = None,
+    authority_trace: dict[str, Any] | None = None,
+    trace_metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     package_refs = [str(item) for item in (package_id_refs or []) if str(item).strip()][:10]
+    authority = dict(authority_trace or {})
+    trace = dict(trace_metadata or {})
+    if "trace_generated_at" not in trace:
+        trace["trace_generated_at"] = datetime.now(timezone.utc).isoformat()
     return {
         "contract_version": HELIX_CONTRACT_VERSION,
+        "input_schema_version": HELIX_INPUT_SCHEMA_VERSION,
+        "output_schema_version": HELIX_OUTPUT_SCHEMA_VERSION,
         "input_contract": dict(input_contract or {}),
         "output_contract": dict(output_contract or {}),
         "package_enforcement": {
             "required": True,
             "package_status": "packaged" if package_refs else "pending_package",
             "package_id_refs": package_refs,
+            "binding_path": "review_sealed_package_flow",
+            "review_required": True,
+            "sealed_package_required": True,
         },
+        "authority_trace": authority,
+        "trace_metadata": trace,
     }
 
 
@@ -136,24 +170,81 @@ def validate_helix_contract_envelope(contract: dict[str, Any] | None) -> dict[st
     input_contract = data.get("input_contract") if isinstance(data.get("input_contract"), dict) else {}
     output_contract = data.get("output_contract") if isinstance(data.get("output_contract"), dict) else {}
     missing: list[str] = []
-    if not input_contract.get("task"):
-        missing.append("input_contract.task")
-    if "project_state" not in input_contract:
-        missing.append("input_contract.project_state")
-    if "prior_evaluations" not in input_contract:
-        missing.append("input_contract.prior_evaluations")
-    if "plans" not in output_contract:
-        missing.append("output_contract.plans")
-    if "code_generation" not in output_contract:
-        missing.append("output_contract.code_generation")
-    if "validation" not in output_contract:
-        missing.append("output_contract.validation")
-    if "risk_flags" not in output_contract:
-        missing.append("output_contract.risk_flags")
+    type_errors: list[str] = []
+    validation_errors: list[str] = []
+    package_enforcement = data.get("package_enforcement") if isinstance(data.get("package_enforcement"), dict) else {}
+    authority_trace = data.get("authority_trace") if isinstance(data.get("authority_trace"), dict) else {}
+    trace_metadata = data.get("trace_metadata") if isinstance(data.get("trace_metadata"), dict) else {}
+
+    if str(data.get("contract_version") or "") != HELIX_CONTRACT_VERSION:
+        validation_errors.append(f"contract_version must be '{HELIX_CONTRACT_VERSION}'")
+    if str(data.get("input_schema_version") or "") != HELIX_INPUT_SCHEMA_VERSION:
+        validation_errors.append(f"input_schema_version must be '{HELIX_INPUT_SCHEMA_VERSION}'")
+    if str(data.get("output_schema_version") or "") != HELIX_OUTPUT_SCHEMA_VERSION:
+        validation_errors.append(f"output_schema_version must be '{HELIX_OUTPUT_SCHEMA_VERSION}'")
+
+    for field, expected_type in HELIX_REQUIRED_INPUT_FIELDS.items():
+        if field not in input_contract:
+            missing.append(f"input_contract.{field}")
+            continue
+        if not isinstance(input_contract.get(field), expected_type):
+            type_errors.append(f"input_contract.{field} must be {expected_type.__name__}")
+    for field, expected_type in HELIX_REQUIRED_OUTPUT_FIELDS.items():
+        if field not in output_contract:
+            missing.append(f"output_contract.{field}")
+            continue
+        if not isinstance(output_contract.get(field), expected_type):
+            type_errors.append(f"output_contract.{field} must be {expected_type.__name__}")
+
+    if not str(input_contract.get("task") or "").strip():
+        validation_errors.append("input_contract.task must be non-empty")
+    plans = output_contract.get("plans") if isinstance(output_contract.get("plans"), dict) else {}
+    code_generation = output_contract.get("code_generation") if isinstance(output_contract.get("code_generation"), dict) else {}
+    validation = output_contract.get("validation") if isinstance(output_contract.get("validation"), dict) else {}
+    if "implementation_steps" not in plans:
+        missing.append("output_contract.plans.implementation_steps")
+    elif not isinstance(plans.get("implementation_steps"), list):
+        type_errors.append("output_contract.plans.implementation_steps must be list")
+    if "patch_request_present" not in code_generation:
+        missing.append("output_contract.code_generation.patch_request_present")
+    elif not isinstance(code_generation.get("patch_request_present"), bool):
+        type_errors.append("output_contract.code_generation.patch_request_present must be bool")
+    if "target_files" not in code_generation:
+        missing.append("output_contract.code_generation.target_files")
+    elif not isinstance(code_generation.get("target_files"), list):
+        type_errors.append("output_contract.code_generation.target_files must be list")
+    if "regression_status" not in validation:
+        missing.append("output_contract.validation.regression_status")
+    elif not isinstance(validation.get("regression_status"), str):
+        type_errors.append("output_contract.validation.regression_status must be str")
+
+    if package_enforcement.get("required") is not True:
+        validation_errors.append("package_enforcement.required must be true")
+    if str(package_enforcement.get("binding_path") or "") != "review_sealed_package_flow":
+        validation_errors.append("package_enforcement.binding_path must be 'review_sealed_package_flow'")
+    if not str(trace_metadata.get("project_name") or "").strip():
+        validation_errors.append("trace_metadata.project_name is required")
+    if not str(trace_metadata.get("trace_id") or "").strip():
+        validation_errors.append("trace_metadata.trace_id is required")
+    if not str(authority_trace.get("component_name") or "").strip():
+        validation_errors.append("authority_trace.component_name is required")
+    if not str(authority_trace.get("authority_status") or "").strip():
+        validation_errors.append("authority_trace.authority_status is required")
+
+    issues = missing + type_errors + validation_errors
+    contract_status = "valid" if not issues else "invalid"
+    package_binding_status = "validated_for_review_package" if contract_status == "valid" else "validation_failed"
     return {
-        "contract_status": "valid" if not missing else "invalid",
+        "contract_status": contract_status,
         "missing_fields": missing,
+        "type_errors": type_errors,
+        "validation_errors": validation_errors,
+        "validation_path": "package_binding_allowed" if contract_status == "valid" else "blocked_before_package_binding",
+        "package_binding_status": package_binding_status,
         "packaging_required": bool(((data.get("package_enforcement") or {}).get("required"))),
+        "authority_trace_present": bool(authority_trace),
+        "trace_metadata_present": bool(trace_metadata),
+        "issue_count": len(issues),
     }
 
 

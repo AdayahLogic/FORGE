@@ -45,6 +45,32 @@ def _derive_review_checklist(dispatch_plan: dict[str, Any], approval_required: b
     return checklist[:20]
 
 
+def _build_helix_contract_summary(
+    helix_contract: dict[str, Any] | None,
+    contract_validation: dict[str, Any] | None,
+    authority_trace: dict[str, Any] | None,
+) -> dict[str, Any]:
+    contract = helix_contract if isinstance(helix_contract, dict) else {}
+    validation = contract_validation if isinstance(contract_validation, dict) else {}
+    authority = authority_trace if isinstance(authority_trace, dict) else {}
+    package_enforcement = contract.get("package_enforcement") if isinstance(contract.get("package_enforcement"), dict) else {}
+    trace_metadata = contract.get("trace_metadata") if isinstance(contract.get("trace_metadata"), dict) else {}
+    return {
+        "contract_version": str(contract.get("contract_version") or ""),
+        "input_schema_version": str(contract.get("input_schema_version") or ""),
+        "output_schema_version": str(contract.get("output_schema_version") or ""),
+        "contract_status": str(validation.get("contract_status") or ""),
+        "validation_path": str(validation.get("validation_path") or ""),
+        "package_binding_status": str(validation.get("package_binding_status") or package_enforcement.get("package_status") or ""),
+        "binding_path": str(package_enforcement.get("binding_path") or ""),
+        "trace_id": str(trace_metadata.get("trace_id") or ""),
+        "project_name": str(trace_metadata.get("project_name") or ""),
+        "component_name": str(authority.get("component_name") or ""),
+        "component_role": str(authority.get("component_role") or ""),
+        "authority_status": str(authority.get("authority_status") or ""),
+    }
+
+
 def build_execution_package(
     *,
     dispatch_plan: dict[str, Any] | None = None,
@@ -54,6 +80,7 @@ def build_execution_package(
     package_reason: str | None = None,
     package_status: str = "review_pending",
     helix_contract: dict[str, Any] | None = None,
+    contract_validation: dict[str, Any] | None = None,
     authority_trace: dict[str, Any] | None = None,
     failure_handling_summary: dict[str, Any] | None = None,
     cursor_bridge_summary: dict[str, Any] | None = None,
@@ -102,6 +129,13 @@ def build_execution_package(
     }
     if isinstance(helix_contract, dict) and helix_contract:
         metadata["helix_contract"] = helix_contract
+        metadata["helix_contract_summary"] = _build_helix_contract_summary(
+            helix_contract=helix_contract,
+            contract_validation=contract_validation,
+            authority_trace=authority_trace,
+        )
+    if isinstance(contract_validation, dict) and contract_validation:
+        metadata["contract_validation"] = contract_validation
     if isinstance(authority_trace, dict) and authority_trace:
         metadata["authority_trace"] = authority_trace
     if isinstance(failure_handling_summary, dict) and failure_handling_summary:
@@ -166,6 +200,7 @@ def build_execution_package(
             "Any later activation must preserve approval checks and project-scope controls.",
         ],
         "runtime_artifacts": [],
+        "helix_contract_summary": dict(metadata.get("helix_contract_summary") or {}),
         "metadata": metadata,
     }
 
@@ -206,5 +241,6 @@ def build_execution_package_safe(**kwargs: Any) -> dict[str, Any]:
             "review_checklist": ["Review package build failure before any later use."],
             "rollback_notes": ["Discard this package; do not use it for execution."],
             "runtime_artifacts": [],
+            "helix_contract_summary": {},
             "metadata": {"openclaw_active": False, "build_error": str(e)},
         }
