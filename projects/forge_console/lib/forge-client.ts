@@ -1,4 +1,5 @@
 import type {
+  ForgeClientViewSnapshot,
   CommandResult,
   ForgeAttachmentRecord,
   ForgeConstraintSections,
@@ -40,6 +41,15 @@ export function getPackageSnapshot(packageId: string, projectKey: string) {
     : "";
   return fetchJson<CommandResult<PackageDetailSnapshot>>(
     `/api/forge/package/${encodeURIComponent(packageId)}${suffix}`,
+  );
+}
+
+export function getClientViewSnapshot(projectKey: string) {
+  const suffix = projectKey
+    ? `?projectKey=${encodeURIComponent(projectKey)}`
+    : "";
+  return fetchJson<CommandResult<ForgeClientViewSnapshot>>(
+    `/api/forge/client-view${suffix}`,
   );
 }
 

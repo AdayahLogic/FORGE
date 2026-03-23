@@ -24,6 +24,7 @@ from NEXUS.command_surface import run_command
 from NEXUS.console_attachment_registry import (
     build_attachment_review_context_safe,
     build_intake_workspace,
+    list_console_attachments_safe,
     ingest_console_attachment_safe,
     preview_intake_request_safe,
 )
@@ -119,6 +120,389 @@ def _executor_health_summary(dashboard: dict[str, Any]) -> dict[str, Any]:
         "integrity_issues_count_total": execution_summary.get("integrity_issues_count_total", 0),
         "blocked_execution_count_total": execution_summary.get("blocked_count_total", 0),
     }
+
+
+def _pretty_label(value: str) -> str:
+    text = str(value or "").replace("_", " ").replace("-", " ").strip()
+    if not text:
+        return "Untitled"
+    return " ".join(part.capitalize() for part in text.split())
+
+
+def _client_status_from_state(project_state: dict[str, Any], package: dict[str, Any]) -> str:
+    release_status = str(package.get("release_status") or "").strip().lower()
+    decision_status = str(package.get("decision_status") or "").strip().lower()
+    review_status = str(package.get("review_status") or "").strip().lower()
+    execution_status = str(package.get("execution_status") or "").strip().lower()
+    lifecycle_status = str(project_state.get("project_lifecycle_status") or "").strip().lower()
+    if release_status == "released" or decision_status == "approved":
+        return "approved"
+    if review_status in {"ready_for_review", "review_pending", "pending", "reviewed"}:
+        return "ready_for_review"
+    if execution_status in {"succeeded", "completed"}:
+        return "complete"
+    if package or lifecycle_status in {"active", "queued", "running"}:
+        return "in_progress"
+    return "pending"
+
+
+def _client_progress_percent(client_status: str) -> int:
+    mapping = {
+        "pending": 15,
+        "in_progress": 52,
+        "complete": 78,
+        "ready_for_review": 88,
+        "approved": 100,
+    }
+    return mapping.get(client_status, 0)
+
+
+def _client_phase_label(client_status: str) -> str:
+    mapping = {
+        "pending": "Project Intake",
+        "in_progress": "Build In Progress",
+        "complete": "Internal Review",
+        "ready_for_review": "Ready for Review",
+        "approved": "Approved Delivery",
+    }
+    return mapping.get(client_status, "Project Intake")
+
+
+def _client_progress_label(client_status: str) -> str:
+    mapping = {
+        "pending": "Planning underway",
+        "in_progress": "Work in progress",
+        "complete": "Implementation complete",
+        "ready_for_review": "Ready for review",
+        "approved": "Approved to share",
+    }
+    return mapping.get(client_status, "Status unavailable")
+
+
+def _client_safe_summary(
+    *,
+    client_status: str,
+    package: dict[str, Any],
+    deliverable_count: int,
+) -> str:
+    if client_status == "approved":
+        return f"{deliverable_count} approved deliverable(s) are ready to share."
+    if client_status == "ready_for_review":
+        return "Current work has cleared internal build activity and is ready for stakeholder review."
+    if client_status == "complete":
+        return "Implementation work is complete and moving through the final review steps."
+    if client_status == "in_progress":
+        return "Project work is actively progressing within the current milestone."
+    return "Project intake is active and milestone planning is underway."
+
+
+def _deliverable_status_from_package(package: dict[str, Any]) -> str:
+    client_status = _client_status_from_state({}, package)
+    if client_status == "approved":
+        return "approved"
+    if client_status == "ready_for_review":
+        return "ready_for_review"
+    if client_status == "complete":
+        return "complete"
+    if package:
+        return "in_progress"
+    return "pending"
+
+
+def _build_client_deliverables(package: dict[str, Any]) -> list[dict[str, Any]]:
+    titles: list[str] = []
+    for item in list(package.get("expected_outputs") or []):
+        label = _pretty_label(str(item))
+        if label not in titles:
+            titles.append(label)
+    for item in list(package.get("runtime_artifacts") or []):
+        if not isinstance(item, dict):
+            continue
+        label = _pretty_label(str(item.get("artifact_type") or "artifact"))
+        if label not in titles:
+            titles.append(label)
+    if not titles:
+        titles.append("Project Summary")
+    status = _deliverable_status_from_package(package)
+    approved_at = str(package.get("created_at") or "") if status == "approved" else ""
+    safe_to_share = status == "approved"
+    summary_text = (
+        "Approved for client visibility."
+        if safe_to_share
+        else "Tracked within the current governed delivery milestone."
+    )
+    return [
+        {
+            "deliverable_id": f"deliverable-{index}",
+            "title": title,
+            "status": status,
+            "summary": summary_text,
+            "safe_to_share": safe_to_share,
+            "approved_at": approved_at,
+        }
+        for index, title in enumerate(titles, start=1)
+    ]
+
+
+def _build_client_milestones(client_status: str) -> list[dict[str, Any]]:
+    def milestone_status(name: str) -> str:
+        order = ["pending", "in_progress", "complete", "ready_for_review", "approved"]
+        rank = order.index(client_status) if client_status in order else 0
+        if name == "intake":
+            return "complete" if rank >= 1 else "in_progress"
+        if name == "build":
+            if rank >= 2:
+                return "complete"
+            if rank >= 1:
+                return "in_progress"
+            return "pending"
+        if name == "review":
+            if rank >= 4:
+                return "complete"
+            if rank >= 3:
+                return "ready_for_review"
+            return "pending"
+        if rank >= 4:
+            return "complete"
+        if rank >= 3:
+            return "in_progress"
+        return "pending"
+
+    return [
+        {
+            "milestone_id": "intake",
+            "title": "Scope Confirmed",
+            "status": milestone_status("intake"),
+            "summary": "Project scope and requested outcomes are established.",
+            "target_label": "Intake milestone",
+        },
+        {
+            "milestone_id": "build",
+            "title": "Work In Progress",
+            "status": milestone_status("build"),
+            "summary": "The current implementation milestone is underway.",
+            "target_label": "Active build milestone",
+        },
+        {
+            "milestone_id": "review",
+            "title": "Ready For Review",
+            "status": milestone_status("review"),
+            "summary": "Review-ready materials are being assembled for stakeholder visibility.",
+            "target_label": "Review milestone",
+        },
+        {
+            "milestone_id": "delivery",
+            "title": "Approved Delivery",
+            "status": milestone_status("delivery"),
+            "summary": "Approved deliverables are prepared for safe external sharing.",
+            "target_label": "Delivery milestone",
+        },
+    ]
+
+
+def _attachment_marked_shareable(record: dict[str, Any]) -> bool:
+    purpose = str(record.get("purpose") or "").strip().lower()
+    return bool(record.get("shareable")) or bool(record.get("safe_to_share")) or purpose in {"shareable", "safe_to_share"}
+
+
+def _build_client_attachments(project_path: str) -> list[dict[str, Any]]:
+    attachments = list_console_attachments_safe(project_path)
+    safe_rows: list[dict[str, Any]] = []
+    for record in attachments:
+        if not isinstance(record, dict):
+            continue
+        if str(record.get("status") or "").strip().lower() != "classified":
+            continue
+        if not _attachment_marked_shareable(record):
+            continue
+        safe_rows.append(
+            {
+                "attachment_id": str(record.get("attachment_id") or ""),
+                "file_name": str(record.get("file_name") or "attachment"),
+                "purpose": str(record.get("purpose") or ""),
+                "status": "safe_to_share",
+                "summary": str(record.get("extracted_summary") or "Approved attachment available for client review."),
+                "uploaded_at": str(record.get("uploaded_at") or ""),
+            }
+        )
+    return safe_rows[:12]
+
+
+def _build_client_timeline(
+    *,
+    project_name: str,
+    package: dict[str, Any],
+    client_status: str,
+) -> list[dict[str, Any]]:
+    occurred_at = str(package.get("created_at") or "")
+    events = [
+        {
+            "event_id": "timeline-intake",
+            "label": "Project Started",
+            "status": "complete" if client_status != "pending" else "in_progress",
+            "summary": f"{project_name} is active in the Forge delivery workflow.",
+            "occurred_at": occurred_at,
+        }
+    ]
+    if client_status in {"in_progress", "complete", "ready_for_review", "approved"}:
+        events.append(
+            {
+                "event_id": "timeline-build",
+                "label": "Current Workstream",
+                "status": "complete" if client_status in {"complete", "ready_for_review", "approved"} else "in_progress",
+                "summary": "Current milestone work is progressing through the governed build workflow.",
+                "occurred_at": occurred_at,
+            }
+        )
+    if client_status in {"ready_for_review", "approved"}:
+        events.append(
+            {
+                "event_id": "timeline-review",
+                "label": "Review Ready",
+                "status": "approved" if client_status == "approved" else "ready_for_review",
+                "summary": "Deliverables have reached the review-ready stage for safe stakeholder visibility.",
+                "occurred_at": occurred_at,
+            }
+        )
+    if client_status == "approved":
+        events.append(
+            {
+                "event_id": "timeline-delivery",
+                "label": "Approved Deliverables Shared",
+                "status": "approved",
+                "summary": "Approved project outputs are now safe to share externally.",
+                "occurred_at": occurred_at,
+            }
+        )
+    return events
+
+
+def _read_current_package(project_path: str, project_state: dict[str, Any]) -> dict[str, Any]:
+    package_id = str(project_state.get("execution_package_id") or "")
+    if not package_id:
+        return {}
+    return read_execution_package(project_path, package_id) or {}
+
+
+def _build_client_project_row(
+    *,
+    project_key: str,
+    project: dict[str, Any],
+    project_state: dict[str, Any],
+    package: dict[str, Any],
+) -> dict[str, Any]:
+    deliverables = _build_client_deliverables(package)
+    client_status = _client_status_from_state(project_state, package)
+    return {
+        "project_key": project_key,
+        "project_name": str(project.get("name") or project_key),
+        "description": str(project.get("description") or ""),
+        "client_status": client_status,
+        "current_phase": _client_phase_label(client_status),
+        "progress_percent": _client_progress_percent(client_status),
+        "progress_label": _client_progress_label(client_status),
+        "safe_summary": _client_safe_summary(
+            client_status=client_status,
+            package=package,
+            deliverable_count=len(deliverables),
+        ),
+    }
+
+
+def _build_client_project_snapshot(
+    *,
+    project_key: str,
+    project: dict[str, Any],
+    project_state: dict[str, Any],
+    package: dict[str, Any],
+) -> dict[str, Any]:
+    row = _build_client_project_row(
+        project_key=project_key,
+        project=project,
+        project_state=project_state,
+        package=package,
+    )
+    return {
+        "project_key": row["project_key"],
+        "project_name": row["project_name"],
+        "description": row["description"],
+        "client_status": row["client_status"],
+        "current_phase": row["current_phase"],
+        "progress_percent": row["progress_percent"],
+        "progress_label": row["progress_label"],
+        "safe_summary": row["safe_summary"],
+        "milestones": _build_client_milestones(str(row["client_status"])),
+        "deliverables": _build_client_deliverables(package),
+        "approved_attachments": _build_client_attachments(str(project.get("path") or "")),
+        "timeline": _build_client_timeline(
+            project_name=str(row["project_name"]),
+            package=package,
+            client_status=str(row["client_status"]),
+        ),
+    }
+
+
+def build_client_view_snapshot(project_key: str | None = None) -> dict[str, Any]:
+    selected_key = str(project_key or "").strip().lower()
+    if selected_key and selected_key not in PROJECTS:
+        return _result(
+            "error",
+            {
+                "generated_at": "",
+                "surface_mode": "client_safe",
+                "selected_project_key": selected_key,
+                "projects": [],
+                "project": None,
+            },
+            "Unknown project.",
+        )
+    project_rows: list[dict[str, Any]] = []
+    selected_project_snapshot = None
+    generated_at = ""
+    for key in sorted(PROJECTS.keys()):
+        project = PROJECTS.get(key) or {}
+        project_path = str(project.get("path") or "")
+        project_state = load_project_state(project_path)
+        package = _read_current_package(project_path, project_state)
+        row = _build_client_project_row(
+            project_key=key,
+            project=project,
+            project_state=project_state,
+            package=package,
+        )
+        project_rows.append(row)
+        if not generated_at:
+            generated_at = str(package.get("created_at") or "")
+        if key == selected_key:
+            selected_project_snapshot = _build_client_project_snapshot(
+                project_key=key,
+                project=project,
+                project_state=project_state,
+                package=package,
+            )
+    if not selected_key and project_rows:
+        selected_key = str(project_rows[0].get("project_key") or "")
+        project = PROJECTS.get(selected_key) or {}
+        project_path = str(project.get("path") or "")
+        project_state = load_project_state(project_path)
+        package = _read_current_package(project_path, project_state)
+        selected_project_snapshot = _build_client_project_snapshot(
+            project_key=selected_key,
+            project=project,
+            project_state=project_state,
+            package=package,
+        )
+    return _result(
+        "ok",
+        {
+            "generated_at": generated_at,
+            "surface_mode": "client_safe",
+            "selected_project_key": selected_key,
+            "projects": project_rows,
+            "project": selected_project_snapshot,
+        },
+        "",
+    )
 
 
 def build_studio_snapshot() -> dict[str, Any]:
@@ -585,7 +969,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Forge Console bridge")
     parser.add_argument(
         "mode",
-        choices=["overview", "project", "package", "control", "intake_preview", "upload_attachment"],
+        choices=["overview", "project", "package", "control", "intake_preview", "upload_attachment", "client_view"],
     )
     parser.add_argument("--project-key", default="")
     parser.add_argument("--package-id", default="")
@@ -635,6 +1019,8 @@ def main() -> int:
             package_id=args.package_id,
             request_id=args.request_id,
         )
+    elif args.mode == "client_view":
+        out = build_client_view_snapshot(args.project_key or None)
     else:
         out = execute_control_action(
             action=args.action,

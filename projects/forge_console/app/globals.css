@@ -392,6 +392,11 @@ textarea {
   cursor: not-allowed;
 }
 
+.selected-surface {
+  border-color: rgba(110, 212, 255, 0.46);
+  box-shadow: 0 0 0 1px rgba(110, 212, 255, 0.18) inset;
+}
+
 .refresh-button {
   min-width: 110px;
 }
@@ -555,6 +560,18 @@ textarea {
   border-radius: var(--radius-md);
   border: 1px solid rgba(255, 255, 255, 0.05);
   background: rgba(255, 255, 255, 0.03);
+}
+
+.client-project-list {
+  max-height: 420px;
+}
+
+.client-progress-block {
+  margin-top: 12px;
+}
+
+.client-mode-panel {
+  padding: 18px;
 }
 
 .drawer-panel {

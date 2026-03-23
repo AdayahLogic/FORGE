@@ -1,9 +1,17 @@
-import type { ForgeProjectRow, ProjectSnapshot } from "../lib/forge-types";
+import type {
+  ForgeClientProjectRow,
+  ForgeClientProjectSnapshot,
+  ForgeProjectRow,
+  ProjectSnapshot,
+  SurfaceMode,
+} from "../lib/forge-types";
 
 type Props = {
-  projects: ForgeProjectRow[];
+  projects: ForgeProjectRow[] | ForgeClientProjectRow[];
   selectedProjectKey: string;
   projectSnapshot: ProjectSnapshot | null;
+  clientProject: ForgeClientProjectSnapshot | null;
+  surfaceMode: SurfaceMode;
   onSelectProject: (projectKey: string) => void;
 };
 
@@ -11,10 +19,10 @@ function getChipClass(value: string) {
   if (["blocked", "failed", "critical", "error", "error_fallback"].includes(value)) {
     return "chip danger";
   }
-  if (["pending", "queued", "guarded", "review_pending"].includes(value)) {
+  if (["pending", "queued", "guarded", "review_pending", "in_progress", "ready_for_review"].includes(value)) {
     return "chip warn";
   }
-  if (["ok", "clear", "ready", "completed", "succeeded"].includes(value)) {
+  if (["ok", "clear", "ready", "completed", "succeeded", "approved", "complete"].includes(value)) {
     return "chip success";
   }
   return "chip";
@@ -24,13 +32,110 @@ export function ProjectControlPanel({
   projects,
   selectedProjectKey,
   projectSnapshot,
+  clientProject,
+  surfaceMode,
   onSelectProject,
 }: Props) {
+  if (surfaceMode === "client_safe") {
+    const clientProjects = projects as ForgeClientProjectRow[];
+    return (
+      <section className="panel left-rail">
+        <div className="section-title">
+          <div>
+            <div className="eyebrow">Client View</div>
+            <h3>Project Progress</h3>
+          </div>
+          <span className="chip info">Display-only</span>
+        </div>
+        <div className="left-stack">
+          <div className="project-list client-project-list">
+            {clientProjects.map((project) => {
+              const active = project.project_key === selectedProjectKey;
+              return (
+                <div
+                  key={project.project_key}
+                  className={`project-card ${active ? "active" : ""}`}
+                >
+                  <button
+                    className="project-button"
+                    type="button"
+                    onClick={() => onSelectProject(project.project_key)}
+                  >
+                    <div className="package-title">
+                      <span>{project.project_name}</span>
+                      <span className={getChipClass(project.client_status)}>
+                        {project.client_status}
+                      </span>
+                    </div>
+                    <div className="muted">{project.description}</div>
+                    <div className="client-progress-block">
+                      <div className="detail-row">
+                        <span>Current Phase</span>
+                        <strong>{project.current_phase}</strong>
+                      </div>
+                      <div className="bar" style={{ marginTop: 8 }}>
+                        <div
+                          className="bar-fill success"
+                          style={{ width: `${project.progress_percent}%` }}
+                        />
+                      </div>
+                      <div className="stat-subvalue">{project.progress_label}</div>
+                    </div>
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+          <div className="control-card">
+            <div className="eyebrow">Selected Project</div>
+            {!clientProject ? (
+              <div className="audit-item muted" style={{ marginTop: 10 }}>
+                Select a project to view approved deliverables, milestones, and safe updates.
+              </div>
+            ) : (
+              <div className="detail-list" style={{ marginTop: 10 }}>
+                <div className="detail-row">
+                  <span>Status</span>
+                  <strong>{clientProject.client_status}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Current Phase</span>
+                  <strong>{clientProject.current_phase}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Progress</span>
+                  <strong>{clientProject.progress_percent}%</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Milestones</span>
+                  <strong>{clientProject.milestones.length}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Deliverables</span>
+                  <strong>{clientProject.deliverables.length}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Shared Attachments</span>
+                  <strong>{clientProject.approved_attachments.length}</strong>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Safe Summary</div>
+                  <div style={{ marginTop: 8 }}>{clientProject.safe_summary}</div>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </section>
+    );
+  }
+
   const state = projectSnapshot?.project_state ?? {};
   const session = projectSnapshot?.latest_session ?? {};
   const health = projectSnapshot?.system_health ?? {};
   const intake = projectSnapshot?.intake_workspace;
   const preview = intake?.preview;
+  const operatorProjects = projects as ForgeProjectRow[];
   const currentPackageId =
     typeof state.execution_package_id === "string" ? state.execution_package_id : "";
   return (
@@ -44,7 +149,7 @@ export function ProjectControlPanel({
       </div>
       <div className="left-stack">
         <div className="project-list">
-          {projects.map((project) => {
+          {operatorProjects.map((project) => {
             const active = project.project_key === selectedProjectKey;
             return (
               <div

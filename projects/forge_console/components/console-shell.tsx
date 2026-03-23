@@ -2,6 +2,7 @@
 
 import { startTransition, useEffect, useState } from "react";
 import {
+  getClientViewSnapshot,
   getOverviewSnapshot,
   getPackageSnapshot,
   getProjectSnapshot,
@@ -157,6 +158,23 @@ export function ConsoleShell() {
     }
   }
 
+  async function loadClientView(projectKey = "") {
+    setUiState((current) => ({
+      ...current,
+      dataFreshness: "loading",
+    }));
+    const response = await getClientViewSnapshot(projectKey);
+    setUiState((current) => ({
+      ...current,
+      surfaceMode: "client_safe",
+      clientViewSnapshot: response.payload,
+      selectedProjectKey:
+        response.payload.selected_project_key || current.selectedProjectKey,
+      dataFreshness: response.status === "ok" ? "ready" : "error",
+      degradedSources: [],
+    }));
+  }
+
   useEffect(() => {
     void loadOverview();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -164,12 +182,20 @@ export function ConsoleShell() {
 
   const refresh = () => {
     startTransition(() => {
+      if (uiState.surfaceMode === "client_safe") {
+        void loadClientView(uiState.selectedProjectKey);
+        return;
+      }
       void loadOverview();
     });
   };
 
   const selectProject = (projectKey: string) => {
     startTransition(() => {
+      if (uiState.surfaceMode === "client_safe") {
+        void loadClientView(projectKey);
+        return;
+      }
       void loadProject(projectKey);
     });
   };
@@ -321,102 +347,197 @@ export function ConsoleShell() {
       ? "CONFIRM COMPLETE APPROVAL"
       : "CONFIRM COMPLETE REVIEW";
 
+  const clientProject = uiState.clientViewSnapshot?.project ?? null;
+  const clientProjects = uiState.clientViewSnapshot?.projects ?? [];
+  const clientGeneratedAt = uiState.clientViewSnapshot?.generated_at ?? "";
+
   return (
     <main className="console-root">
       <div className="console-grid">
-        <SystemOverview overview={uiState.overviewSnapshot} />
+        {uiState.surfaceMode === "client_safe" ? (
+          <section className="panel top-band">
+            <div className="section-title">
+              <div>
+                <div className="eyebrow">Forge Console</div>
+                <h2>Client-Facing Safe View</h2>
+              </div>
+              <div className="chip-row">
+                <span className="chip info">Sanitized snapshot</span>
+                <span className="chip">Display only</span>
+                {clientGeneratedAt ? (
+                  <span className="chip mono">{clientGeneratedAt}</span>
+                ) : null}
+              </div>
+            </div>
+            <div className="detail-grid-three">
+              <div className="stat-card">
+                <div className="stat-label">Current Project</div>
+                <div className="stat-value">
+                  {clientProject?.project_name || "No project selected"}
+                </div>
+                <div className="stat-subvalue">
+                  {clientProject?.safe_summary || "Safe project updates appear here."}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Current Phase</div>
+                <div className="stat-value">
+                  {clientProject?.current_phase || "Project Intake"}
+                </div>
+                <div className="stat-subvalue">
+                  {clientProject?.progress_label || "Waiting for project selection"}
+                </div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-label">Safe To Share</div>
+                <div className="stat-value">
+                  {clientProject
+                    ? clientProject.deliverables.filter((item) => item.safe_to_share).length
+                    : 0}
+                </div>
+                <div className="stat-subvalue">
+                  approved deliverables visible in this surface
+                </div>
+              </div>
+            </div>
+          </section>
+        ) : (
+          <SystemOverview overview={uiState.overviewSnapshot} />
+        )}
         <ProjectControlPanel
           onSelectProject={selectProject}
+          clientProject={clientProject}
           projectSnapshot={uiState.projectSnapshot}
-          projects={uiState.overviewSnapshot?.projects ?? []}
+          projects={
+            uiState.surfaceMode === "client_safe"
+              ? clientProjects
+              : (uiState.overviewSnapshot?.projects ?? [])
+          }
           selectedProjectKey={uiState.selectedProjectKey}
+          surfaceMode={uiState.surfaceMode}
         />
         <div className="center-stack">
-          <ProjectIntakeWorkspace
-            draft={uiState.intakeDraft}
-            onAttachmentSelect={(attachmentId) =>
-              setUiState((current) => ({
-                ...current,
-                selectedAttachmentId: attachmentId,
-              }))
-            }
-            onAttachmentToggle={(attachmentId) =>
-              applyIntakeDraftPatch((draft) => {
-                const nextIds = draft.linkedAttachmentIds.includes(attachmentId)
-                  ? draft.linkedAttachmentIds.filter((item) => item !== attachmentId)
-                  : [...draft.linkedAttachmentIds, attachmentId];
-                return {
-                  linkedAttachmentIds: nextIds,
-                };
-              })
-            }
-            onDraftChange={applyIntakeDraftPatch}
-            onPreview={() => {
-              void runPreview();
-            }}
-            onUpload={(file) => {
-              void handleAttachmentUpload(file);
-            }}
-            preview={uiState.intakePreview}
-            selectedAttachmentId={uiState.selectedAttachmentId}
-            selectedProjectKey={uiState.selectedProjectKey}
-            workspace={uiState.projectSnapshot?.intake_workspace ?? null}
+          {uiState.surfaceMode === "client_safe" ? null : (
+            <ProjectIntakeWorkspace
+              draft={uiState.intakeDraft}
+              onAttachmentSelect={(attachmentId) =>
+                setUiState((current) => ({
+                  ...current,
+                  selectedAttachmentId: attachmentId,
+                }))
+              }
+              onAttachmentToggle={(attachmentId) =>
+                applyIntakeDraftPatch((draft) => {
+                  const nextIds = draft.linkedAttachmentIds.includes(attachmentId)
+                    ? draft.linkedAttachmentIds.filter((item) => item !== attachmentId)
+                    : [...draft.linkedAttachmentIds, attachmentId];
+                  return {
+                    linkedAttachmentIds: nextIds,
+                  };
+                })
+              }
+              onDraftChange={applyIntakeDraftPatch}
+              onPreview={() => {
+                void runPreview();
+              }}
+              onUpload={(file) => {
+                void handleAttachmentUpload(file);
+              }}
+              preview={uiState.intakePreview}
+              selectedAttachmentId={uiState.selectedAttachmentId}
+              selectedProjectKey={uiState.selectedProjectKey}
+              workspace={uiState.projectSnapshot?.intake_workspace ?? null}
+            />
+          )}
+          <ReviewCenter
+            clientProject={clientProject}
+            detail={uiState.packageDetail}
+            surfaceMode={uiState.surfaceMode}
           />
-          <ReviewCenter detail={uiState.packageDetail} />
-          <PackageLifecycleBoard
-            includeCompleted={uiState.boardFilters.includeCompleted}
-            onSelectPackage={selectPackage}
-            packages={uiState.packageQueue}
-            selectedPackageId={uiState.selectedPackageId}
-            showOnlyRisk={uiState.boardFilters.showOnlyRisk}
-          />
+          {uiState.surfaceMode === "client_safe" ? null : (
+            <PackageLifecycleBoard
+              includeCompleted={uiState.boardFilters.includeCompleted}
+              onSelectPackage={selectPackage}
+              packages={uiState.packageQueue}
+              selectedPackageId={uiState.selectedPackageId}
+              showOnlyRisk={uiState.boardFilters.showOnlyRisk}
+            />
+          )}
         </div>
-        <div className="right-rail">
-          <ApprovalControlCenter
-            approvalCenterState={{
-              ...uiState.approvalCenterState,
-              requiredConfirmationPhrase: requiredPhrase,
-            }}
-            approvalSummary={
-              uiState.projectSnapshot?.approval_summary ??
-              uiState.overviewSnapshot?.approval_center.approval_summary ??
-              {}
-            }
-            controlDraft={uiState.controlDraft}
-            lifecycleSummary={
-              uiState.overviewSnapshot?.approval_center.approval_lifecycle ?? {}
-            }
-            onActionChange={(action) =>
-              setUiState((current) => ({
-                ...current,
-                controlDraft: {
-                  ...current.controlDraft,
-                  action,
-                  confirmationText: "",
-                  confirmed: false,
-                },
-              }))
-            }
-            onConfirmedChange={(confirmed) =>
-              setUiState((current) => ({
-                ...current,
-                controlDraft: { ...current.controlDraft, confirmed },
-              }))
-            }
-            onConfirmationTextChange={(confirmationText) =>
-              setUiState((current) => ({
-                ...current,
-                controlDraft: { ...current.controlDraft, confirmationText },
-              }))
-            }
-            onSubmit={() => {
-              void submitControl();
-            }}
-            selectedProjectKey={uiState.selectedProjectKey}
-          />
-          <AbacusEvaluationPanel detail={uiState.packageDetail} />
-          <NemoClawAdvisoryPanel detail={uiState.packageDetail} />
-        </div>
+        {uiState.surfaceMode === "client_safe" ? (
+          <div className="right-rail">
+            <section className="panel client-mode-panel">
+              <div className="section-title">
+                <div>
+                  <div className="eyebrow">Surface Mode</div>
+                  <h3>Console Access</h3>
+                </div>
+              </div>
+              <div className="control-actions">
+                <button
+                  className="action-button"
+                  onClick={() => {
+                    setUiState((current) => ({ ...current, surfaceMode: "read_only" }));
+                    void loadOverview();
+                  }}
+                  type="button"
+                >
+                  Switch To Operator Mode
+                </button>
+                <div className="audit-item muted">
+                  Client mode stays display-only and reads only the backend client snapshot.
+                </div>
+              </div>
+            </section>
+          </div>
+        ) : (
+          <div className="right-rail">
+            <ApprovalControlCenter
+              approvalCenterState={{
+                ...uiState.approvalCenterState,
+                requiredConfirmationPhrase: requiredPhrase,
+              }}
+              approvalSummary={
+                uiState.projectSnapshot?.approval_summary ??
+                uiState.overviewSnapshot?.approval_center.approval_summary ??
+                {}
+              }
+              controlDraft={uiState.controlDraft}
+              lifecycleSummary={
+                uiState.overviewSnapshot?.approval_center.approval_lifecycle ?? {}
+              }
+              onActionChange={(action) =>
+                setUiState((current) => ({
+                  ...current,
+                  controlDraft: {
+                    ...current.controlDraft,
+                    action,
+                    confirmationText: "",
+                    confirmed: false,
+                  },
+                }))
+              }
+              onConfirmedChange={(confirmed) =>
+                setUiState((current) => ({
+                  ...current,
+                  controlDraft: { ...current.controlDraft, confirmed },
+                }))
+              }
+              onConfirmationTextChange={(confirmationText) =>
+                setUiState((current) => ({
+                  ...current,
+                  controlDraft: { ...current.controlDraft, confirmationText },
+                }))
+              }
+              onSubmit={() => {
+                void submitControl();
+              }}
+              selectedProjectKey={uiState.selectedProjectKey}
+            />
+            <AbacusEvaluationPanel detail={uiState.packageDetail} />
+            <NemoClawAdvisoryPanel detail={uiState.packageDetail} />
+          </div>
+        )}
         <div className="drawer-wrap">
           <div
             style={{
@@ -437,55 +558,83 @@ export function ConsoleShell() {
               ))}
             </div>
             <div className="chip-row">
-              <label className="chip">
-                <input
-                  checked={uiState.boardFilters.showOnlyRisk}
-                  onChange={(event) =>
-                    setUiState((current) => ({
-                      ...current,
-                      boardFilters: {
-                        ...current.boardFilters,
-                        showOnlyRisk: event.target.checked,
-                      },
-                    }))
-                  }
-                  style={{ marginRight: 8 }}
-                  type="checkbox"
-                />
-                Risk focus
-              </label>
-              <label className="chip">
-                <input
-                  checked={uiState.boardFilters.includeCompleted}
-                  onChange={(event) =>
-                    setUiState((current) => ({
-                      ...current,
-                      boardFilters: {
-                        ...current.boardFilters,
-                        includeCompleted: event.target.checked,
-                      },
-                    }))
-                  }
-                  style={{ marginRight: 8 }}
-                  type="checkbox"
-                />
-                Show completed
-              </label>
+              <button
+                className={`action-button ${uiState.surfaceMode === "client_safe" ? "selected-surface" : ""}`}
+                onClick={() => {
+                  void loadClientView(uiState.selectedProjectKey);
+                }}
+                type="button"
+              >
+                Client View
+              </button>
+              {uiState.surfaceMode === "client_safe" ? null : (
+                <>
+                  <label className="chip">
+                    <input
+                      checked={uiState.boardFilters.showOnlyRisk}
+                      onChange={(event) =>
+                        setUiState((current) => ({
+                          ...current,
+                          boardFilters: {
+                            ...current.boardFilters,
+                            showOnlyRisk: event.target.checked,
+                          },
+                        }))
+                      }
+                      style={{ marginRight: 8 }}
+                      type="checkbox"
+                    />
+                    Risk focus
+                  </label>
+                  <label className="chip">
+                    <input
+                      checked={uiState.boardFilters.includeCompleted}
+                      onChange={(event) =>
+                        setUiState((current) => ({
+                          ...current,
+                          boardFilters: {
+                            ...current.boardFilters,
+                            includeCompleted: event.target.checked,
+                          },
+                        }))
+                      }
+                      style={{ marginRight: 8 }}
+                      type="checkbox"
+                    />
+                    Show completed
+                  </label>
+                </>
+              )}
               <button className="refresh-button" onClick={refresh} type="button">
                 Refresh Surface
               </button>
             </div>
           </div>
-          <ExecutionDetailDrawer
-            detail={uiState.packageDetail}
-            onToggle={() =>
-              setUiState((current) => ({
-                ...current,
-                detailDrawerOpen: !current.detailDrawerOpen,
-              }))
-            }
-            open={uiState.detailDrawerOpen}
-          />
+          {uiState.surfaceMode === "client_safe" ? (
+            <section className="panel client-mode-panel">
+              <div className="section-title">
+                <div>
+                  <div className="eyebrow">Client Guardrail</div>
+                  <h3>Read-Only Surface</h3>
+                </div>
+                <span className="chip success">No actions wired</span>
+              </div>
+              <div className="audit-item muted">
+                This mode does not expose execution, approval, runtime, or governance controls and does not call mutation endpoints.
+              </div>
+            </section>
+          ) : (
+            <ExecutionDetailDrawer
+              detail={uiState.packageDetail}
+              onToggle={() =>
+                setUiState((current) => ({
+                  ...current,
+                  detailDrawerOpen: !current.detailDrawerOpen,
+                }))
+              }
+              open={uiState.detailDrawerOpen}
+            />
+          )}
         </div>
       </div>
     </main>

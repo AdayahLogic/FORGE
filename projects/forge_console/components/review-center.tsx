@@ -1,17 +1,24 @@
-import type { ForgeReviewCenterSnapshot, PackageDetailSnapshot } from "../lib/forge-types";
+import type {
+  ForgeClientProjectSnapshot,
+  ForgeReviewCenterSnapshot,
+  PackageDetailSnapshot,
+  SurfaceMode,
+} from "../lib/forge-types";
 
 type Props = {
   detail: PackageDetailSnapshot | null;
+  clientProject?: ForgeClientProjectSnapshot | null;
+  surfaceMode?: SurfaceMode;
 };
 
 function chipClass(value: string) {
   if (["failed", "denied", "quarantined", "critical", "error"].includes(value)) {
     return "chip danger";
   }
-  if (["pending", "guarded", "watch", "project_scoped"].includes(value)) {
+  if (["pending", "guarded", "watch", "project_scoped", "in_progress", "ready_for_review"].includes(value)) {
     return "chip warn";
   }
-  if (["completed", "succeeded", "classified", "package_linked", "request_linked"].includes(value)) {
+  if (["completed", "succeeded", "classified", "package_linked", "request_linked", "approved", "complete"].includes(value)) {
     return "chip success";
   }
   return "chip";
@@ -25,7 +32,150 @@ function getReview(detail: PackageDetailSnapshot | null): ForgeReviewCenterSnaps
   return detail?.review_center ?? null;
 }
 
-export function ReviewCenter({ detail }: Props) {
+export function ReviewCenter({
+  detail,
+  clientProject = null,
+  surfaceMode = "read_only",
+}: Props) {
+  if (surfaceMode === "client_safe") {
+    return (
+      <section className="panel" style={{ padding: 18 }}>
+        <div className="section-title">
+          <div>
+            <div className="eyebrow">Client Surface</div>
+            <h3>Approved Deliverables And Timeline</h3>
+          </div>
+          <div className="chip-row">
+            <span className="chip info">Sanitized</span>
+            <span className="chip">Read only</span>
+          </div>
+        </div>
+        {!clientProject ? (
+          <div className="audit-item muted">
+            Select a project to review safe milestones, approved deliverables, and shareable artifacts.
+          </div>
+        ) : (
+          <div className="review-grid">
+            <div className="detail-card">
+              <h4>Project Summary</h4>
+              <div className="chip-row" style={{ marginBottom: 10 }}>
+                <span className={chipClass(clientProject.client_status)}>
+                  {clientProject.client_status}
+                </span>
+                <span className="chip">{clientProject.current_phase}</span>
+              </div>
+              <div>{clientProject.safe_summary}</div>
+              <div className="detail-card-subsection">
+                <div className="stat-label">Progress</div>
+                <div className="bar" style={{ marginTop: 8 }}>
+                  <div
+                    className="bar-fill success"
+                    style={{ width: `${clientProject.progress_percent}%` }}
+                  />
+                </div>
+                <div className="stat-subvalue">{clientProject.progress_label}</div>
+              </div>
+            </div>
+
+            <div className="detail-card">
+              <h4>Milestones</h4>
+              <div className="detail-list">
+                {clientProject.milestones.map((milestone) => (
+                  <div className="audit-item" key={milestone.milestone_id}>
+                    <div className="chip-row" style={{ marginBottom: 8 }}>
+                      <span className={chipClass(milestone.status)}>
+                        {milestone.status}
+                      </span>
+                      <span className="chip">{milestone.target_label}</span>
+                    </div>
+                    <div style={{ fontWeight: 600 }}>{milestone.title}</div>
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      {milestone.summary}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="detail-card">
+              <h4>Deliverables</h4>
+              <div className="detail-list">
+                {clientProject.deliverables.length > 0 ? (
+                  clientProject.deliverables.map((deliverable) => (
+                    <div className="audit-item" key={deliverable.deliverable_id}>
+                      <div className="chip-row" style={{ marginBottom: 8 }}>
+                        <span className={chipClass(deliverable.status)}>
+                          {deliverable.status}
+                        </span>
+                        {deliverable.safe_to_share ? (
+                          <span className="chip success">safe to share</span>
+                        ) : (
+                          <span className="chip">internal progress</span>
+                        )}
+                      </div>
+                      <div style={{ fontWeight: 600 }}>{deliverable.title}</div>
+                      <div className="muted" style={{ marginTop: 6 }}>
+                        {deliverable.summary}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="audit-item muted">
+                    No approved deliverables are available for this project yet.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="detail-card">
+              <h4>Shareable Attachments</h4>
+              <div className="detail-list">
+                {clientProject.approved_attachments.length > 0 ? (
+                  clientProject.approved_attachments.map((attachment) => (
+                    <div className="audit-item" key={attachment.attachment_id}>
+                      <div className="chip-row" style={{ marginBottom: 8 }}>
+                        <span className="chip success">{attachment.status}</span>
+                        <span className="chip">{attachment.purpose}</span>
+                      </div>
+                      <div style={{ fontWeight: 600 }}>{attachment.file_name}</div>
+                      <div className="muted" style={{ marginTop: 6 }}>
+                        {attachment.summary}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="audit-item muted">
+                    No attachments have been explicitly marked safe to share.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="detail-card">
+              <h4>High-Level Timeline</h4>
+              <div className="detail-list">
+                {clientProject.timeline.map((event) => (
+                  <div className="audit-item" key={event.event_id}>
+                    <div className="chip-row" style={{ marginBottom: 8 }}>
+                      <span className={chipClass(event.status)}>{event.status}</span>
+                      {event.occurred_at ? (
+                        <span className="chip mono">{event.occurred_at}</span>
+                      ) : null}
+                    </div>
+                    <div style={{ fontWeight: 600 }}>{event.label}</div>
+                    <div className="muted" style={{ marginTop: 6 }}>
+                      {event.summary}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
+    );
+  }
+
   const review = getReview(detail);
   const approval = review?.approval_ready_context;
 

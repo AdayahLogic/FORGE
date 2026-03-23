@@ -70,5 +70,6 @@ export function createInitialUiState(): ForgeUiState {
     dataFreshness: "idle",
     surfaceMode: "read_only",
     degradedSources: [],
+    clientViewSnapshot: null,
   };
 }

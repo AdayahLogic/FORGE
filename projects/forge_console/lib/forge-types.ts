@@ -189,6 +189,74 @@ export type ForgeProjectRow = {
   executor_health: string;
 };
 
+export type ForgeClientProjectRow = {
+  project_key: string;
+  project_name: string;
+  description: string;
+  client_status: string;
+  current_phase: string;
+  progress_percent: number;
+  progress_label: string;
+  safe_summary: string;
+};
+
+export type ForgeClientMilestone = {
+  milestone_id: string;
+  title: string;
+  status: "pending" | "in_progress" | "ready_for_review" | "complete";
+  summary: string;
+  target_label: string;
+};
+
+export type ForgeClientDeliverable = {
+  deliverable_id: string;
+  title: string;
+  status: "pending" | "in_progress" | "ready_for_review" | "complete" | "approved";
+  summary: string;
+  safe_to_share: boolean;
+  approved_at: string;
+};
+
+export type ForgeClientAttachment = {
+  attachment_id: string;
+  file_name: string;
+  purpose: string;
+  status: string;
+  summary: string;
+  uploaded_at: string;
+};
+
+export type ForgeClientTimelineEvent = {
+  event_id: string;
+  label: string;
+  status: "pending" | "in_progress" | "ready_for_review" | "complete" | "approved";
+  summary: string;
+  occurred_at: string;
+};
+
+export type ForgeClientProjectSnapshot = {
+  project_key: string;
+  project_name: string;
+  description: string;
+  client_status: string;
+  current_phase: string;
+  progress_percent: number;
+  progress_label: string;
+  safe_summary: string;
+  milestones: ForgeClientMilestone[];
+  deliverables: ForgeClientDeliverable[];
+  approved_attachments: ForgeClientAttachment[];
+  timeline: ForgeClientTimelineEvent[];
+};
+
+export type ForgeClientViewSnapshot = {
+  generated_at: string;
+  surface_mode: "client_safe";
+  selected_project_key: string;
+  projects: ForgeClientProjectRow[];
+  project: ForgeClientProjectSnapshot | null;
+};
+
 export type ForgeOverviewSnapshot = {
   generated_at: string;
   studio_name: string;
@@ -302,7 +370,7 @@ export type ControlDraft = {
 
 export type DataFreshness = "idle" | "loading" | "ready" | "stale" | "error";
 
-export type SurfaceMode = "read_only" | "supervised_control";
+export type SurfaceMode = "read_only" | "supervised_control" | "client_safe";
 
 export type ForgeUiState = {
   selectedProjectKey: string;
@@ -336,4 +404,5 @@ export type ForgeUiState = {
   dataFreshness: DataFreshness;
   surfaceMode: SurfaceMode;
   degradedSources: string[];
+  clientViewSnapshot: ForgeClientViewSnapshot | null;
 };
