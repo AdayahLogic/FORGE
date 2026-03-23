@@ -60,6 +60,8 @@ def test_attachment_classification_and_quarantine_paths_are_explicit():
         assert record["status"] == "classified"
         assert "request_preview" in record["allowed_consumers"]
         assert record["extracted_summary"]
+        assert record["status_reason"]
+        assert record["linked_context"]["project_id"] == "phase62proj"
 
         executable = tmp / "danger.ps1"
         executable.write_text("Write-Host 'unsafe'\n", encoding="utf-8")
@@ -77,6 +79,7 @@ def test_attachment_classification_and_quarantine_paths_are_explicit():
         assert quarantined_record["status"] == "quarantined"
         assert quarantined_record["allowed_consumers"] == ["console_review"]
         assert quarantined_record["extracted_summary"] == ""
+        assert "quarantined" in quarantined_record["status_reason"].lower()
 
 
 def test_oversized_attachment_is_denied_and_not_stored_for_preview():
@@ -99,6 +102,7 @@ def test_oversized_attachment_is_denied_and_not_stored_for_preview():
         assert record["status"] == "denied"
         assert record["raw_storage_path"] == ""
         assert record["allowed_consumers"] == []
+        assert record["status_reason"]
 
 
 def main():

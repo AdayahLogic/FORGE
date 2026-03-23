@@ -190,6 +190,11 @@ def ingest_console_attachment(
         "project_id": project_id,
         "package_id": str(package_id or ""),
         "request_id": str(request_id or ""),
+        "linked_context": {
+            "project_id": project_id,
+            "package_id": str(package_id or ""),
+            "request_id": str(request_id or ""),
+        },
         "file_name": Path(file_name or raw_path.name).name,
         "file_type": str(file_type or "application/octet-stream"),
         "file_size_bytes": file_size,
@@ -201,6 +206,7 @@ def ingest_console_attachment(
         "extracted_summary": extracted_summary,
         "status": status,
         "classification": classification,
+        "status_reason": reason,
         "raw_storage_path": to_studio_relative_path(storage_path) or storage_path,
         "governance_trace": {
             "origin": "forge_console",
@@ -245,6 +251,49 @@ def list_console_attachments(project_path: str) -> list[dict[str, Any]]:
 def list_console_attachments_safe(project_path: str) -> list[dict[str, Any]]:
     try:
         return list_console_attachments(project_path)
+    except Exception:
+        return []
+
+
+def build_attachment_review_context(
+    *,
+    project_path: str,
+    package_id: str | None = None,
+    request_id: str | None = None,
+) -> list[dict[str, Any]]:
+    attachments = list_console_attachments_safe(project_path)
+    normalized: list[dict[str, Any]] = []
+    package_key = str(package_id or "")
+    request_key = str(request_id or "")
+    for item in attachments:
+        if not isinstance(item, dict):
+            continue
+        item_package_id = str(item.get("package_id") or "")
+        item_request_id = str(item.get("request_id") or "")
+        if package_key and item_package_id == package_key:
+            review_relevance = "package_linked"
+        elif request_key and item_request_id == request_key:
+            review_relevance = "request_linked"
+        else:
+            review_relevance = "project_scoped"
+        normalized.append(
+            {
+                **item,
+                "review_relevance": review_relevance,
+                "review_ready": "console_review" in list(item.get("allowed_consumers") or []),
+                "status_reason": str(
+                    item.get("status_reason")
+                    or ((item.get("governance_trace") or {}).get("classification_reason"))
+                    or ""
+                ),
+            }
+        )
+    return normalized[:20]
+
+
+def build_attachment_review_context_safe(**kwargs: Any) -> list[dict[str, Any]]:
+    try:
+        return build_attachment_review_context(**kwargs)
     except Exception:
         return []
 

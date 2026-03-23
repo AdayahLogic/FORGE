@@ -149,6 +149,7 @@ def test_intake_preview_keeps_attachments_governed_and_read_only():
             workspace = project_snapshot["payload"]["intake_workspace"]
             assert len(workspace["attachments"]) == 2
             assert workspace["governance_notes"]["routing_authority"] == "NEXUS"
+            assert workspace["attachments"][0]["status_reason"]
 
             assert preview["status"] == "ok"
             payload = preview["payload"]

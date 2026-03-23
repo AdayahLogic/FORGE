@@ -1,8 +1,8 @@
 import type {
-  ForgeAttachmentRecord,
   ForgeIntakePreview,
   ForgeIntakeWorkspace,
 } from "../lib/forge-types";
+import { AttachmentDrawer } from "./attachment-drawer";
 
 type IntakeDraft = {
   requestKind: string;
@@ -41,10 +41,6 @@ function getChipClass(value: string) {
     return "chip success";
   }
   return "chip";
-}
-
-function attachmentLabel(record: ForgeAttachmentRecord) {
-  return `${record.file_name} (${record.status})`;
 }
 
 export function ProjectIntakeWorkspace({
@@ -154,97 +150,55 @@ export function ProjectIntakeWorkspace({
 
           <div className="control-card">
             <div className="eyebrow">Attachment Drawer</div>
-            <div className="attachment-toolbar" style={{ marginTop: 10 }}>
-              <label className="field">
-                <span>Purpose</span>
-                <select
-                  className="project-select"
-                  value={draft.uploadPurpose}
-                  onChange={(event) => onDraftChange({ uploadPurpose: event.target.value })}
-                >
-                  <option value="supporting_context">supporting_context</option>
-                  <option value="specification">specification</option>
-                  <option value="evidence">evidence</option>
-                </select>
-              </label>
-              <label className="upload-button">
-                <input
-                  disabled={!selectedProjectKey || draft.uploading}
-                  onChange={(event) => {
-                    const file = event.target.files?.[0];
-                    event.currentTarget.value = "";
-                    if (file) {
-                      onUpload(file);
-                    }
-                  }}
-                  type="file"
-                />
-                {draft.uploading ? "Uploading..." : "Attach File"}
-              </label>
-            </div>
-            <div className="attachment-list">
-              {attachments.length === 0 ? (
-                <div className="audit-item muted">
-                  No governed attachments yet. Phase 1 stores them as review-only artifacts.
-                </div>
-              ) : (
-                attachments.map((record) => {
-                  const linked = draft.linkedAttachmentIds.includes(record.attachment_id);
-                  const active = selectedAttachment?.attachment_id === record.attachment_id;
-                  return (
-                    <button
-                      className={`attachment-card ${active ? "active" : ""}`}
-                      key={record.attachment_id}
-                      onClick={() => onAttachmentSelect(record.attachment_id)}
-                      type="button"
+            <AttachmentDrawer
+              attachments={attachments}
+              emptyMessage="No governed attachments yet. Phase 1 stores them as review-only artifacts."
+              eyebrow="Attachment Drawer"
+              onSelectAttachment={onAttachmentSelect}
+              renderListAction={(attachment) => {
+                const linked = draft.linkedAttachmentIds.includes(attachment.attachment_id);
+                return (
+                  <input
+                    checked={linked}
+                    onChange={() => onAttachmentToggle(attachment.attachment_id)}
+                    onClick={(event) => event.stopPropagation()}
+                    type="checkbox"
+                  />
+                );
+              }}
+              renderToolbar={
+                <div className="attachment-toolbar" style={{ marginBottom: 12 }}>
+                  <label className="field">
+                    <span>Purpose</span>
+                    <select
+                      className="project-select"
+                      value={draft.uploadPurpose}
+                      onChange={(event) => onDraftChange({ uploadPurpose: event.target.value })}
                     >
-                      <div className="package-title">
-                        <span>{attachmentLabel(record)}</span>
-                        <input
-                          checked={linked}
-                          onChange={() => onAttachmentToggle(record.attachment_id)}
-                          onClick={(event) => event.stopPropagation()}
-                          type="checkbox"
-                        />
-                      </div>
-                      <div className="chip-row">
-                        <span className={getChipClass(record.status)}>{record.status}</span>
-                        <span className="chip">{record.purpose}</span>
-                      </div>
-                      <div className="muted">{record.extracted_summary || record.governance_trace.classification_reason}</div>
-                    </button>
-                  );
-                })
-              )}
-            </div>
-            {selectedAttachment ? (
-              <div className="detail-card" style={{ marginTop: 12 }}>
-                <div className="package-title">
-                  <span>{selectedAttachment.file_name}</span>
-                  <span className={getChipClass(selectedAttachment.status)}>
-                    {selectedAttachment.status}
-                  </span>
+                      <option value="supporting_context">supporting_context</option>
+                      <option value="specification">specification</option>
+                      <option value="evidence">evidence</option>
+                    </select>
+                  </label>
+                  <label className="upload-button">
+                    <input
+                      disabled={!selectedProjectKey || draft.uploading}
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        event.currentTarget.value = "";
+                        if (file) {
+                          onUpload(file);
+                        }
+                      }}
+                      type="file"
+                    />
+                    {draft.uploading ? "Uploading..." : "Attach File"}
+                  </label>
                 </div>
-                <div className="detail-list">
-                  <div className="detail-row">
-                    <span>Classification</span>
-                    <strong>{selectedAttachment.classification}</strong>
-                  </div>
-                  <div className="detail-row">
-                    <span>Allowed Consumers</span>
-                    <strong>{selectedAttachment.allowed_consumers.join(", ") || "none"}</strong>
-                  </div>
-                  <div className="detail-row">
-                    <span>Trace</span>
-                    <strong>{selectedAttachment.governance_trace.origin}</strong>
-                  </div>
-                </div>
-                <p className="muted" style={{ marginBottom: 0 }}>
-                  {selectedAttachment.extracted_summary ||
-                    selectedAttachment.governance_trace.classification_reason}
-                </p>
-              </div>
-            ) : null}
+              }
+              selectedAttachmentId={selectedAttachment?.attachment_id ?? ""}
+              title="Governed Attachment Details"
+            />
           </div>
         </div>
 

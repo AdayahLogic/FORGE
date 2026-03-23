@@ -9,6 +9,11 @@ export type ForgeAttachmentRecord = {
   project_id: string;
   package_id: string;
   request_id: string;
+  linked_context: {
+    project_id: string;
+    package_id: string;
+    request_id: string;
+  };
   file_name: string;
   file_type: string;
   file_size_bytes: number;
@@ -20,6 +25,7 @@ export type ForgeAttachmentRecord = {
   extracted_summary: string;
   status: string;
   classification: string;
+  status_reason: string;
   raw_storage_path: string;
   governance_trace: {
     origin: string;
@@ -30,6 +36,48 @@ export type ForgeAttachmentRecord = {
     execution_authority: string;
     notes: string[];
   };
+};
+
+export type ForgeReviewAttachmentRecord = ForgeAttachmentRecord & {
+  review_relevance: string;
+  review_ready: boolean;
+};
+
+export type ForgeReviewCenterSnapshot = {
+  package_id: string;
+  approval_ready_context: {
+    review_status: string;
+    sealed: boolean;
+    seal_reason: string;
+    approval_id_refs: string[];
+    requires_human_approval: boolean;
+    decision_status: string;
+    release_status: string;
+    review_checklist: string[];
+  };
+  returned_artifacts: Array<{
+    artifact_type: string;
+    summary: string;
+    status: string;
+    source: string;
+  }>;
+  patch_context: {
+    patch_summary: string;
+    changed_files: string[];
+    candidate_paths: string[];
+    requested_outputs: string[];
+  };
+  test_results: {
+    execution_result_status: string;
+    exit_code?: number | null;
+    log_ref: string;
+    integrity_status: string;
+    evaluation_quality_band: string;
+    suggested_next_action: string;
+  };
+  evaluation_summary: Record<string, unknown>;
+  local_analysis_summary: Record<string, unknown>;
+  related_attachments: ForgeReviewAttachmentRecord[];
 };
 
 export type ForgeIntakePreview = {
@@ -173,6 +221,7 @@ export type PackageDetailSnapshot = {
   local_analysis: Record<string, unknown>;
   package_json: Record<string, unknown>;
   timeline: Array<Record<string, unknown>>;
+  review_center: ForgeReviewCenterSnapshot;
 };
 
 export type ProjectSnapshot = {

@@ -22,6 +22,7 @@ if str(REPO_ROOT) not in sys.path:
 
 from NEXUS.command_surface import run_command
 from NEXUS.console_attachment_registry import (
+    build_attachment_review_context_safe,
     build_intake_workspace,
     ingest_console_attachment_safe,
     preview_intake_request_safe,
@@ -380,6 +381,11 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         or {}
     )
     package = read_execution_package(project_path, package_id) or {}
+    related_attachments = build_attachment_review_context_safe(
+        project_path=project_path,
+        package_id=package_id,
+        request_id=str(package.get("request_id") or ""),
+    )
     journal_rows = list_execution_package_journal_entries(project_path, n=50)
     timeline = []
     for row in journal_rows:
@@ -410,9 +416,102 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "local_analysis": local_analysis.get("local_analysis") or {},
             "package_json": package,
             "timeline": timeline,
+            "review_center": _build_review_center_snapshot(
+                package_id=package_id,
+                package=package,
+                detail=detail,
+                evaluation=evaluation.get("evaluation") or {},
+                local_analysis=local_analysis.get("local_analysis") or {},
+                related_attachments=related_attachments,
+            ),
         },
         "",
     )
+
+
+def _summarize_patch_context(package: dict[str, Any]) -> dict[str, Any]:
+    cursor_artifacts = [
+        item for item in list(package.get("cursor_bridge_artifacts") or []) if isinstance(item, dict)
+    ]
+    latest_cursor = cursor_artifacts[-1] if cursor_artifacts else {}
+    candidate_paths = [str(item) for item in list(package.get("candidate_paths") or []) if str(item).strip()]
+    return {
+        "patch_summary": str(latest_cursor.get("patch_summary") or latest_cursor.get("artifact_summary") or ""),
+        "changed_files": [str(item) for item in list(latest_cursor.get("changed_files") or []) if str(item).strip()],
+        "candidate_paths": candidate_paths[:12],
+        "requested_outputs": [str(item) for item in list(package.get("expected_outputs") or []) if str(item).strip()],
+    }
+
+
+def _summarize_returned_artifacts(package: dict[str, Any]) -> list[dict[str, Any]]:
+    artifacts = []
+    runtime_artifacts = [item for item in list(package.get("runtime_artifacts") or []) if isinstance(item, dict)]
+    for item in runtime_artifacts[:12]:
+        artifacts.append(
+            {
+                "artifact_type": str(item.get("artifact_type") or "artifact"),
+                "summary": str(
+                    item.get("artifact_summary")
+                    or item.get("patch_summary")
+                    or item.get("log_ref")
+                    or item.get("artifact")
+                    or ""
+                ),
+                "status": str(item.get("status") or package.get("execution_status") or "recorded"),
+                "source": str(item.get("source_runtime") or item.get("actor") or "package"),
+            }
+        )
+    return artifacts
+
+
+def _summarize_test_results(
+    package: dict[str, Any],
+    evaluation: dict[str, Any],
+    local_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    execution_receipt = dict(package.get("execution_receipt") or {})
+    evaluation_summary = dict(evaluation.get("evaluation_summary") or {})
+    local_summary = dict(local_analysis.get("local_analysis_summary") or {})
+    return {
+        "execution_result_status": str(execution_receipt.get("result_status") or package.get("execution_status") or "pending"),
+        "exit_code": execution_receipt.get("exit_code"),
+        "log_ref": str(execution_receipt.get("log_ref") or ""),
+        "integrity_status": str((package.get("integrity_verification") or {}).get("integrity_status") or "unknown"),
+        "evaluation_quality_band": str(evaluation_summary.get("execution_quality_band") or ""),
+        "suggested_next_action": str(local_summary.get("suggested_next_action") or ""),
+    }
+
+
+def _build_review_center_snapshot(
+    *,
+    package_id: str,
+    package: dict[str, Any],
+    detail: dict[str, Any],
+    evaluation: dict[str, Any],
+    local_analysis: dict[str, Any],
+    related_attachments: list[dict[str, Any]],
+) -> dict[str, Any]:
+    review_header = dict(detail.get("review_header") or {})
+    sections = dict(detail.get("sections") or {})
+    return {
+        "package_id": package_id,
+        "approval_ready_context": {
+            "review_status": str(review_header.get("review_status") or package.get("review_status") or "pending"),
+            "sealed": bool(review_header.get("sealed")),
+            "seal_reason": str(review_header.get("seal_reason") or ""),
+            "approval_id_refs": [str(item) for item in list(review_header.get("approval_id_refs") or []) if str(item).strip()],
+            "requires_human_approval": bool(review_header.get("requires_human_approval")),
+            "decision_status": str(review_header.get("decision_status") or package.get("decision_status") or "pending"),
+            "release_status": str(review_header.get("release_status") or package.get("release_status") or "pending"),
+            "review_checklist": [str(item) for item in list((sections.get("safety") or {}).get("review_checklist") or []) if str(item).strip()],
+        },
+        "returned_artifacts": _summarize_returned_artifacts(package),
+        "patch_context": _summarize_patch_context(package),
+        "test_results": _summarize_test_results(package, evaluation, local_analysis),
+        "evaluation_summary": dict(evaluation.get("evaluation_summary") or {}),
+        "local_analysis_summary": dict(local_analysis.get("local_analysis_summary") or {}),
+        "related_attachments": related_attachments,
+    }
 
 
 def execute_control_action(

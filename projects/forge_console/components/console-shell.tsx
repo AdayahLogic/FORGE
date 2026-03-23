@@ -22,6 +22,7 @@ import { NemoClawAdvisoryPanel } from "./nemoclaw-advisory-panel";
 import { PackageLifecycleBoard } from "./package-lifecycle-board";
 import { ProjectControlPanel } from "./project-control-panel";
 import { ProjectIntakeWorkspace } from "./project-intake-workspace";
+import { ReviewCenter } from "./review-center";
 import { SystemOverview } from "./system-overview";
 
 export function ConsoleShell() {
@@ -324,6 +325,7 @@ export function ConsoleShell() {
             selectedProjectKey={uiState.selectedProjectKey}
             workspace={uiState.projectSnapshot?.intake_workspace ?? null}
           />
+          <ReviewCenter detail={uiState.packageDetail} />
           <PackageLifecycleBoard
             includeCompleted={uiState.boardFilters.includeCompleted}
             onSelectPackage={selectPackage}

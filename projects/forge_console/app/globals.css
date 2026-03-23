@@ -415,7 +415,8 @@ textarea {
 .form-grid,
 .detail-grid-two,
 .detail-grid-three,
-.attachment-list {
+.attachment-list,
+.review-grid {
   display: grid;
   gap: 12px;
 }
@@ -426,6 +427,10 @@ textarea {
 
 .detail-grid-three {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.review-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .field {
@@ -479,6 +484,14 @@ textarea {
 .attachment-card.active {
   border-color: rgba(110, 212, 255, 0.46);
   background: linear-gradient(180deg, rgba(18, 30, 48, 0.92), rgba(12, 18, 28, 0.92));
+}
+
+.detail-card-subsection {
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .drawer-panel {
@@ -608,7 +621,8 @@ textarea {
   }
 
   .detail-grid-two,
-  .detail-grid-three {
+  .detail-grid-three,
+  .review-grid {
     grid-template-columns: 1fr;
   }
 
@@ -622,7 +636,8 @@ textarea {
   .metric-grid,
   .detail-grid,
   .detail-grid-two,
-  .detail-grid-three {
+  .detail-grid-three,
+  .review-grid {
     grid-template-columns: 1fr;
   }
 
