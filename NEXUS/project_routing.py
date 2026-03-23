@@ -73,6 +73,9 @@ def build_project_routing_decision(
         or (loaded.get("governance_result") or {}).get("governance_status")
         or "none"
     ).strip().lower()
+    governance_result = loaded.get("governance_result") if isinstance(loaded.get("governance_result"), dict) else {}
+    governance_resolution_state = str(governance_result.get("resolution_state") or "").strip().lower()
+    governance_routing_outcome = str(governance_result.get("routing_outcome") or "").strip().lower()
     enforcement_status = str(
         loaded.get("enforcement_status")
         or (loaded.get("enforcement_result") or {}).get("enforcement_status")
@@ -116,7 +119,23 @@ def build_project_routing_decision(
         "mode_state": mode_state,
     }
 
-    if enforcement_status in ("approval_required", "blocked"):
+    if governance_routing_outcome in ("pause", "escalate", "stop") and governance_resolution_state != "resolved":
+        routing_status = "paused"
+        if governance_routing_outcome == "escalate":
+            routing_status = "escalated"
+        elif governance_routing_outcome == "stop":
+            routing_status = "stopped"
+        decision.update(
+            {
+                "selected_action": governance_routing_outcome,
+                "routing_status": routing_status,
+                "routing_reason": str(governance_result.get("reason") or governance_result.get("decision_reason") or "Governance conflict paused routing."),
+                "routing_confidence": 0.99,
+                "routing_confidence_band": "high",
+                "requires_operator_review": governance_routing_outcome != "stop",
+            }
+        )
+    elif enforcement_status in ("approval_required", "blocked"):
         decision.update(
             {
                 "selected_action": "escalate",

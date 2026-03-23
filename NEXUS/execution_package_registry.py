@@ -55,6 +55,8 @@ def _utc_now_iso() -> str:
 
 
 def _build_execution_package_journal_record(normalized: dict[str, Any], package_path: str | None) -> dict[str, Any]:
+    metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
+    governance_conflict = metadata.get("governance_conflict") if isinstance(metadata.get("governance_conflict"), dict) else {}
     return {
         "package_id": normalized.get("package_id"),
         "project_name": normalized.get("project_name"),
@@ -126,6 +128,10 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "local_analysis_reason": normalized.get("local_analysis_reason"),
         "local_analysis_basis": normalized.get("local_analysis_basis"),
         "local_analysis_summary": normalized.get("local_analysis_summary"),
+        "governance_conflict_status": governance_conflict.get("status"),
+        "governance_conflict_type": governance_conflict.get("conflict_type"),
+        "governance_resolution_state": metadata.get("governance_resolution_state"),
+        "governance_routing_outcome": metadata.get("governance_routing_outcome"),
     }
 
 
@@ -552,6 +558,10 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "local_analysis_reason": normalize_local_analysis_reason(r.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(r.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(r.get("local_analysis_summary")),
+        "governance_conflict_status": str(r.get("governance_conflict_status") or ""),
+        "governance_conflict_type": str(r.get("governance_conflict_type") or ""),
+        "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
+        "governance_routing_outcome": str(r.get("governance_routing_outcome") or ""),
     }
 
 
@@ -1632,3 +1642,38 @@ def record_execution_package_local_analysis_safe(**kwargs: Any) -> dict[str, Any
         return record_execution_package_local_analysis(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package local analysis.", "package": None}
+
+
+def record_execution_package_governance(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    governance_result: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Persist governance conflict and pause semantics onto an existing package."""
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    result = governance_result if isinstance(governance_result, dict) else {}
+    metadata = dict(package.get("metadata") or {})
+    metadata["governance_conflict"] = dict(result.get("governance_conflict") or {})
+    metadata["governance_trace"] = dict(result.get("governance_trace") or {})
+    metadata["governance_resolution_state"] = str(result.get("resolution_state") or "")
+    metadata["governance_routing_outcome"] = str(result.get("routing_outcome") or "")
+    metadata["governance_status"] = str(result.get("governance_status") or "")
+    package["metadata"] = metadata
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package governance metadata recorded.",
+    )
+
+
+def record_execution_package_governance_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_governance(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package governance metadata.", "package": None}

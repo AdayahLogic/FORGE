@@ -45,8 +45,51 @@ def evaluate_enforcement_outcome(
     is_blocked = plr.get("is_blocked") is True
     is_active = plr.get("is_active") is True
     is_paused = pl_status == "paused"
+    governance_workflow_action = str(gr.get("workflow_action") or "").strip().lower()
+    governance_routing_outcome = str(gr.get("routing_outcome") or "").strip().lower()
 
     enforcement_tags: list[str] = []
+
+    if governance_routing_outcome in ("stop", "pause", "escalate") and governance_workflow_action:
+        if governance_workflow_action == "stop_after_current_stage":
+            return {
+                "enforcement_status": "blocked",
+                "approval_gate": True,
+                "manual_review_gate": True,
+                "downstream_blocked": True,
+                "workflow_action": governance_workflow_action,
+                "reason": gr.get("decision_reason") or gr.get("reason") or "Governance stop required.",
+                "enforcement_tags": ["governance_propagated", "blocked", "human_review"],
+            }
+        if governance_workflow_action == "await_approval":
+            return {
+                "enforcement_status": "approval_required",
+                "approval_gate": True,
+                "manual_review_gate": True,
+                "downstream_blocked": True,
+                "workflow_action": governance_workflow_action,
+                "reason": gr.get("decision_reason") or gr.get("reason") or "Governance escalation requires approval.",
+                "enforcement_tags": ["governance_propagated", "approval_required", "human_review"],
+            }
+        if governance_workflow_action == "manual_review":
+            return {
+                "enforcement_status": "manual_review_required",
+                "approval_gate": False,
+                "manual_review_gate": True,
+                "downstream_blocked": True,
+                "workflow_action": governance_workflow_action,
+                "reason": gr.get("decision_reason") or gr.get("reason") or "Governance escalation requires manual review.",
+                "enforcement_tags": ["governance_propagated", "manual_review"],
+            }
+        return {
+            "enforcement_status": "hold",
+            "approval_gate": False,
+            "manual_review_gate": True,
+            "downstream_blocked": True,
+            "workflow_action": "hold",
+            "reason": gr.get("decision_reason") or gr.get("reason") or "Governance pause propagated.",
+            "enforcement_tags": ["governance_propagated", "hold", "lifecycle_paused"],
+        }
 
     # Governance blocked or lifecycle blocked -> blocked / stop_after_current_stage
     if blocked or g_status == "blocked" or is_blocked:

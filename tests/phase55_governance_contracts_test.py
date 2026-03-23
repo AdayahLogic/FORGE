@@ -155,13 +155,14 @@ def test_meta_engine_governance_uses_required_priority_order():
     from NEXUS.meta_engine_governance import resolve_meta_engine_governance
 
     result = resolve_meta_engine_governance(
-        titan_summary={"review_required": True, "titan_status": "review_required"},
-        helios_summary={"review_required": True, "helios_status": "gated"},
+        titan_summary={"titan_status": "blocked", "execution_reason": "TITAN blocked."},
+        helios_summary={"helios_status": "gated", "execution_gated": True, "improvement_reason": "HELIOS gated."},
         veritas_summary={"review_required": True, "veritas_status": "review_required"},
         sentinel_summary={"review_required": True, "sentinel_status": "review_required"},
     )
-    assert result["priority_order"] == ["SENTINEL", "VERITAS", "LEVIATHAN", "TITAN", "HELIOS"]
-    assert result["governing_engine"] == "SENTINEL"
+    assert result["winning_priority"] == "SENTINEL"
+    assert result["resolution_basis"] == "priority_order"
+    assert result["resolution_state"] == "pause"
 
 
 def test_memory_layer_records_reusable_patterns_without_self_modifying():

@@ -44,8 +44,32 @@ def evaluate_project_lifecycle(
     es = (runtime_execution_status or "").strip().lower()
     a_status = (automation_status or "").strip().lower()
     existing = existing_project_state or {}
+    resolution_state = str(gr.get("resolution_state") or "").strip().lower()
+    routing_outcome = str(gr.get("routing_outcome") or "").strip().lower()
 
     blocked = gr.get("blocked") is True
+
+    if resolution_state == "stop" or routing_outcome == "stop":
+        return {
+            "lifecycle_status": "blocked",
+            "lifecycle_stage": "governance_review",
+            "recommended_lifecycle_action": "stop",
+            "reason": gr.get("decision_reason") or gr.get("reason") or "Governance stop required.",
+            "is_active": False,
+            "is_blocked": True,
+            "is_archived": False,
+        }
+
+    if resolution_state in ("pause", "escalate") or routing_outcome in ("pause", "escalate"):
+        return {
+            "lifecycle_status": "paused",
+            "lifecycle_stage": "governance_review",
+            "recommended_lifecycle_action": routing_outcome or resolution_state or "pause",
+            "reason": gr.get("decision_reason") or gr.get("reason") or "Governance paused progression.",
+            "is_active": False,
+            "is_blocked": False,
+            "is_archived": False,
+        }
 
     # Governance blocked -> lifecycle blocked, governance_review
     if blocked or g_status == "blocked":

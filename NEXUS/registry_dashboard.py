@@ -220,6 +220,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     agent_role_count: dict[str, int] = {}
     governance_status_by_project: dict[str, str] = {}
     governance_status_count: dict[str, int] = {}
+    governance_resolution_state_by_project: dict[str, str] = {}
+    governance_resolution_state_count: dict[str, int] = {}
+    governance_routing_outcome_by_project: dict[str, str] = {}
+    governance_routing_outcome_count: dict[str, int] = {}
+    governance_conflict_status_by_project: dict[str, str] = {}
+    governance_conflict_status_count: dict[str, int] = {}
+    governance_conflict_type_by_project: dict[str, str] = {}
+    governance_conflict_type_count: dict[str, int] = {}
     risk_level_count: dict[str, int] = {}
     project_lifecycle_by_project: dict[str, str] = {}
     project_lifecycle_status_count: dict[str, int] = {}
@@ -396,6 +404,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             governance_status_by_project[key] = str(g_status)
             governance_status_count[g_status] = governance_status_count.get(g_status, 0) + 1
             g_result = loaded.get("governance_result") or {}
+            resolution_state = str(g_result.get("resolution_state") or "resolved")
+            governance_resolution_state_by_project[key] = resolution_state
+            governance_resolution_state_count[resolution_state] = governance_resolution_state_count.get(resolution_state, 0) + 1
+            routing_outcome = str(g_result.get("routing_outcome") or "continue")
+            governance_routing_outcome_by_project[key] = routing_outcome
+            governance_routing_outcome_count[routing_outcome] = governance_routing_outcome_count.get(routing_outcome, 0) + 1
+            conflict_status = str(((g_result.get("governance_conflict") or {}).get("status")) or "none")
+            governance_conflict_status_by_project[key] = conflict_status
+            governance_conflict_status_count[conflict_status] = governance_conflict_status_count.get(conflict_status, 0) + 1
+            conflict_type = str(g_result.get("conflict_type") or ((g_result.get("governance_conflict") or {}).get("conflict_type")) or "none")
+            governance_conflict_type_by_project[key] = conflict_type
+            governance_conflict_type_count[conflict_type] = governance_conflict_type_count.get(conflict_type, 0) + 1
             r_level = g_result.get("risk_level")
             if r_level:
                 risk_level_count[r_level] = risk_level_count.get(r_level, 0) + 1
@@ -861,13 +881,15 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "records_by_source": {},
             }
             meta_engine_governance = {
-                "priority_order": ["SENTINEL", "VERITAS", "LEVIATHAN", "TITAN", "HELIOS"],
-                "governing_engine": "",
-                "review_required": False,
-                "conflict_detected": False,
-                "system_pause_required": False,
-                "resolution_reason": "",
-                "active_review_engines": [],
+                "status": "resolved",
+                "conflict_type": "none",
+                "involved_engines": [],
+                "winning_priority": "",
+                "resolution_basis": "fallback",
+                "resolution_state": "resolved",
+                "routing_outcome": "continue",
+                "reason": "",
+                "governance_trace": {},
             }
 
         # Phase 12: pass cross-intelligence context into HELIOS (cached mode).
@@ -1186,13 +1208,15 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "records_by_source": {},
         }
         meta_engine_governance = {
-            "priority_order": ["SENTINEL", "VERITAS", "LEVIATHAN", "TITAN", "HELIOS"],
-            "governing_engine": "",
-            "review_required": False,
-            "conflict_detected": False,
-            "system_pause_required": False,
-            "resolution_reason": "",
-            "active_review_engines": [],
+            "status": "resolved",
+            "conflict_type": "none",
+            "involved_engines": [],
+            "winning_priority": "",
+            "resolution_basis": "fallback",
+            "resolution_state": "resolved",
+            "routing_outcome": "continue",
+            "reason": "",
+            "governance_trace": {},
         }
 
         genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
@@ -1303,6 +1327,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "agent_role_count": agent_role_count,
         "governance_status_by_project": governance_status_by_project,
         "governance_status_count": governance_status_count,
+        "governance_resolution_state_by_project": governance_resolution_state_by_project,
+        "governance_resolution_state_count": governance_resolution_state_count,
+        "governance_routing_outcome_by_project": governance_routing_outcome_by_project,
+        "governance_routing_outcome_count": governance_routing_outcome_count,
+        "governance_conflict_status_by_project": governance_conflict_status_by_project,
+        "governance_conflict_status_count": governance_conflict_status_count,
+        "governance_conflict_type_by_project": governance_conflict_type_by_project,
+        "governance_conflict_type_count": governance_conflict_type_count,
         "risk_level_count": risk_level_count,
         "project_lifecycle_by_project": project_lifecycle_by_project,
         "project_lifecycle_status_count": project_lifecycle_status_count,

@@ -3,40 +3,27 @@ NEXUS governance evaluation layer.
 
 Centralized evaluation of orchestration state after dispatch and automation.
 Produces normalized governance result: status, approval/review flags, risk, decision reason.
-Recommendation/decision-oriented only; no execution, no side effects.
+Recommendation/decision-oriented only; no execution, no destructive side effects.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.project_state import load_project_state
+from NEXUS.registry import PROJECTS
+from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
+from NEXUS.studio_driver import build_studio_driver_result_safe
 
-def evaluate_governance_outcome(
+
+def _evaluate_dispatch_governance(
     *,
     dispatch_status: str | None = None,
     runtime_execution_status: str | None = None,
     dispatch_result: dict[str, Any] | None = None,
     automation_status: str | None = None,
     automation_result: dict[str, Any] | None = None,
-    agent_selection_summary: dict[str, Any] | None = None,
-    dispatch_plan_summary: dict[str, Any] | None = None,
-    active_project: str | None = None,
-    project_path: str | None = None,
 ) -> dict[str, Any]:
-    """
-    Evaluate current orchestration state and return normalized governance result.
-
-    Returns stable schema:
-    {
-      "governance_status": "approved" | "review_required" | "approval_required" | "blocked" | "error_fallback",
-      "approval_required": bool,
-      "review_required": bool,
-      "risk_level": "low" | "medium" | "high" | "unknown",
-      "decision_reason": str,
-      "blocked": bool,
-      "policy_tags": list[str]
-    }
-    """
     ds = (dispatch_status or "").strip().lower()
     es = (runtime_execution_status or "").strip().lower()
     a_status = (automation_status or "").strip().lower()
@@ -45,9 +32,6 @@ def evaluate_governance_outcome(
     package_id = str(dr.get("execution_package_id") or "").strip()
     package_review_required = bool(dr.get("package_review_required"))
 
-    policy_tags: list[str] = []
-
-    # Blocked execution: hard stop
     if es == "blocked":
         return {
             "governance_status": "blocked",
@@ -59,7 +43,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["blocked_execution", "human_review"],
         }
 
-    # Dispatch error: high risk, approval/review
     if ds == "error":
         msg = str(dr.get("message") or "Dispatch error.")
         return {
@@ -72,7 +55,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["dispatch_error", "human_review"],
         }
 
-    # No adapter: review required
     if ds == "no_adapter":
         return {
             "governance_status": "review_required",
@@ -84,7 +66,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["no_adapter", "human_review"],
         }
 
-    # Dispatch skipped: readiness issue
     if ds == "skipped":
         if package_id or package_review_required:
             return {
@@ -106,7 +87,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["readiness_issue", "human_review"],
         }
 
-    # Automation layer says human review required
     if a_status == "human_review_required" or ar.get("human_review_required"):
         reason = str(ar.get("reason") or "Automation layer recommends human review.")
         return {
@@ -119,7 +99,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["human_review"],
         }
 
-    # Accepted + simulated execution: approved, low risk
     if ds == "accepted" and es == "simulated_execution":
         return {
             "governance_status": "approved",
@@ -131,7 +110,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["safe_simulation"],
         }
 
-    # Accepted (other execution outcomes): approved or light review depending on execution
     if ds == "accepted":
         if (package_id or package_review_required) and es == "queued":
             return {
@@ -153,7 +131,6 @@ def evaluate_governance_outcome(
                 "blocked": False,
                 "policy_tags": [],
             }
-        # accepted but execution status unclear
         return {
             "governance_status": "review_required",
             "approval_required": False,
@@ -164,7 +141,6 @@ def evaluate_governance_outcome(
             "policy_tags": ["human_review"],
         }
 
-    # Default: unknown or no dispatch data
     return {
         "governance_status": "review_required",
         "approval_required": False,
@@ -176,11 +152,343 @@ def evaluate_governance_outcome(
     }
 
 
+def _build_states_by_project(
+    *,
+    active_project: str | None,
+    project_path: str | None,
+    dispatch_status: str | None,
+    runtime_execution_status: str | None,
+    dispatch_result: dict[str, Any] | None,
+    automation_status: str | None,
+    automation_result: dict[str, Any] | None,
+    agent_selection_summary: dict[str, Any] | None,
+    dispatch_plan_summary: dict[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    states_by_project: dict[str, dict[str, Any]] = {}
+    for key, project_meta in PROJECTS.items():
+        path = project_meta.get("path")
+        if not path:
+            continue
+        loaded = load_project_state(path)
+        if not isinstance(loaded, dict) or loaded.get("load_error"):
+            continue
+        states_by_project[key] = loaded
+
+    if active_project:
+        overlay = dict(states_by_project.get(active_project, {}))
+        overlay.update(
+            {
+                "active_project": active_project,
+                "project_path": project_path or overlay.get("project_path"),
+                "dispatch_status": dispatch_status,
+                "runtime_execution_status": runtime_execution_status,
+                "dispatch_result": dispatch_result or {},
+                "automation_status": automation_status,
+                "automation_result": automation_result or {},
+                "agent_selection_summary": agent_selection_summary or overlay.get("agent_selection_summary") or {},
+                "dispatch_plan_summary": dispatch_plan_summary or overlay.get("dispatch_plan_summary") or {},
+            }
+        )
+        states_by_project[active_project] = overlay
+
+    return states_by_project
+
+
+def _build_meta_engine_conflict(
+    *,
+    active_project: str | None = None,
+    project_path: str | None = None,
+    dispatch_status: str | None = None,
+    runtime_execution_status: str | None = None,
+    dispatch_result: dict[str, Any] | None = None,
+    automation_status: str | None = None,
+    automation_result: dict[str, Any] | None = None,
+    agent_selection_summary: dict[str, Any] | None = None,
+    dispatch_plan_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    if not active_project and not project_path:
+        return {
+            "status": "resolved",
+            "conflict_type": "none",
+            "involved_engines": [],
+            "winning_priority": "",
+            "resolution_basis": "no_project_context",
+            "resolution_state": "resolved",
+            "routing_outcome": "continue",
+            "reason": "No active project context available for meta-engine conflict evaluation.",
+            "governance_trace": {
+                "priority_order": ["SENTINEL", "VERITAS", "LEVIATHAN", "TITAN", "HELIOS"],
+                "engine_signals": {},
+            },
+        }
+
+    from meta_engines.audit_engine import evaluate_audit_engine
+    from meta_engines.compliance_engine import evaluate_compliance_engine
+    from meta_engines.cost_engine import evaluate_cost_engine
+    from meta_engines.policy_engine import evaluate_policy_engine
+    from meta_engines.risk_engine import evaluate_risk_engine
+    from meta_engines.safety_engine import evaluate_safety_engine
+    from meta_engines.security_engine import evaluate_security_engine
+    from elite_layers.helios import build_helios_summary_safe
+    from elite_layers.leviathan import build_leviathan_summary_safe
+    from elite_layers.sentinel import build_sentinel_summary_safe
+    from elite_layers.titan import build_titan_summary_safe
+    from elite_layers.veritas import build_veritas_summary_safe
+    from NEXUS.meta_engine_governance import resolve_meta_engine_governance_safe
+    from portfolio_manager import build_portfolio_summary_safe
+
+    states_by_project = _build_states_by_project(
+        active_project=active_project,
+        project_path=project_path,
+        dispatch_status=dispatch_status,
+        runtime_execution_status=runtime_execution_status,
+        dispatch_result=dispatch_result,
+        automation_status=automation_status,
+        automation_result=automation_result,
+        agent_selection_summary=agent_selection_summary,
+        dispatch_plan_summary=dispatch_plan_summary,
+    )
+    studio_coordination_summary = build_studio_coordination_summary_safe(states_by_project=states_by_project)
+    studio_driver_summary = build_studio_driver_result_safe(
+        studio_coordination_summary=studio_coordination_summary,
+        states_by_project=states_by_project,
+    )
+    portfolio_summary = build_portfolio_summary_safe(
+        states_by_project=states_by_project,
+        studio_coordination_summary=studio_coordination_summary,
+        studio_driver_summary=studio_driver_summary,
+    )
+    meta_engine_summary = {
+        "safety_engine": evaluate_safety_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+        "security_engine": evaluate_security_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+        "compliance_engine": evaluate_compliance_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+        "risk_engine": evaluate_risk_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+        "policy_engine": evaluate_policy_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+        "cost_engine": evaluate_cost_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+        "audit_engine": evaluate_audit_engine(
+            states_by_project=states_by_project,
+            studio_coordination_summary=studio_coordination_summary,
+            studio_driver_summary=studio_driver_summary,
+            runtime_infrastructure_summary={},
+        ),
+    }
+    titan_summary = build_titan_summary_safe(
+        states_by_project=states_by_project,
+        studio_coordination_summary=studio_coordination_summary,
+        studio_driver_summary=studio_driver_summary,
+    )
+    leviathan_summary = build_leviathan_summary_safe(
+        states_by_project=states_by_project,
+        studio_coordination_summary=studio_coordination_summary,
+        studio_driver_summary=studio_driver_summary,
+        portfolio_summary=portfolio_summary,
+    )
+    veritas_summary = build_veritas_summary_safe(
+        states_by_project=states_by_project,
+        studio_coordination_summary=studio_coordination_summary,
+        studio_driver_summary=studio_driver_summary,
+        meta_engine_summary=meta_engine_summary,
+    )
+    sentinel_summary = build_sentinel_summary_safe(
+        states_by_project=states_by_project,
+        studio_coordination_summary=studio_coordination_summary,
+        meta_engine_summary=meta_engine_summary,
+    )
+    helios_summary = build_helios_summary_safe(
+        dashboard_summary={
+            "veritas_summary": veritas_summary,
+            "sentinel_summary": sentinel_summary,
+        },
+        studio_coordination_summary=studio_coordination_summary,
+        studio_driver_summary=studio_driver_summary,
+        project_name=(portfolio_summary.get("priority_project") or active_project or "").strip() or None,
+        live_regression=False,
+        helios_evaluation_mode="governance_cached",
+    )
+    conflict = resolve_meta_engine_governance_safe(
+        titan_summary=titan_summary,
+        leviathan_summary=leviathan_summary,
+        helios_summary=helios_summary,
+        veritas_summary=veritas_summary,
+        sentinel_summary=sentinel_summary,
+    )
+    conflict["governance_trace"] = {
+        **(conflict.get("governance_trace") or {}),
+        "meta_engine_summary": meta_engine_summary,
+        "titan_summary": titan_summary,
+        "leviathan_summary": leviathan_summary,
+        "helios_summary": helios_summary,
+        "veritas_summary": veritas_summary,
+        "sentinel_summary": sentinel_summary,
+    }
+    return conflict
+
+
+def _base_resolution_from_governance(base: dict[str, Any]) -> dict[str, str]:
+    governance_status = str(base.get("governance_status") or "").strip().lower()
+    if governance_status == "approved":
+        return {"resolution_state": "resolved", "routing_outcome": "continue", "workflow_action": "proceed"}
+    if governance_status == "blocked":
+        return {"resolution_state": "stop", "routing_outcome": "stop", "workflow_action": "stop_after_current_stage"}
+    if governance_status == "approval_required":
+        return {"resolution_state": "escalate", "routing_outcome": "escalate", "workflow_action": "await_approval"}
+    return {"resolution_state": "pause", "routing_outcome": "pause", "workflow_action": "hold"}
+
+
+def _severity_rank(outcome: str) -> int:
+    return {"continue": 0, "pause": 1, "escalate": 2, "stop": 3}.get(str(outcome or "").strip().lower(), 1)
+
+
+def _finalize_governance_result(
+    *,
+    base: dict[str, Any],
+    conflict: dict[str, Any],
+) -> dict[str, Any]:
+    base_resolution = _base_resolution_from_governance(base)
+    conflict_outcome = str(conflict.get("routing_outcome") or "continue").strip().lower()
+    base_outcome = str(base_resolution.get("routing_outcome") or "continue").strip().lower()
+    final_source = "base_governance"
+
+    if _severity_rank(conflict_outcome) > _severity_rank(base_outcome):
+        final_source = "meta_engine_conflict"
+        final_resolution_state = str(conflict.get("resolution_state") or "pause")
+        final_routing_outcome = conflict_outcome
+        if final_routing_outcome == "stop":
+            workflow_action = "stop_after_current_stage"
+        elif final_routing_outcome == "escalate":
+            workflow_action = "manual_review"
+        elif final_routing_outcome == "pause":
+            workflow_action = "hold"
+        else:
+            workflow_action = "proceed"
+        decision_reason = str(conflict.get("reason") or base.get("decision_reason") or "")
+    else:
+        final_resolution_state = str(base_resolution.get("resolution_state") or "pause")
+        final_routing_outcome = base_outcome
+        workflow_action = str(base_resolution.get("workflow_action") or "hold")
+        decision_reason = str(base.get("decision_reason") or conflict.get("reason") or "")
+
+    governance_status = str(base.get("governance_status") or "review_required")
+    approval_required = bool(base.get("approval_required"))
+    review_required = bool(base.get("review_required"))
+    blocked = bool(base.get("blocked"))
+
+    if final_routing_outcome == "stop":
+        governance_status = "blocked"
+        approval_required = True
+        review_required = True
+        blocked = True
+    elif final_routing_outcome == "escalate":
+        governance_status = "approval_required" if approval_required else "review_required"
+        approval_required = approval_required or workflow_action == "await_approval"
+        review_required = True
+        blocked = False
+    elif final_routing_outcome == "pause":
+        governance_status = "review_required"
+        approval_required = False
+        review_required = True
+        blocked = False
+    else:
+        blocked = False
+
+    policy_tags = [str(x) for x in (base.get("policy_tags") or []) if str(x).strip()]
+    if conflict_outcome != "continue":
+        policy_tags.append("governance_conflict")
+    if final_routing_outcome != "continue":
+        policy_tags.append(f"routing_{final_routing_outcome}")
+
+    return {
+        "governance_status": governance_status,
+        "approval_required": bool(approval_required),
+        "review_required": bool(review_required),
+        "risk_level": str(base.get("risk_level") or "unknown"),
+        "decision_reason": decision_reason,
+        "blocked": bool(blocked),
+        "policy_tags": sorted(set(policy_tags)),
+        "resolution_state": final_resolution_state,
+        "routing_outcome": final_routing_outcome,
+        "workflow_action": workflow_action,
+        "final_decision_source": final_source,
+        "governance_conflict": conflict,
+        "conflict_type": str(conflict.get("conflict_type") or "none"),
+        "system_pause_required": bool(conflict.get("status") == "unresolved" or final_routing_outcome == "pause"),
+        "reason": decision_reason,
+        "governance_trace": {
+            "base_governance": base,
+            "conflict": conflict,
+            "final_decision_source": final_source,
+        },
+    }
+
+
+def evaluate_governance_outcome(
+    *,
+    dispatch_status: str | None = None,
+    runtime_execution_status: str | None = None,
+    dispatch_result: dict[str, Any] | None = None,
+    automation_status: str | None = None,
+    automation_result: dict[str, Any] | None = None,
+    agent_selection_summary: dict[str, Any] | None = None,
+    dispatch_plan_summary: dict[str, Any] | None = None,
+    active_project: str | None = None,
+    project_path: str | None = None,
+) -> dict[str, Any]:
+    base = _evaluate_dispatch_governance(
+        dispatch_status=dispatch_status,
+        runtime_execution_status=runtime_execution_status,
+        dispatch_result=dispatch_result,
+        automation_status=automation_status,
+        automation_result=automation_result,
+    )
+    conflict = _build_meta_engine_conflict(
+        active_project=active_project,
+        project_path=project_path,
+        dispatch_status=dispatch_status,
+        runtime_execution_status=runtime_execution_status,
+        dispatch_result=dispatch_result,
+        automation_status=automation_status,
+        automation_result=automation_result,
+        agent_selection_summary=agent_selection_summary,
+        dispatch_plan_summary=dispatch_plan_summary,
+    )
+    return _finalize_governance_result(base=base, conflict=conflict)
+
+
 def evaluate_governance_outcome_safe(**kwargs: Any) -> dict[str, Any]:
     """Safe wrapper: never raises; returns error_fallback result on exception."""
     try:
         return evaluate_governance_outcome(**kwargs)
-    except Exception:
+    except Exception as e:
         return {
             "governance_status": "error_fallback",
             "approval_required": True,
@@ -188,5 +496,28 @@ def evaluate_governance_outcome_safe(**kwargs: Any) -> dict[str, Any]:
             "risk_level": "unknown",
             "decision_reason": "Governance evaluation failed; safe fallback applied.",
             "blocked": False,
-            "policy_tags": ["human_review"],
+            "policy_tags": ["human_review", "error_fallback"],
+            "resolution_state": "pause",
+            "routing_outcome": "pause",
+            "workflow_action": "hold",
+            "final_decision_source": "error_fallback",
+            "governance_conflict": {
+                "status": "unresolved",
+                "conflict_type": "governance_evaluation_error",
+                "involved_engines": [],
+                "winning_priority": "",
+                "resolution_basis": "governance_exception",
+                "resolution_state": "pause",
+                "routing_outcome": "pause",
+                "reason": f"Governance evaluation failed: {e}",
+                "governance_trace": {},
+            },
+            "conflict_type": "governance_evaluation_error",
+            "system_pause_required": True,
+            "reason": "Governance evaluation failed; safe fallback applied.",
+            "governance_trace": {
+                "base_governance": {},
+                "conflict": {},
+                "final_decision_source": "error_fallback",
+            },
         }

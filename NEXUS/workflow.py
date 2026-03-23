@@ -401,6 +401,17 @@ def governance_layer_node(state: StudioState):
     )
     state.governance_result = result
     state.governance_status = result.get("governance_status")
+    if state.project_path and state.execution_package_id:
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_governance_safe
+
+            record_execution_package_governance_safe(
+                project_path=state.project_path,
+                package_id=state.execution_package_id,
+                governance_result=result,
+            )
+        except Exception:
+            pass
     return state
 
 
