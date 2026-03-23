@@ -1315,6 +1315,46 @@ def run_command(
                 package_id=package_id,
                 execution_actor=execution_actor,
             )
+            if result.get("status") == "denied":
+                package = result.get("package") or {}
+                execution = {
+                    "execution_status": package.get("execution_status"),
+                    "execution_timestamp": package.get("execution_timestamp"),
+                    "execution_actor": package.get("execution_actor"),
+                    "execution_id": package.get("execution_id"),
+                    "execution_reason": package.get("execution_reason") or {"code": "", "message": ""},
+                    "execution_receipt": package.get("execution_receipt") or {},
+                    "execution_version": package.get("execution_version"),
+                    "execution_executor_target_id": package.get("execution_executor_target_id"),
+                    "execution_executor_target_name": package.get("execution_executor_target_name"),
+                    "execution_executor_backend_id": package.get("execution_executor_backend_id"),
+                    "execution_aegis_result": package.get("execution_aegis_result") or {},
+                    "execution_started_at": package.get("execution_started_at"),
+                    "execution_finished_at": package.get("execution_finished_at"),
+                    "rollback_status": package.get("rollback_status"),
+                    "rollback_timestamp": package.get("rollback_timestamp"),
+                    "rollback_reason": package.get("rollback_reason") or {"code": "", "message": ""},
+                    "retry_policy": package.get("retry_policy") or {},
+                    "idempotency": package.get("idempotency") or {},
+                    "failure_summary": package.get("failure_summary") or {},
+                    "recovery_summary": package.get("recovery_summary") or {},
+                    "rollback_repair": package.get("rollback_repair") or {},
+                    "integrity_verification": package.get("integrity_verification") or {},
+                }
+                return _result(
+                    command=cmd,
+                    status="blocked",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; execution_status={execution.get('execution_status')}; authority=denied",
+                    payload={
+                        "status": "blocked",
+                        "reason": str(result.get("reason") or "Execution authority denied."),
+                        "project_path": path,
+                        "package_id": package_id,
+                        "execution": execution,
+                        "authority_denial": ((package.get("metadata") or {}).get("authority_denials") or {}).get("execution") or {},
+                    },
+                )
             if result.get("status") != "ok":
                 return _execution_package_error_result(
                     command=cmd,
@@ -1479,6 +1519,23 @@ def run_command(
                 package_id=package_id,
                 evaluation_actor=evaluation_actor,
             )
+            if result.get("status") == "denied":
+                package = result.get("package") or {}
+                evaluation = _build_execution_package_evaluation(package)
+                return _result(
+                    command=cmd,
+                    status="blocked",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; evaluation_status={evaluation.get('evaluation_status')}; authority=denied",
+                    payload={
+                        "status": "blocked",
+                        "reason": str(result.get("reason") or "Evaluation authority denied."),
+                        "project_path": path,
+                        "package_id": package_id,
+                        "evaluation": evaluation,
+                        "authority_denial": ((package.get("metadata") or {}).get("authority_denials") or {}).get("evaluation") or {},
+                    },
+                )
             if result.get("status") != "ok":
                 return _execution_package_error_result(
                     command=cmd,
@@ -1591,6 +1648,23 @@ def run_command(
                 package_id=package_id,
                 analysis_actor=analysis_actor,
             )
+            if result.get("status") == "denied":
+                package = result.get("package") or {}
+                local_analysis = _build_execution_package_local_analysis(package)
+                return _result(
+                    command=cmd,
+                    status="blocked",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; local_analysis_status={local_analysis.get('local_analysis_status')}; authority=denied",
+                    payload={
+                        "status": "blocked",
+                        "reason": str(result.get("reason") or "Local analysis authority denied."),
+                        "project_path": path,
+                        "package_id": package_id,
+                        "local_analysis": local_analysis,
+                        "authority_denial": ((package.get("metadata") or {}).get("authority_denials") or {}).get("local_analysis") or {},
+                    },
+                )
             if result.get("status") != "ok":
                 return _execution_package_error_result(
                     command=cmd,

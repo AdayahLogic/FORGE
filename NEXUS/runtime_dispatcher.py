@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.authority_model import build_authority_denial, enforce_component_authority_safe
 from NEXUS.runtimes import RUNTIME_ADAPTERS
 from NEXUS.runtime_execution import (
     build_runtime_execution_error,
@@ -34,6 +35,7 @@ def _create_review_only_execution_package(
     approval_record: dict[str, Any] | None = None,
     approval_id: str | None = None,
     package_reason: str,
+    authority_trace: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None]:
     """Persist a sealed review-only execution package and return (id, path)."""
     try:
@@ -46,6 +48,7 @@ def _create_review_only_execution_package(
             approval_record=approval_record,
             approval_id=approval_id,
             package_reason=package_reason,
+            authority_trace=authority_trace,
         )
         package_id = package.get("package_id")
         package_path = write_execution_package_safe(
@@ -66,6 +69,40 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
     """
     exec_block = (dispatch_plan or {}).get("execution") or {}
     runtime_target_id = (exec_block.get("runtime_target_id") or "").strip().lower()
+    project_block = (dispatch_plan or {}).get("project") or {}
+    nexus_authority = enforce_component_authority_safe(
+        component_name="nexus",
+        actor="nexus",
+        requested_actions=["route_dispatch"],
+        allowed_components=["nexus"],
+        authority_context={
+            "project_name": project_block.get("project_name"),
+            "runtime_target_id": runtime_target_id or "local",
+            "dispatch_ready": bool((dispatch_plan or {}).get("ready_for_dispatch", False)),
+        },
+    )
+    nexus_trace = nexus_authority.get("authority_trace") or {}
+
+    if nexus_authority.get("status") == "denied":
+        blocked = build_runtime_execution_result(
+            runtime=runtime_target_id or "local",
+            status="blocked",
+            message=str((nexus_authority.get("authority_denial") or {}).get("reason") or "Authority enforcement denied runtime dispatch."),
+            execution_status="blocked",
+            execution_mode="safe_simulation",
+            next_action="human_review",
+            artifacts=[],
+            errors=[{"reason": str((nexus_authority.get("authority_denial") or {}).get("reason") or "authority_denied")}],
+            extra_fields={
+                "authority_denial": nexus_authority.get("authority_denial") or {},
+                "authority_trace": nexus_trace,
+            },
+        )
+        return {
+            "dispatch_status": "blocked",
+            "runtime_target": runtime_target_id or "local",
+            "dispatch_result": blocked,
+        }
 
     if not dispatch_plan or not dispatch_plan.get("ready_for_dispatch", False):
         skipped = build_runtime_execution_skipped(
@@ -73,6 +110,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             message="Dispatch skipped: dispatch plan not ready.",
             reason="not_ready",
         )
+        skipped["authority_trace"] = nexus_trace
         return {
             "dispatch_status": "skipped",
             "runtime_target": runtime_target_id,
@@ -146,6 +184,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 approval_record=approval_record,
                 approval_id=approval_id,
                 package_reason=aegis_reason or "Human approval required before any execution handoff.",
+                authority_trace=nexus_trace,
             )
             queued = build_runtime_execution_result(
                 runtime=runtime_target_id,
@@ -159,6 +198,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             )
             if isinstance(queued, dict):
                 queued["aegis"] = aegis_res
+                queued["authority_trace"] = nexus_trace
                 if approval_id:
                     queued["approval_id"] = approval_id
                     queued["approval_required"] = True
@@ -195,6 +235,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 approval_record=approval_record,
                 approval_id=approval_id,
                 package_reason="Dispatch plan requires review-only packaging before any later execution.",
+                authority_trace=nexus_trace,
             )
             gated = build_runtime_execution_result(
                 runtime=runtime_target_id,
@@ -208,6 +249,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             )
             if isinstance(gated, dict):
                 gated["aegis"] = aegis_res
+                gated["authority_trace"] = nexus_trace
                 if approval_id:
                     gated["approval_id"] = approval_id
                     gated["approval_required"] = True
@@ -228,6 +270,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 approval_record=None,
                 approval_id=None,
                 package_reason="Windows review-only execution target selected; package created and execution intentionally stopped.",
+                authority_trace=nexus_trace,
             )
             packaged = build_runtime_execution_result(
                 runtime=runtime_target_id,
@@ -241,6 +284,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             )
             if isinstance(packaged, dict):
                 packaged["aegis"] = aegis_res
+                packaged["authority_trace"] = nexus_trace
                 if package_id:
                     packaged["execution_package_id"] = package_id
                     packaged["execution_package_path"] = package_path
@@ -251,8 +295,32 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 "dispatch_result": packaged,
             }
     except Exception:
-        # Fail-safe: if AEGIS fails, do not block execution.
-        pass
+        aegis_bypass_denial = build_authority_denial(
+            denied_action="bypass_aegis_for_governed_dispatch",
+            actor="nexus",
+            authority_trace=nexus_trace,
+            required_role="approval_authority",
+            reason="NEXUS must not bypass AEGIS for governed dispatch actions.",
+        )
+        blocked = build_runtime_execution_result(
+            runtime=runtime_target_id,
+            status="blocked",
+            message=aegis_bypass_denial["reason"],
+            execution_status="blocked",
+            execution_mode="safe_simulation",
+            next_action="human_review",
+            artifacts=[],
+            errors=[{"reason": aegis_bypass_denial["reason"]}],
+            extra_fields={
+                "authority_denial": aegis_bypass_denial,
+                "authority_trace": nexus_trace,
+            },
+        )
+        return {
+            "dispatch_status": "blocked",
+            "runtime_target": runtime_target_id,
+            "dispatch_result": blocked,
+        }
     adapter = RUNTIME_ADAPTERS.get(runtime_target_id)
     if not adapter:
         no_adapter = build_runtime_execution_skipped(
@@ -266,6 +334,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         no_adapter["next_action"] = "human_review"
         if isinstance(aegis_res, dict):
             no_adapter["aegis"] = aegis_res
+        no_adapter["authority_trace"] = nexus_trace
         return {
             "dispatch_status": "no_adapter",
             "runtime_target": runtime_target_id,
@@ -283,6 +352,8 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         # Attach AEGIS outcome for persistence/consumption by downstream engines.
         if isinstance(dispatch_result, dict) and isinstance(aegis_res, dict):
             dispatch_result["aegis"] = aegis_res
+        if isinstance(dispatch_result, dict):
+            dispatch_result["authority_trace"] = nexus_trace
         return {
             "dispatch_status": "accepted",
             "runtime_target": runtime_target_id,
@@ -296,6 +367,8 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         )
         if isinstance(err, dict) and isinstance(aegis_res, dict):
             err["aegis"] = aegis_res
+        if isinstance(err, dict):
+            err["authority_trace"] = nexus_trace
         return {
             "dispatch_status": "error",
             "runtime_target": runtime_target_id,

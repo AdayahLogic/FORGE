@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from NEXUS.authority_model import enforce_component_authority_safe
 from NEXUS.executor_backends import get_executor_backend, get_executor_backend_status
 from NEXUS.executor_backends.contracts import normalize_executor_response_v1
 from NEXUS.execution_package_hardening import normalize_rollback_repair, summarize_failure
@@ -265,6 +266,42 @@ def execute_execution_package(
     )
 
     if backend_id == "openclaw":
+        openclaw_authority = enforce_component_authority_safe(
+            component_name="openclaw",
+            actor=execution_actor,
+            requested_actions=["execute_package", "produce_execution_receipt"],
+            allowed_components=["openclaw"],
+            authority_context={
+                "package_id": p.get("package_id"),
+                "project_name": p.get("project_name"),
+                "runtime_target_id": target_id,
+            },
+        )
+        if openclaw_authority.get("status") == "denied":
+            denial = openclaw_authority.get("authority_denial") or {}
+            _append_log(log_path, [f"[authority][denied] {denial.get('reason') or 'authority_denied'}"])
+            failure_summary = summarize_failure(failure_class="preflight_block", timestamp=_utc_now_iso())
+            return {
+                "execution_status": "blocked",
+                "execution_reason": {"code": "authority_denied", "message": str(denial.get("reason") or "OpenClaw authority denied.")},
+                "execution_receipt": _receipt(
+                    result_status="blocked",
+                    exit_code=None,
+                    log_ref=str(log_path),
+                    artifacts_written_count=1,
+                    failure_class="preflight_block",
+                    stderr_summary=str(denial.get("reason") or "authority_denied"),
+                ),
+                "rollback_status": "not_needed",
+                "rollback_timestamp": "",
+                "rollback_reason": {"code": "", "message": ""},
+                "failure_summary": failure_summary,
+                "rollback_repair": normalize_rollback_repair(None),
+                "runtime_artifact": {},
+                "authority_trace": openclaw_authority.get("authority_trace") or {},
+                "authority_denial": denial,
+                "execution_finished_at": _utc_now_iso(),
+            }
         backend_status = get_executor_backend_status(backend_id)
         if str(backend_status.get("adapter_status") or "").strip().lower() != "active":
             _append_log(log_path, [f"[error] executor_backend_inactive={backend_id}"])
@@ -286,6 +323,7 @@ def execute_execution_package(
                 "failure_summary": failure_summary,
                 "rollback_repair": normalize_rollback_repair(None),
                 "runtime_artifact": {},
+                "authority_trace": openclaw_authority.get("authority_trace") or {},
                 "execution_finished_at": _utc_now_iso(),
             }
         backend = get_executor_backend(backend_id)
@@ -310,6 +348,7 @@ def execute_execution_package(
                 "failure_summary": failure_summary,
                 "rollback_repair": normalize_rollback_repair(None),
                 "runtime_artifact": {},
+                "authority_trace": openclaw_authority.get("authority_trace") or {},
                 "execution_finished_at": _utc_now_iso(),
             }
         try:
@@ -336,11 +375,13 @@ def execute_execution_package(
                 "adapter_status": "error",
                 "backend_id": backend_id,
             }
-        return _map_executor_response_to_execution_result(
+        result = _map_executor_response_to_execution_result(
             execution_id=execution_id,
             target_id=target_id,
             response=backend_response,
         )
+        result["authority_trace"] = openclaw_authority.get("authority_trace") or {}
+        return result
 
     try:
         proc = subprocess.run(

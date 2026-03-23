@@ -267,6 +267,7 @@ def test_execution_request_marks_succeeded_and_persists_receipt():
         assert persisted is not None
         assert persisted["execution_status"] == "succeeded"
         assert persisted["execution_receipt"]["result_status"] == "succeeded"
+        assert persisted["metadata"]["authority_traces"]["execution"]["component_name"] == "openclaw"
 
 
 def test_execution_request_blocks_for_invalid_conditions():
@@ -440,6 +441,7 @@ def test_openclaw_execution_succeeds_and_persists_backend():
         assert persisted is not None
         assert persisted["execution_executor_target_id"] == "openclaw"
         assert persisted["execution_executor_backend_id"] == "openclaw"
+        assert persisted["metadata"]["authority_traces"]["execution"]["component_name"] == "openclaw"
 
 
 def test_openclaw_target_and_capability_mismatch_block_before_backend():

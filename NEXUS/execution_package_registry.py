@@ -14,6 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from NEXUS.authority_model import enforce_component_authority_safe, infer_component_name
 from NEXUS.execution_package_hardening import (
     VALID_EXECUTION_FAILURE_CLASSES,
     build_default_hardening_fields,
@@ -280,6 +281,51 @@ def _normalize_execution_receipt(value: Any) -> dict[str, Any]:
         "stderr_summary": str(value.get("stderr_summary") or ""),
         "rollback_summary": dict(value.get("rollback_summary") or {}),
     }
+
+
+def _with_package_authority_event(
+    package: dict[str, Any] | None,
+    *,
+    scope: str,
+    authority_trace: dict[str, Any] | None = None,
+    authority_denial: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    p = dict(package or {})
+    metadata = dict(p.get("metadata") or {})
+    authority_traces = dict(metadata.get("authority_traces") or {})
+    authority_denials = dict(metadata.get("authority_denials") or {})
+    if isinstance(authority_trace, dict) and authority_trace:
+        authority_traces[str(scope)] = dict(authority_trace)
+    if isinstance(authority_denial, dict) and authority_denial:
+        authority_denials[str(scope)] = dict(authority_denial)
+    metadata["authority_traces"] = authority_traces
+    if authority_denials:
+        metadata["authority_denials"] = authority_denials
+    p["metadata"] = metadata
+    return p
+
+
+def _persist_package_update(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    package: dict[str, Any] | None,
+    status: str,
+    reason: str,
+) -> dict[str, Any]:
+    normalized = normalize_execution_package(package)
+    package_path = get_execution_package_file_path(project_path, package_id or normalized.get("package_id"))
+    journal_path = get_execution_package_journal_path(project_path)
+    if not package_path or not journal_path:
+        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
+    try:
+        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+        journal_record = _build_execution_package_journal_record(normalized, package_path)
+        with open(journal_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        return {"status": status, "reason": reason, "package": normalized}
+    except Exception:
+        return {"status": "error", "reason": f"Failed to persist execution package update: {reason}", "package": None}
 
 
 def _empty_execution_receipt(*, result_status: str = "", failure_class: str = "", log_ref: str = "", exit_code: int | None = None) -> dict[str, Any]:
@@ -1253,6 +1299,24 @@ def record_execution_package_execution(
     package = read_execution_package(project_path=project_path, package_id=package_id)
     if not package:
         return {"status": "error", "reason": "Execution package not found.", "package": None}
+    execution_component = "openclaw"
+    execution_authority = enforce_component_authority_safe(
+        component_name=execution_component,
+        actor=actor,
+        requested_actions=["execute_package"],
+        allowed_components=[execution_component],
+        authority_context={
+            "package_id": package_id,
+            "project_name": package.get("project_name"),
+            "runtime_target_id": package.get("handoff_executor_target_id") or package.get("runtime_target_id"),
+        },
+    )
+    package = _with_package_authority_event(
+        package,
+        scope="execution",
+        authority_trace=execution_authority.get("authority_trace"),
+        authority_denial=execution_authority.get("authority_denial"),
+    )
     execution_id = str(uuid.uuid4())
     started_at = _utc_now_iso()
     evaluation = evaluate_execution_package_execution(package)
@@ -1274,6 +1338,46 @@ def record_execution_package_execution(
     package["recovery_summary"] = normalize_recovery_summary(evaluation.get("recovery_summary"))
     package["rollback_repair"] = normalize_rollback_repair(evaluation.get("rollback_repair"))
     package["integrity_verification"] = normalize_integrity_verification(evaluation.get("integrity_verification"))
+
+    if execution_authority.get("status") == "denied":
+        denial = execution_authority.get("authority_denial") or {}
+        package["execution_status"] = "blocked"
+        package["execution_reason"] = _normalize_execution_reason(
+            {
+                "code": "authority_denied",
+                "message": str(denial.get("reason") or "Execution authority denied."),
+            }
+        )
+        package["execution_receipt"] = _normalize_execution_receipt(
+            {
+                "result_status": "blocked",
+                "failure_class": "preflight_block",
+                "stderr_summary": str(denial.get("reason") or "authority_denied"),
+            }
+        )
+        package["execution_finished_at"] = _utc_now_iso()
+        package["rollback_status"] = "not_needed"
+        package["rollback_timestamp"] = ""
+        package["rollback_reason"] = _normalize_rollback_reason({"code": "", "message": ""})
+        package["failure_summary"] = normalize_failure_summary(
+            summarize_failure(failure_class="preflight_block", timestamp=package["execution_finished_at"])
+        )
+        package["recovery_summary"] = normalize_recovery_summary(
+            evaluate_recovery_summary(
+                execution_status="blocked",
+                failure_summary=package.get("failure_summary"),
+                retry_policy=package.get("retry_policy"),
+                rollback_repair=package.get("rollback_repair"),
+                integrity_verification=package.get("integrity_verification"),
+            )
+        )
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="denied",
+            reason=str(denial.get("reason") or "Execution authority denied."),
+        )
 
     if evaluation.get("execution_status") == "blocked":
         package["execution_status"] = "blocked"
@@ -1324,6 +1428,12 @@ def record_execution_package_execution(
         package["rollback_reason"] = _normalize_rollback_reason(exec_result.get("rollback_reason"))
         package["failure_summary"] = normalize_failure_summary(exec_result.get("failure_summary"))
         package["rollback_repair"] = normalize_rollback_repair(exec_result.get("rollback_repair"))
+        package = _with_package_authority_event(
+            package,
+            scope="execution",
+            authority_trace=exec_result.get("authority_trace") or execution_authority.get("authority_trace"),
+            authority_denial=exec_result.get("authority_denial") or execution_authority.get("authority_denial"),
+        )
         runtime_artifact = exec_result.get("runtime_artifact")
         if isinstance(runtime_artifact, dict) and runtime_artifact:
             artifacts = list(package.get("runtime_artifacts") or [])
@@ -1359,19 +1469,13 @@ def record_execution_package_execution(
             integrity_verification=package.get("integrity_verification"),
         )
 
-    normalized = normalize_execution_package(package)
-    package_path = get_execution_package_file_path(project_path, package_id)
-    journal_path = get_execution_package_journal_path(project_path)
-    if not package_path or not journal_path:
-        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
-    try:
-        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
-        journal_record = _build_execution_package_journal_record(normalized, package_path)
-        with open(journal_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
-        return {"status": "ok", "reason": "Execution package execution recorded.", "package": normalized}
-    except Exception:
-        return {"status": "error", "reason": "Failed to persist execution package execution.", "package": None}
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package execution recorded.",
+    )
 
 
 def record_execution_package_execution_safe(**kwargs: Any) -> dict[str, Any]:
@@ -1395,6 +1499,28 @@ def record_execution_package_evaluation(
     package = read_execution_package(project_path=project_path, package_id=package_id)
     if not package:
         return {"status": "error", "reason": "Execution package not found.", "package": None}
+    component_name = infer_component_name(actor)
+    evaluation_authority = enforce_component_authority_safe(
+        component_name=component_name,
+        actor=actor,
+        requested_actions=["evaluate_execution"],
+        allowed_components=["abacus"],
+        authority_context={"package_id": package_id, "project_name": package.get("project_name")},
+    )
+    package = _with_package_authority_event(
+        package,
+        scope="evaluation",
+        authority_trace=evaluation_authority.get("authority_trace"),
+        authority_denial=evaluation_authority.get("authority_denial"),
+    )
+    if evaluation_authority.get("status") == "denied":
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="denied",
+            reason=str(((evaluation_authority.get("authority_denial") or {}).get("reason")) or "Evaluation authority denied."),
+        )
 
     evaluation = evaluate_execution_package_safe(package)
     package["evaluation_status"] = _normalize_evaluation_status(evaluation.get("evaluation_status"))
@@ -1406,16 +1532,15 @@ def record_execution_package_evaluation(
     package["evaluation_basis"] = normalize_evaluation_basis(evaluation.get("evaluation_basis"))
     package["evaluation_summary"] = normalize_evaluation_summary(evaluation.get("evaluation_summary"))
 
-    normalized = normalize_execution_package(package)
-    package_path = get_execution_package_file_path(project_path, package_id)
-    journal_path = get_execution_package_journal_path(project_path)
-    if not package_path or not journal_path:
-        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
-    try:
-        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
-        journal_record = _build_execution_package_journal_record(normalized, package_path)
-        with open(journal_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+    persisted = _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package evaluation recorded.",
+    )
+    if persisted.get("status") == "ok":
+        normalized = persisted.get("package") or {}
         record_memory_pattern_safe(
             project_name=str(normalized.get("project_name") or ""),
             source="abacus",
@@ -1425,9 +1550,7 @@ def record_execution_package_evaluation(
                 "execution_status": normalized.get("execution_status"),
             },
         )
-        return {"status": "ok", "reason": "Execution package evaluation recorded.", "package": normalized}
-    except Exception:
-        return {"status": "error", "reason": "Failed to persist execution package evaluation.", "package": None}
+    return persisted
 
 
 def record_execution_package_evaluation_safe(**kwargs: Any) -> dict[str, Any]:
@@ -1449,6 +1572,28 @@ def record_execution_package_local_analysis(
     package = read_execution_package(project_path=project_path, package_id=package_id)
     if not package:
         return {"status": "error", "reason": "Execution package not found.", "package": None}
+    component_name = infer_component_name(actor)
+    analysis_authority = enforce_component_authority_safe(
+        component_name=component_name,
+        actor=actor,
+        requested_actions=["analyze_locally"],
+        allowed_components=["nemoclaw"],
+        authority_context={"package_id": package_id, "project_name": package.get("project_name")},
+    )
+    package = _with_package_authority_event(
+        package,
+        scope="local_analysis",
+        authority_trace=analysis_authority.get("authority_trace"),
+        authority_denial=analysis_authority.get("authority_denial"),
+    )
+    if analysis_authority.get("status") == "denied":
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="denied",
+            reason=str(((analysis_authority.get("authority_denial") or {}).get("reason")) or "Local analysis authority denied."),
+        )
 
     analysis = analyze_execution_package_locally_safe(package)
     package["local_analysis_status"] = _normalize_local_analysis_status(analysis.get("local_analysis_status"))
@@ -1460,16 +1605,15 @@ def record_execution_package_local_analysis(
     package["local_analysis_basis"] = normalize_local_analysis_basis(analysis.get("local_analysis_basis"))
     package["local_analysis_summary"] = normalize_local_analysis_summary(analysis.get("local_analysis_summary"))
 
-    normalized = normalize_execution_package(package)
-    package_path = get_execution_package_file_path(project_path, package_id)
-    journal_path = get_execution_package_journal_path(project_path)
-    if not package_path or not journal_path:
-        return {"status": "error", "reason": "Execution package storage unavailable.", "package": None}
-    try:
-        Path(package_path).write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
-        journal_record = _build_execution_package_journal_record(normalized, package_path)
-        with open(journal_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+    persisted = _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package local analysis recorded.",
+    )
+    if persisted.get("status") == "ok":
+        normalized = persisted.get("package") or {}
         record_memory_pattern_safe(
             project_name=str(normalized.get("project_name") or ""),
             source="nemoclaw",
@@ -1479,9 +1623,7 @@ def record_execution_package_local_analysis(
                 "execution_status": normalized.get("execution_status"),
             },
         )
-        return {"status": "ok", "reason": "Execution package local analysis recorded.", "package": normalized}
-    except Exception:
-        return {"status": "error", "reason": "Failed to persist execution package local analysis.", "package": None}
+    return persisted
 
 
 def record_execution_package_local_analysis_safe(**kwargs: Any) -> dict[str, Any]:

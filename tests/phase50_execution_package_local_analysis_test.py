@@ -305,6 +305,50 @@ def test_local_analysis_uses_package_local_and_persisted_evaluation_only():
         assert analysis["local_analysis_summary"]["suggested_next_action"] == "initiate_rollback_repair"
 
 
+def test_local_analysis_denies_wrong_authority_actor():
+    from NEXUS.command_surface import run_command
+    from NEXUS.execution_package_registry import read_execution_package
+
+    with _local_test_dir() as tmp:
+        _write_package(tmp, "pkg-authority-denied")
+        result = run_command(
+            "execution_package_local_analysis",
+            project_path=str(tmp),
+            execution_package_id="pkg-authority-denied",
+            analysis_actor="abacus_operator",
+        )
+        assert result["status"] == "blocked"
+        denial = result["payload"]["authority_denial"]
+        assert denial["status"] == "denied"
+        assert denial["denied_action"] == "analyze_locally"
+        assert "advisory_only" in denial["allowed_roles"]
+        package = read_execution_package(str(tmp), "pkg-authority-denied")
+        assert package
+        assert package["metadata"]["authority_denials"]["local_analysis"]["actor"] == "abacus_operator"
+
+
+def test_evaluation_denies_wrong_authority_actor():
+    from NEXUS.command_surface import run_command
+    from NEXUS.execution_package_registry import read_execution_package
+
+    with _local_test_dir() as tmp:
+        _write_package(tmp, "pkg-eval-authority-denied")
+        result = run_command(
+            "execution_package_evaluate",
+            project_path=str(tmp),
+            execution_package_id="pkg-eval-authority-denied",
+            evaluation_actor="nemoclaw_operator",
+        )
+        assert result["status"] == "blocked"
+        denial = result["payload"]["authority_denial"]
+        assert denial["status"] == "denied"
+        assert denial["denied_action"] == "evaluate_execution"
+        assert "evaluation_only" in denial["allowed_roles"]
+        package = read_execution_package(str(tmp), "pkg-eval-authority-denied")
+        assert package
+        assert package["metadata"]["authority_denials"]["evaluation"]["actor"] == "nemoclaw_operator"
+
+
 def test_local_analysis_status_returns_stored_values_only():
     from NEXUS.command_surface import run_command
     from NEXUS.execution_package_registry import write_execution_package_safe
@@ -429,6 +473,8 @@ def main():
         test_execution_package_local_analysis_persists_uuid_and_deterministic_confidence,
         test_local_analysis_blocks_without_completed_evaluation_or_terminal_execution,
         test_local_analysis_uses_package_local_and_persisted_evaluation_only,
+        test_local_analysis_denies_wrong_authority_actor,
+        test_evaluation_denies_wrong_authority_actor,
         test_local_analysis_status_returns_stored_values_only,
         test_dashboard_includes_summary_only_local_analysis_counts,
         test_integrity_checker_validates_local_analysis_shapes,
