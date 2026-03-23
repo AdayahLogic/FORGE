@@ -838,6 +838,37 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             studio_coordination_summary=studio_coordination_summary,
             meta_engine_summary=meta_engine_summary,
         )
+        try:
+            from NEXUS.memory_layer import build_memory_layer_summary_safe
+            from NEXUS.meta_engine_governance import resolve_meta_engine_governance_safe
+
+            memory_layer_summary = build_memory_layer_summary_safe()
+            meta_engine_governance = resolve_meta_engine_governance_safe(
+                titan_summary=titan_summary,
+                leviathan_summary=leviathan_summary,
+                helios_summary=helios_summary if "helios_summary" in locals() else {},
+                veritas_summary=veritas_summary,
+                sentinel_summary=sentinel_summary,
+            )
+        except Exception:
+            memory_layer_summary = {
+                "memory_layer_version": "1.0",
+                "last_updated": "",
+                "self_modification_policy": "approval_required",
+                "total_records": 0,
+                "patterns_by_key": {},
+                "records_by_project": {},
+                "records_by_source": {},
+            }
+            meta_engine_governance = {
+                "priority_order": ["SENTINEL", "VERITAS", "LEVIATHAN", "TITAN", "HELIOS"],
+                "governing_engine": "",
+                "review_required": False,
+                "conflict_detected": False,
+                "system_pause_required": False,
+                "resolution_reason": "",
+                "active_review_engines": [],
+            }
 
         # Phase 12: pass cross-intelligence context into HELIOS (cached mode).
         # Do not run GENESIS/HELIOS as executors; this only improves proposal explainability.
@@ -857,6 +888,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "sentinel_summary": sentinel_summary,
                 "prism_result": prism_result,
                 "last_aegis_decision": last_aegis_decision,
+                "memory_layer_summary": memory_layer_summary,
             },
             studio_coordination_summary=studio_coordination_summary,
             studio_driver_summary=studio_driver_summary,
@@ -864,6 +896,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             live_regression=False,
             helios_evaluation_mode="dashboard_cached",
         )
+        try:
+            from NEXUS.meta_engine_governance import resolve_meta_engine_governance_safe
+
+            meta_engine_governance = resolve_meta_engine_governance_safe(
+                titan_summary=titan_summary,
+                leviathan_summary=leviathan_summary,
+                helios_summary=helios_summary,
+                veritas_summary=veritas_summary,
+                sentinel_summary=sentinel_summary,
+            )
+        except Exception:
+            pass
 
         # Phase 11/12: compact HELIOS proposal visibility.
         try:
@@ -1131,6 +1175,24 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "aegis_decision": None,
                 "deployment_preflight": None,
             },
+        }
+        memory_layer_summary = {
+            "memory_layer_version": "1.0",
+            "last_updated": "",
+            "self_modification_policy": "approval_required",
+            "total_records": 0,
+            "patterns_by_key": {},
+            "records_by_project": {},
+            "records_by_source": {},
+        }
+        meta_engine_governance = {
+            "priority_order": ["SENTINEL", "VERITAS", "LEVIATHAN", "TITAN", "HELIOS"],
+            "governing_engine": "",
+            "review_required": False,
+            "conflict_detected": False,
+            "system_pause_required": False,
+            "resolution_reason": "",
+            "active_review_engines": [],
         }
 
         genesis_summary = {"genesis_status": "error_fallback", "signals": {}}
@@ -1419,6 +1481,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "cross_artifact_trace_summary": _build_cross_artifact_trace_for_dashboard(),
         "meta_engine_summary": meta_engine_summary,
         "meta_engine_review_required_count": meta_engine_review_required_count,
+        "meta_engine_governance": meta_engine_governance,
+        "memory_layer_summary": memory_layer_summary,
         # Phase 6 elite capability layers (summary-oriented).
         "titan_summary": titan_summary,
         "leviathan_summary": leviathan_summary,

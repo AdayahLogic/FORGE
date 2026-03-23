@@ -176,6 +176,9 @@ def build_helios_expanded_summary(
         prism_result = dash.get("prism_result") if isinstance(dash.get("prism_result"), dict) else {}
         prism_status = str(prism_result.get("prism_status") or "").strip().lower()
         prism_recommendation = str(prism_result.get("recommendation") or "").strip().lower()
+        memory_layer_summary = dash.get("memory_layer_summary") if isinstance(dash.get("memory_layer_summary"), dict) else {}
+        memory_record_count = int(memory_layer_summary.get("total_records") or 0)
+        self_modification_policy = str(memory_layer_summary.get("self_modification_policy") or "approval_required")
 
         last_aegis_decision = dash.get("last_aegis_decision")
         if isinstance(last_aegis_decision, dict):
@@ -291,6 +294,7 @@ def build_helios_expanded_summary(
                 f"gate={effective_gate_status} (review_required={gate_review_required_effective}, execution_allowed={execution_allowed}); "
                 f"regression={regression_status}; veritas={veritas_status}; sentinel={sentinel_status}; "
                 f"aegis={aegis_decision}; prism={prism_status or 'none'}:{prism_recommendation or 'none'}; "
+                f"memory_records={memory_record_count}; self_modification_policy={self_modification_policy}; "
                 f"mode={helios_mode}."
             )
 

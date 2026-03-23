@@ -29,6 +29,8 @@ def evaluate_recovery_outcome(
     enforcement_status: str | None = None,
     enforcement_result: dict[str, Any] | None = None,
     retry_count: int = 0,
+    evaluation_status: str | None = None,
+    local_analysis_status: str | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate recovery outcome from completion, resume, scheduler, governance, lifecycle.
@@ -51,8 +53,28 @@ def evaluate_recovery_outcome(
     r_status = (rr.get("resume_status") or "").strip().lower()
     pl_status = (project_lifecycle_status or "").strip().lower()
     g_status = (governance_status or "").strip().lower()
+    e_status = (enforcement_status or "").strip().lower()
+    ev_status = (evaluation_status or "").strip().lower()
+    la_status = (local_analysis_status or "").strip().lower()
+    governance_conflict = bool(
+        (g_status == "approval_required" and e_status == "continue")
+        or (g_status == "approved" and e_status in ("blocked", "hold"))
+    )
 
     retry_count_exceeded = retry_count > RETRY_COUNT_THRESHOLD
+
+    if governance_conflict:
+        return {
+            "recovery_status": "blocked",
+            "recovery_action": "pause_system",
+            "recovery_reason": "Governance and enforcement conflict requires a system pause.",
+            "retry_permitted": False,
+            "repair_required": False,
+            "retry_count_exceeded": False,
+            "conflict_escalation_status": "system_pause_required",
+            "system_pause_required": True,
+            "recovery_pipeline": ["pause_system", "resolve_governance_conflict", "await_operator_review"],
+        }
 
     if retry_count_exceeded:
         return {
@@ -62,6 +84,9 @@ def evaluate_recovery_outcome(
             "retry_permitted": False,
             "repair_required": False,
             "retry_count_exceeded": True,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["stop"],
         }
 
     if pl_status == "blocked" or g_status == "blocked":
@@ -72,6 +97,22 @@ def evaluate_recovery_outcome(
             "retry_permitted": False,
             "repair_required": False,
             "retry_count_exceeded": False,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["stop"],
+        }
+
+    if ev_status == "error_fallback" or la_status == "error_fallback":
+        return {
+            "recovery_status": "repair_required",
+            "recovery_action": "repair_state",
+            "recovery_reason": "Evaluation/local analysis failed and requires recovery handling.",
+            "retry_permitted": False,
+            "repair_required": True,
+            "retry_count_exceeded": False,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["collect_failure_evidence", "repair_state", "re_evaluate"],
         }
 
     if queue_type == "manual_review" and comp_status != "completed":
@@ -82,6 +123,9 @@ def evaluate_recovery_outcome(
             "retry_permitted": False,
             "repair_required": False,
             "retry_count_exceeded": False,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["await_review"],
         }
 
     if queue_type == "approval" and comp_status != "completed":
@@ -92,6 +136,9 @@ def evaluate_recovery_outcome(
             "retry_permitted": False,
             "repair_required": False,
             "retry_count_exceeded": False,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["await_approval"],
         }
 
     if comp_status == "completed" and r_status in ("resumable", "not_applicable") and sr.get("next_cycle_permitted"):
@@ -102,6 +149,9 @@ def evaluate_recovery_outcome(
             "retry_permitted": True,
             "repair_required": False,
             "retry_count_exceeded": False,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["retry_project"],
         }
 
     if queue_status == "queued" and comp_status == "completed" and r_status == "waiting":
@@ -112,6 +162,9 @@ def evaluate_recovery_outcome(
             "retry_permitted": False,
             "repair_required": True,
             "retry_count_exceeded": False,
+            "conflict_escalation_status": "resolved_or_none",
+            "system_pause_required": False,
+            "recovery_pipeline": ["repair_state", "reconcile_queue", "reassess_resume"],
         }
 
     return {
@@ -121,6 +174,9 @@ def evaluate_recovery_outcome(
         "retry_permitted": False,
         "repair_required": False,
         "retry_count_exceeded": False,
+        "conflict_escalation_status": "resolved_or_none",
+        "system_pause_required": False,
+        "recovery_pipeline": ["none"],
     }
 
 
@@ -136,4 +192,7 @@ def evaluate_recovery_outcome_safe(**kwargs: Any) -> dict[str, Any]:
             "retry_permitted": False,
             "repair_required": False,
             "retry_count_exceeded": False,
+            "conflict_escalation_status": "system_pause_required",
+            "system_pause_required": True,
+            "recovery_pipeline": ["pause_system"],
         }

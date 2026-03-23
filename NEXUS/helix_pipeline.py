@@ -27,6 +27,15 @@ from NEXUS.helix_stages import (
     run_optimizer_stage,
     run_surgeon_stage,
 )
+from NEXUS.authority_model import evaluate_component_authority_safe
+from NEXUS.failure_handling import build_failure_handling_summary
+from NEXUS.helix_contracts import (
+    build_helix_contract_envelope,
+    build_helix_input_contract,
+    build_helix_output_contract,
+    build_helix_review_dispatch_plan,
+    validate_helix_contract_envelope,
+)
 
 # Stop reasons
 STOP_APPROVAL_BLOCKED = "approval_blocked"
@@ -89,6 +98,20 @@ def run_helix_pipeline(
     requires_surgeon = False
     stop_reason = ""
     pipeline_status = "planned"
+    execution_package_refs: list[str] = []
+    helix_contract: dict[str, Any] = {}
+    authority_trace = evaluate_component_authority_safe(
+        component_name="helix",
+        requested_actions=[
+            "generate_plan",
+            "generate_code",
+            "validate_generation",
+            "produce_risk_flags",
+            "package_generation_output",
+        ],
+        authority_context={"project_name": project_name, "requested_outcome": requested_outcome[:200]},
+    )
+    failure_handling_summary: dict[str, Any] = {}
 
     log_system_event(
         project=project_name,
@@ -120,6 +143,16 @@ def run_helix_pipeline(
             "approval_id_refs": [],
             "autonomy_id_refs": [],
             "product_id_refs": [],
+            "execution_package_refs": [],
+            "helix_contract": {},
+            "authority_trace": authority_trace,
+            "failure_handling_summary": build_failure_handling_summary(
+                stage_results=[],
+                pipeline_status=pipeline_status,
+                stop_reason=stop_reason,
+                authority_trace=authority_trace,
+                contract_validation={"contract_status": "invalid"},
+            ),
         })
         append_helix_record_safe(project_path, record)
         return record
@@ -148,12 +181,39 @@ def run_helix_pipeline(
             "approval_id_refs": [],
             "autonomy_id_refs": [],
             "product_id_refs": [],
+            "execution_package_refs": [],
+            "helix_contract": {},
+            "authority_trace": authority_trace,
+            "failure_handling_summary": build_failure_handling_summary(
+                stage_results=[],
+                pipeline_status=pipeline_status,
+                stop_reason=stop_reason,
+                authority_trace=authority_trace,
+                contract_validation={"contract_status": "invalid"},
+            ),
         })
         append_helix_record_safe(project_path, record)
         return record
 
     run_id = loaded.get("run_id") or ""
     context = load_project_context(project_path)
+    prior_evaluations: list[dict[str, Any]] = []
+    try:
+        from NEXUS.execution_package_registry import read_execution_package_journal_tail
+
+        for item in read_execution_package_journal_tail(project_path=project_path, n=5):
+            if not isinstance(item, dict):
+                continue
+            prior_evaluations.append(
+                {
+                    "package_id": str(item.get("package_id") or ""),
+                    "evaluation_status": str(item.get("evaluation_status") or ""),
+                    "local_analysis_status": str(item.get("local_analysis_status") or ""),
+                    "execution_status": str(item.get("execution_status") or ""),
+                }
+            )
+    except Exception:
+        prior_evaluations = []
 
     # Forward-compatible refs (populate when available; do not invent data)
     approval_id_refs: list[str] = []
@@ -270,6 +330,73 @@ def run_helix_pipeline(
             pipeline_status = "error_fallback"
 
     finished_at = datetime.utcnow().isoformat() + "Z"
+    input_contract = build_helix_input_contract(
+        project_state=loaded,
+        requested_outcome=requested_outcome,
+        loaded_context=context,
+        prior_evaluations=prior_evaluations,
+    )
+    output_contract = build_helix_output_contract(
+        requested_outcome=requested_outcome,
+        stage_results=stage_results,
+        pipeline_status=pipeline_status,
+        stop_reason=stop_reason,
+        requires_surgeon=requires_surgeon,
+    )
+    helix_contract = build_helix_contract_envelope(
+        input_contract=input_contract,
+        output_contract=output_contract,
+        package_id_refs=execution_package_refs,
+    )
+    contract_validation = validate_helix_contract_envelope(helix_contract)
+    failure_handling_summary = build_failure_handling_summary(
+        stage_results=stage_results,
+        pipeline_status=pipeline_status,
+        stop_reason=stop_reason,
+        authority_trace=authority_trace,
+        contract_validation=contract_validation,
+    )
+    if contract_validation.get("contract_status") == "valid":
+        try:
+            from NEXUS.execution_package_builder import build_execution_package_safe
+            from NEXUS.execution_package_registry import write_execution_package_safe
+
+            dispatch_plan = build_helix_review_dispatch_plan(
+                project_path=project_path,
+                project_name=project_name,
+                requested_outcome=requested_outcome,
+                contract=helix_contract,
+            )
+            package = build_execution_package_safe(
+                dispatch_plan=dispatch_plan,
+                aegis_result={
+                    "aegis_decision": "approval_required",
+                    "aegis_scope": "helix_generation_package",
+                    "aegis_reason": "HELIX outputs must be reviewed through an execution package before downstream use.",
+                },
+                package_reason="HELIX contract review package created for governed downstream handling.",
+                helix_contract=helix_contract,
+                authority_trace=authority_trace,
+                failure_handling_summary=failure_handling_summary,
+            )
+            package_id = str(package.get("package_id") or "")
+            package_path = write_execution_package_safe(project_path=project_path, package=package)
+            if package_id and package_path and package_id not in execution_package_refs:
+                execution_package_refs.append(package_id)
+        except Exception:
+            pass
+        helix_contract = build_helix_contract_envelope(
+            input_contract=input_contract,
+            output_contract=output_contract,
+            package_id_refs=execution_package_refs,
+        )
+        failure_handling_summary = build_failure_handling_summary(
+            stage_results=stage_results,
+            pipeline_status=pipeline_status,
+            stop_reason=stop_reason,
+            authority_trace=authority_trace,
+            contract_validation=validate_helix_contract_envelope(helix_contract),
+        )
 
     record = normalize_helix_record({
         "helix_id": helix_id,
@@ -289,6 +416,10 @@ def run_helix_pipeline(
         "approval_id_refs": approval_id_refs,
         "autonomy_id_refs": autonomy_id_refs,
         "product_id_refs": product_id_refs,
+        "execution_package_refs": execution_package_refs,
+        "helix_contract": helix_contract,
+        "authority_trace": authority_trace,
+        "failure_handling_summary": failure_handling_summary,
     })
 
     append_helix_record_safe(project_path, record)

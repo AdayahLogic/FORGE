@@ -41,6 +41,7 @@ from NEXUS.execution_package_local_analysis import (
     normalize_local_analysis_reason,
     normalize_local_analysis_summary,
 )
+from NEXUS.memory_layer import record_memory_pattern_safe
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
@@ -1412,6 +1413,15 @@ def record_execution_package_evaluation(
         journal_record = _build_execution_package_journal_record(normalized, package_path)
         with open(journal_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        record_memory_pattern_safe(
+            project_name=str(normalized.get("project_name") or ""),
+            source="abacus",
+            pattern_key=f"evaluation:{((normalized.get('evaluation_reason') or {}).get('code') or 'unknown')}",
+            attributes={
+                "failure_risk_band": ((normalized.get("evaluation_summary") or {}).get("failure_risk_band") or ""),
+                "execution_status": normalized.get("execution_status"),
+            },
+        )
         return {"status": "ok", "reason": "Execution package evaluation recorded.", "package": normalized}
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package evaluation.", "package": None}
@@ -1457,6 +1467,15 @@ def record_execution_package_local_analysis(
         journal_record = _build_execution_package_journal_record(normalized, package_path)
         with open(journal_path, "a", encoding="utf-8") as f:
             f.write(json.dumps(journal_record, ensure_ascii=False) + "\n")
+        record_memory_pattern_safe(
+            project_name=str(normalized.get("project_name") or ""),
+            source="nemoclaw",
+            pattern_key=f"local_analysis:{((normalized.get('local_analysis_summary') or {}).get('suggested_next_action') or 'unknown')}",
+            attributes={
+                "confidence_band": ((normalized.get("local_analysis_summary") or {}).get("confidence_band") or ""),
+                "execution_status": normalized.get("execution_status"),
+            },
+        )
         return {"status": "ok", "reason": "Execution package local analysis recorded.", "package": normalized}
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package local analysis.", "package": None}

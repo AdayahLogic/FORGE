@@ -20,6 +20,7 @@ def build_runtime_execution_result(
     next_action: str = "none",
     artifacts: list[dict[str, Any]] | None = None,
     errors: list[dict[str, Any]] | None = None,
+    extra_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Build a normalized runtime execution result.
@@ -34,7 +35,7 @@ def build_runtime_execution_result(
     - artifacts: list
     - errors: list
     """
-    return {
+    result = {
         "runtime": runtime,
         "status": status,
         "message": message,
@@ -44,6 +45,9 @@ def build_runtime_execution_result(
         "artifacts": artifacts or [],
         "errors": errors or [],
     }
+    if isinstance(extra_fields, dict):
+        result.update(extra_fields)
+    return result
 
 
 def build_runtime_execution_error(

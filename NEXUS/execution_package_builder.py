@@ -53,6 +53,10 @@ def build_execution_package(
     approval_id: str | None = None,
     package_reason: str | None = None,
     package_status: str = "review_pending",
+    helix_contract: dict[str, Any] | None = None,
+    authority_trace: dict[str, Any] | None = None,
+    failure_handling_summary: dict[str, Any] | None = None,
+    cursor_bridge_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Build a normalized review-only execution package.
@@ -91,6 +95,19 @@ def build_execution_package(
         or aegis.get("aegis_reason")
         or "Review-only execution package created; live execution disabled."
     )
+    metadata = {
+        "openclaw_active": False,
+        "future_executor": "OpenClaw",
+        "review_only_phase": "phase_1",
+    }
+    if isinstance(helix_contract, dict) and helix_contract:
+        metadata["helix_contract"] = helix_contract
+    if isinstance(authority_trace, dict) and authority_trace:
+        metadata["authority_trace"] = authority_trace
+    if isinstance(failure_handling_summary, dict) and failure_handling_summary:
+        metadata["failure_handling_summary"] = failure_handling_summary
+    if isinstance(cursor_bridge_summary, dict) and cursor_bridge_summary:
+        metadata["cursor_bridge_summary"] = cursor_bridge_summary
 
     return {
         "package_id": uuid.uuid4().hex[:16],
@@ -149,11 +166,7 @@ def build_execution_package(
             "Any later activation must preserve approval checks and project-scope controls.",
         ],
         "runtime_artifacts": [],
-        "metadata": {
-            "openclaw_active": False,
-            "future_executor": "OpenClaw",
-            "review_only_phase": "phase_1",
-        },
+        "metadata": metadata,
     }
 
 
