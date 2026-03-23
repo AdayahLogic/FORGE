@@ -326,7 +326,7 @@ def test_no_silent_continuation_after_rail_hit_keeps_task_pending():
 
 
 def test_governance_conflict_outcome_keeps_priority_over_stop_rails():
-    from NEXUS.project_routing import build_project_routing_decision
+    from NEXUS.project_routing import build_project_routing_decision, evaluate_project_selection
 
     decision = build_project_routing_decision(
         project_key="phase59proj",
@@ -349,8 +349,32 @@ def test_governance_conflict_outcome_keeps_priority_over_stop_rails():
             "task_queue_snapshot": [{"id": "t1", "task": "do thing", "status": "pending"}],
         },
     )
+    selection = evaluate_project_selection(
+        candidate_project_ids=["phase59proj"],
+        states_by_project={
+            "phase59proj": {
+                "governance_status": "review_required",
+                "governance_result": {
+                    "governance_status": "review_required",
+                    "resolution_state": "pause",
+                    "routing_outcome": "pause",
+                    "reason": "Governance pause required.",
+                },
+                "autonomy_stop_rail_status": "escalated",
+                "autonomy_stop_rail_result": {
+                    "status": "escalated",
+                    "rail_type": "retries",
+                    "routing_outcome": "escalate",
+                    "stop_reason": "autonomy_retry_limit_reached",
+                },
+                "task_queue_snapshot": [{"id": "t1", "task": "do thing", "status": "pending"}],
+            }
+        },
+    )
     assert decision["selected_action"] == "pause"
     assert decision["routing_reason"] == "Governance pause required."
+    assert selection["eligible_projects"] == []
+    assert selection["blocked_projects"] == ["phase59proj"]
 
 
 def main():

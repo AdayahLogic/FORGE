@@ -23,6 +23,7 @@ from NEXUS.capability_registry import list_active_capabilities, list_planned_cap
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import get_selection_defaults_summary
 from NEXUS.project_state import load_project_state
+from NEXUS.project_routing import evaluate_project_selection
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 from NEXUS.studio_driver import build_studio_driver_result_safe
 
@@ -342,6 +343,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     autonomy_mode_by_project: dict[str, str] = {}
     routing_status_by_project: dict[str, str] = {}
     routed_action_by_project: dict[str, str] = {}
+    project_selection_status_by_project: dict[str, str] = {}
+    last_project_selection_reason_by_project: dict[str, str] = {}
     supervised_mode_count_total = 0
     assisted_mode_count_total = 0
     low_risk_mode_count_total = 0
@@ -391,6 +394,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             routing_status_by_project[key] = str(loaded.get("project_routing_status") or "idle")
             routing_result = loaded.get("project_routing_result") if isinstance(loaded.get("project_routing_result"), dict) else {}
             routed_action_by_project[key] = str(routing_result.get("selected_action") or "")
+            project_selection_status_by_project[key] = str(loaded.get("project_selection_status") or "idle")
+            project_selection_result = loaded.get("project_selection_result") if isinstance(loaded.get("project_selection_result"), dict) else {}
+            last_project_selection_reason_by_project[key] = str(project_selection_result.get("selection_reason") or "")
             if autopilot_status in ("ready", "running", "paused", "escalated", "blocked"):
                 active_autopilot_projects.append(key)
             if autopilot_status == "escalated":
@@ -1341,6 +1347,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     completed_local_analysis_count_total = sum(v.get("completed", 0) for v in execution_package_local_analysis_counts_by_project.values())
     blocked_local_analysis_count_total = sum(v.get("blocked", 0) for v in execution_package_local_analysis_counts_by_project.values())
     error_local_analysis_count_total = sum(v.get("error_fallback", 0) for v in execution_package_local_analysis_counts_by_project.values())
+    portfolio_selection = evaluate_project_selection(states_by_project=states_by_project)
 
     return {
         "summary_generated_at": now,
@@ -1369,6 +1376,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "autonomy_mode_by_project": autonomy_mode_by_project,
             "routing_status_by_project": routing_status_by_project,
             "routed_action_by_project": routed_action_by_project,
+            "project_selection_status_by_project": project_selection_status_by_project,
+            "last_project_selection_reason_by_project": last_project_selection_reason_by_project,
             "stop_rail_status_by_project": stop_rail_status_by_project,
             "stop_rail_routing_outcome_by_project": stop_rail_routing_outcome_by_project,
             "paused_count_total": paused_count_total,
@@ -1376,6 +1385,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "low_risk_mode_count_total": low_risk_mode_count_total,
             "supervised_mode_count_total": supervised_mode_count_total,
             "assisted_mode_count_total": assisted_mode_count_total,
+        },
+        "project_selection_summary": {
+            "selection_surface_status": "ok",
+            "selected_project_id": portfolio_selection.get("selected_project_id") or "",
+            "eligible_project_count": len(portfolio_selection.get("eligible_projects") or []),
+            "blocked_project_count": len(portfolio_selection.get("blocked_projects") or []),
+            "contention_detected": bool(portfolio_selection.get("contention_detected")),
+            "last_selection_reason": str(portfolio_selection.get("selection_reason") or ""),
+            "routing_outcome": str(portfolio_selection.get("routing_outcome") or ""),
+            "priority_basis": str(portfolio_selection.get("priority_basis") or ""),
+            "eligible_projects": list(portfolio_selection.get("eligible_projects") or []),
+            "blocked_projects": list(portfolio_selection.get("blocked_projects") or []),
+            "candidate_project_ids": list(portfolio_selection.get("candidate_project_ids") or []),
+            "recorded_at": str(portfolio_selection.get("recorded_at") or ""),
         },
         "agent_summary": agent_summary,
         "policy_summary": policy_summary,

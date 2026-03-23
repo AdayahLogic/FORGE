@@ -95,6 +95,8 @@ def save_project_state(
     agent_selection_summary: dict | None = None,
     governance_status: str | None = None,
     governance_result: dict | None = None,
+    project_selection_status: str | None = None,
+    project_selection_result: dict | None = None,
     project_lifecycle_status: str | None = None,
     project_lifecycle_result: dict | None = None,
     enforcement_status: str | None = None,
@@ -258,6 +260,10 @@ def save_project_state(
         project_routing_status = previous.get("project_routing_status")
     if project_routing_result is None and isinstance(previous.get("project_routing_result"), dict):
         project_routing_result = previous.get("project_routing_result")
+    if project_selection_status is None and isinstance(previous.get("project_selection_status"), str):
+        project_selection_status = previous.get("project_selection_status")
+    if project_selection_result is None and isinstance(previous.get("project_selection_result"), dict):
+        project_selection_result = previous.get("project_selection_result")
 
     # Normalize AEGIS decision into the stable contract shape.
     from AEGIS.aegis_contract import normalize_aegis_result
@@ -366,6 +372,8 @@ def save_project_state(
         "agent_selection_summary": agent_selection_summary or {},
         "governance_status": governance_status,
         "governance_result": governance_result or {},
+        "project_selection_status": project_selection_status,
+        "project_selection_result": project_selection_result or {},
         "project_lifecycle_status": project_lifecycle_status,
         "project_lifecycle_result": project_lifecycle_result or {},
         "enforcement_status": enforcement_status,

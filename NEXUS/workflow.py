@@ -2,6 +2,7 @@ from langgraph.graph import StateGraph, END
 from NEXUS.state import StudioState
 from NEXUS.router import detect_project
 from NEXUS.registry import PROJECTS
+from NEXUS.project_routing import select_project_for_workflow
 from NEXUS.memory import load_project_context
 from NEXUS.memory_engine import load_project_memory
 from NEXUS.llm import generate_architect_plan
@@ -60,15 +61,24 @@ from NEXUS.reexecution_engine import evaluate_reexecution_outcome_safe
 
 
 def route_project(state: StudioState):
-    project_key = detect_project(state.user_input)
+    requested_project = detect_project(state.user_input)
+    selection = select_project_for_workflow(
+        requested_project_id=requested_project,
+        user_input=state.user_input,
+    )
+    project_key = str(selection.get("selected_project_id") or requested_project).strip()
+    if project_key not in PROJECTS:
+        project_key = requested_project
     project = PROJECTS[project_key]
 
     state.active_project = project_key
     state.active_agents = project["agents"]
     state.project_path = project["path"]
+    state.project_selection_status = str(selection.get("status") or "selected")
+    state.project_selection_result = selection
     state.notes = f"Project context loaded: {project['name']}"
 
-    print(f"\n[Router] Project detected: {project['name']}")
+    print(f"\n[Router] Project selected: {project['name']}")
     return state
 
 
@@ -82,6 +92,8 @@ def load_persistent_project_state(state: StudioState):
     loaded = load_project_state(state.project_path)
     state.previous_run_state = loaded
     if isinstance(loaded, dict):
+        state.project_selection_status = loaded.get("project_selection_status")
+        state.project_selection_result = dict(loaded.get("project_selection_result") or {})
         state.autonomy_stop_rail_status = loaded.get("autonomy_stop_rail_status")
         state.autonomy_stop_rail_result = dict(loaded.get("autonomy_stop_rail_result") or {})
         state.autonomy_stop_rail_config = dict(loaded.get("autonomy_stop_rail_config") or {})
@@ -1323,6 +1335,8 @@ def save_persistent_project_state_node(state: StudioState):
             agent_selection_summary=state.agent_selection_summary,
             governance_status=state.governance_status,
             governance_result=state.governance_result,
+            project_selection_status=state.project_selection_status,
+            project_selection_result=state.project_selection_result,
             project_lifecycle_status=state.project_lifecycle_status,
             project_lifecycle_result=state.project_lifecycle_result,
             enforcement_status=state.enforcement_status,

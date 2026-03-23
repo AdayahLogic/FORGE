@@ -84,6 +84,8 @@ class StudioState(BaseModel):
     automation_result: Dict[str, Any] = {}
     governance_status: Optional[str] = None
     governance_result: Dict[str, Any] = {}
+    project_selection_status: Optional[str] = None
+    project_selection_result: Dict[str, Any] = {}
     project_lifecycle_status: Optional[str] = None
     project_lifecycle_result: Dict[str, Any] = {}
     enforcement_status: Optional[str] = None

@@ -260,7 +260,7 @@ def test_pause_trace_persists_to_package_project_and_dashboard():
 
 def test_no_silent_continuation_after_unresolved_conflict():
     from NEXUS.project_lifecycle import evaluate_project_lifecycle_safe
-    from NEXUS.project_routing import build_project_routing_decision
+    from NEXUS.project_routing import build_project_routing_decision, evaluate_project_selection
 
     state = {
         "governance_status": "review_required",
@@ -293,9 +293,15 @@ def test_no_silent_continuation_after_unresolved_conflict():
         existing_project_state=state,
     )
     routing = build_project_routing_decision(project_key="phase48proj", state=state)
+    selection = evaluate_project_selection(
+        candidate_project_ids=["phase48proj"],
+        states_by_project={"phase48proj": state},
+    )
     assert lifecycle["lifecycle_status"] == "paused"
     assert routing["selected_action"] == "pause"
     assert routing["routing_status"] == "paused"
+    assert selection["eligible_projects"] == []
+    assert selection["blocked_projects"] == ["phase48proj"]
 
 
 def main():

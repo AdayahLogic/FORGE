@@ -375,11 +375,14 @@ def test_dashboard_summary_reflects_autonomy_and_routing_state_correctly():
         run_command("project_autonomy_mode_set", project_name=project_two, autonomy_mode="assisted_autopilot")
         dashboard = build_registry_dashboard_summary()
         summary = dashboard.get("project_autonomy_routing_summary") or {}
+        selection_summary = dashboard.get("project_selection_summary") or {}
         assert summary.get("autonomy_mode_by_project", {}).get(project_one) == "supervised_build"
         assert summary.get("autonomy_mode_by_project", {}).get(project_two) == "assisted_autopilot"
         assert project_one in summary.get("routing_status_by_project", {})
         assert summary.get("supervised_mode_count_total", 0) >= 1
         assert summary.get("assisted_mode_count_total", 0) >= 1
+        assert selection_summary.get("selected_project_id") in (project_one, project_two)
+        assert selection_summary.get("eligible_project_count", 0) >= 1
 
 
 def test_regression_project_autopilot_loop_behavior_remains_governed_and_bounded():
