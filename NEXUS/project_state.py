@@ -146,9 +146,20 @@ def save_project_state(
     autopilot_stop_reason: str | None = None,
     autopilot_escalation_reason: str | None = None,
     autopilot_progress_summary: dict | None = None,
+    autopilot_retry_count: int | None = None,
+    autopilot_retry_limit: int | None = None,
+    autopilot_operation_count: int | None = None,
+    autopilot_operation_limit: int | None = None,
+    autopilot_runtime_started_at: str | None = None,
+    autopilot_runtime_limit_seconds: int | None = None,
     autonomy_mode: str | None = None,
     autonomy_mode_status: str | None = None,
     autonomy_mode_reason: str | None = None,
+    autonomy_stop_rail_config: dict | None = None,
+    autonomy_current_counts: dict | None = None,
+    autonomy_stop_rail_status: str | None = None,
+    autonomy_stop_rail_result: dict | None = None,
+    autonomy_governance_trace: dict | None = None,
     allowed_actions: list | None = None,
     blocked_actions: list | None = None,
     escalation_threshold: str | None = None,
@@ -207,12 +218,34 @@ def save_project_state(
         autopilot_escalation_reason = previous.get("autopilot_escalation_reason")
     if autopilot_progress_summary is None and isinstance(previous.get("autopilot_progress_summary"), dict):
         autopilot_progress_summary = previous.get("autopilot_progress_summary")
+    if autopilot_retry_count is None and isinstance(previous.get("autopilot_retry_count"), int):
+        autopilot_retry_count = previous.get("autopilot_retry_count")
+    if autopilot_retry_limit is None and isinstance(previous.get("autopilot_retry_limit"), int):
+        autopilot_retry_limit = previous.get("autopilot_retry_limit")
+    if autopilot_operation_count is None and isinstance(previous.get("autopilot_operation_count"), int):
+        autopilot_operation_count = previous.get("autopilot_operation_count")
+    if autopilot_operation_limit is None and isinstance(previous.get("autopilot_operation_limit"), int):
+        autopilot_operation_limit = previous.get("autopilot_operation_limit")
+    if autopilot_runtime_started_at is None and isinstance(previous.get("autopilot_runtime_started_at"), str):
+        autopilot_runtime_started_at = previous.get("autopilot_runtime_started_at")
+    if autopilot_runtime_limit_seconds is None and isinstance(previous.get("autopilot_runtime_limit_seconds"), int):
+        autopilot_runtime_limit_seconds = previous.get("autopilot_runtime_limit_seconds")
     if autonomy_mode is None and isinstance(previous.get("autonomy_mode"), str):
         autonomy_mode = previous.get("autonomy_mode")
     if autonomy_mode_status is None and isinstance(previous.get("autonomy_mode_status"), str):
         autonomy_mode_status = previous.get("autonomy_mode_status")
     if autonomy_mode_reason is None and isinstance(previous.get("autonomy_mode_reason"), str):
         autonomy_mode_reason = previous.get("autonomy_mode_reason")
+    if autonomy_stop_rail_config is None and isinstance(previous.get("autonomy_stop_rail_config"), dict):
+        autonomy_stop_rail_config = previous.get("autonomy_stop_rail_config")
+    if autonomy_current_counts is None and isinstance(previous.get("autonomy_current_counts"), dict):
+        autonomy_current_counts = previous.get("autonomy_current_counts")
+    if autonomy_stop_rail_status is None and isinstance(previous.get("autonomy_stop_rail_status"), str):
+        autonomy_stop_rail_status = previous.get("autonomy_stop_rail_status")
+    if autonomy_stop_rail_result is None and isinstance(previous.get("autonomy_stop_rail_result"), dict):
+        autonomy_stop_rail_result = previous.get("autonomy_stop_rail_result")
+    if autonomy_governance_trace is None and isinstance(previous.get("autonomy_governance_trace"), dict):
+        autonomy_governance_trace = previous.get("autonomy_governance_trace")
     if allowed_actions is None and isinstance(previous.get("allowed_actions"), list):
         allowed_actions = previous.get("allowed_actions")
     if blocked_actions is None and isinstance(previous.get("blocked_actions"), list):
@@ -385,9 +418,20 @@ def save_project_state(
         "autopilot_stop_reason": autopilot_stop_reason,
         "autopilot_escalation_reason": autopilot_escalation_reason,
         "autopilot_progress_summary": autopilot_progress_summary or {},
+        "autopilot_retry_count": autopilot_retry_count,
+        "autopilot_retry_limit": autopilot_retry_limit,
+        "autopilot_operation_count": autopilot_operation_count,
+        "autopilot_operation_limit": autopilot_operation_limit,
+        "autopilot_runtime_started_at": autopilot_runtime_started_at,
+        "autopilot_runtime_limit_seconds": autopilot_runtime_limit_seconds,
         "autonomy_mode": autonomy_mode,
         "autonomy_mode_status": autonomy_mode_status,
         "autonomy_mode_reason": autonomy_mode_reason,
+        "autonomy_stop_rail_config": autonomy_stop_rail_config or {},
+        "autonomy_current_counts": autonomy_current_counts or {},
+        "autonomy_stop_rail_status": autonomy_stop_rail_status,
+        "autonomy_stop_rail_result": autonomy_stop_rail_result or {},
+        "autonomy_governance_trace": autonomy_governance_trace or {},
         "allowed_actions": allowed_actions or [],
         "blocked_actions": blocked_actions or [],
         "escalation_threshold": escalation_threshold,

@@ -332,6 +332,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     autopilot_status_by_project: dict[str, str] = {}
     iteration_counts_by_project: dict[str, dict[str, int]] = {}
     latest_autopilot_action_by_project: dict[str, str] = {}
+    stop_rail_status_by_project: dict[str, str] = {}
+    stop_rail_type_by_project: dict[str, str] = {}
+    stop_reason_by_project: dict[str, str] = {}
+    stop_rail_routing_outcome_by_project: dict[str, str] = {}
+    rail_pause_count_total = 0
+    rail_escalate_count_total = 0
+    rail_stop_count_total = 0
     autonomy_mode_by_project: dict[str, str] = {}
     routing_status_by_project: dict[str, str] = {}
     routed_action_by_project: dict[str, str] = {}
@@ -360,6 +367,19 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "iteration_limit": max(0, int(loaded.get("autopilot_iteration_limit") or 0)),
             }
             latest_autopilot_action_by_project[key] = str(loaded.get("autopilot_next_action") or "")
+            stop_rail_result = loaded.get("autonomy_stop_rail_result") if isinstance(loaded.get("autonomy_stop_rail_result"), dict) else {}
+            stop_rail_status = str(loaded.get("autonomy_stop_rail_status") or stop_rail_result.get("status") or "ok")
+            stop_rail_status_by_project[key] = stop_rail_status
+            stop_rail_type_by_project[key] = str(stop_rail_result.get("rail_type") or "")
+            stop_reason_by_project[key] = str(stop_rail_result.get("stop_reason") or "")
+            stop_rail_outcome = str(stop_rail_result.get("routing_outcome") or "")
+            stop_rail_routing_outcome_by_project[key] = stop_rail_outcome
+            if stop_rail_outcome == "pause":
+                rail_pause_count_total += 1
+            elif stop_rail_outcome == "escalate":
+                rail_escalate_count_total += 1
+            elif stop_rail_outcome == "stop":
+                rail_stop_count_total += 1
             autonomy_mode = str(loaded.get("autonomy_mode") or "supervised_build")
             autonomy_mode_by_project[key] = autonomy_mode
             if autonomy_mode == "supervised_build":
@@ -1336,12 +1356,21 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "completed_count_total": completed_count_total,
             "blocked_count_total": blocked_count_total,
             "latest_autopilot_action_by_project": latest_autopilot_action_by_project,
+            "stop_rail_status_by_project": stop_rail_status_by_project,
+            "stop_rail_type_by_project": stop_rail_type_by_project,
+            "stop_reason_by_project": stop_reason_by_project,
+            "stop_rail_routing_outcome_by_project": stop_rail_routing_outcome_by_project,
+            "rail_pause_count_total": rail_pause_count_total,
+            "rail_escalate_count_total": rail_escalate_count_total,
+            "rail_stop_count_total": rail_stop_count_total,
         },
         "project_autonomy_routing_summary": {
             "autonomy_routing_surface_status": "ok",
             "autonomy_mode_by_project": autonomy_mode_by_project,
             "routing_status_by_project": routing_status_by_project,
             "routed_action_by_project": routed_action_by_project,
+            "stop_rail_status_by_project": stop_rail_status_by_project,
+            "stop_rail_routing_outcome_by_project": stop_rail_routing_outcome_by_project,
             "paused_count_total": paused_count_total,
             "escalated_count_total": escalation_count_total,
             "low_risk_mode_count_total": low_risk_mode_count_total,

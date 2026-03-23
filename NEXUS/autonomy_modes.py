@@ -29,6 +29,46 @@ def normalize_autonomy_mode(mode: Any) -> str:
     return value if value in AUTONOMY_MODES else DEFAULT_AUTONOMY_MODE
 
 
+def get_mode_stop_rail_config(mode: Any) -> dict[str, Any]:
+    normalized = normalize_autonomy_mode(mode)
+    configs: dict[str, dict[str, Any]] = {
+        "supervised_build": {
+            "autonomy_mode": normalized,
+            "max_loops": 1,
+            "max_retries": 1,
+            "max_runtime_seconds": 900,
+            "max_operations": 8,
+            "max_budget_units": 8,
+            "escalation_threshold": "low",
+            "default_stop_action": "pause",
+            "rail_status": "active",
+        },
+        "assisted_autopilot": {
+            "autonomy_mode": normalized,
+            "max_loops": 3,
+            "max_retries": 2,
+            "max_runtime_seconds": 1800,
+            "max_operations": 16,
+            "max_budget_units": 16,
+            "escalation_threshold": "guarded",
+            "default_stop_action": "escalate",
+            "rail_status": "active",
+        },
+        "low_risk_autonomous_development": {
+            "autonomy_mode": normalized,
+            "max_loops": 5,
+            "max_retries": 2,
+            "max_runtime_seconds": 2700,
+            "max_operations": 24,
+            "max_budget_units": 24,
+            "escalation_threshold": "guarded",
+            "default_stop_action": "stop",
+            "rail_status": "active",
+        },
+    }
+    return dict(configs[normalized])
+
+
 def get_mode_policy(mode: Any) -> dict[str, Any]:
     normalized = normalize_autonomy_mode(mode)
     policies: dict[str, dict[str, Any]] = {
@@ -123,9 +163,13 @@ def get_mode_policy(mode: Any) -> dict[str, Any]:
 
 def build_autonomy_mode_state(*, mode: Any, reason: str | None = None) -> dict[str, Any]:
     policy = get_mode_policy(mode)
+    rail_config = get_mode_stop_rail_config(mode)
     if reason:
         policy["autonomy_mode_reason"] = str(reason).strip()
-    return policy
+    return {
+        **policy,
+        "autonomy_stop_rail_config": rail_config,
+    }
 
 
 def action_allowed(*, mode: Any, action: str) -> bool:

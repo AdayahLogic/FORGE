@@ -255,8 +255,10 @@ def test_assisted_autopilot_continues_only_within_allowed_scope():
             result = run_command("project_autopilot_start", project_name=project_key, iteration_limit=1)
         assert result["status"] == "ok"
         autopilot = result["payload"]["autopilot"]
-        assert autopilot["autopilot_status"] == "completed"
-        assert autopilot["autopilot_stop_reason"] in ("iteration_limit_reached", "project_objective_completed")
+        assert autopilot["autopilot_status"] in ("completed", "escalated")
+        assert autopilot["autonomy_stop_rail_result"]["rail_type"] == "loops"
+        assert autopilot["autonomy_stop_rail_result"]["routing_outcome"] == "escalate"
+        assert autopilot["autopilot_stop_reason"] in ("autonomy_loop_limit_reached", "project_objective_completed")
         assert autopilot["autopilot_progress_summary"]["latest_local_analysis_status"] == "completed"
 
 
@@ -301,7 +303,7 @@ def test_low_risk_autonomous_development_still_escalates_on_risky_conditions():
             },
         )
         update_project_state_fields(str(tmp), execution_package_id=package_id, execution_package_path=str(tmp / "state" / "execution_packages" / f"{package_id}.json"))
-        result = run_command("project_autopilot_start", project_name=project_key, iteration_limit=1)
+        result = run_command("project_autopilot_start", project_name=project_key, iteration_limit=2)
         assert result["status"] == "ok"
         autopilot = result["payload"]["autopilot"]
         assert autopilot["autopilot_status"] == "escalated"
@@ -393,6 +395,7 @@ def test_regression_project_autopilot_loop_behavior_remains_governed_and_bounded
         state = load_project_state(str(tmp))
         statuses = [item.get("status") for item in state.get("task_queue") or []]
         assert statuses == ["completed", "pending"]
+        assert state["project_routing_result"]["selected_action"] == "escalate"
 
 
 def test_regression_dispatch_and_package_creation_semantics_remain_unchanged():

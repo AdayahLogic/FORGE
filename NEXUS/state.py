@@ -107,5 +107,10 @@ class StudioState(BaseModel):
     autonomous_launch: bool = False
     autonomy_status: Optional[str] = None
     autonomy_result: Dict[str, Any] = {}
+    autonomy_stop_rail_status: Optional[str] = None
+    autonomy_stop_rail_result: Dict[str, Any] = {}
+    autonomy_stop_rail_config: Dict[str, Any] = {}
+    autonomy_current_counts: Dict[str, Any] = {}
+    autonomy_governance_trace: Dict[str, Any] = {}
     guardrail_status: Optional[str] = None
     guardrail_result: Dict[str, Any] = {}

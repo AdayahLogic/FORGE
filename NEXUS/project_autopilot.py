@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from NEXUS.approval_builder import build_approval_record
@@ -23,6 +23,7 @@ from NEXUS.execution_package_registry import (
 from NEXUS.autonomy_modes import (
     DEFAULT_AUTONOMY_MODE,
     build_autonomy_mode_state,
+    get_mode_stop_rail_config,
     normalize_autonomy_mode,
 )
 from NEXUS.project_routing import build_project_routing_decision, select_next_task
@@ -42,13 +43,43 @@ AUTOPILOT_STATUSES = {
 AUTOPILOT_DEFAULT_MODE = "supervised_bounded"
 AUTOPILOT_DEFAULT_ITERATION_LIMIT = 1
 AUTOPILOT_MAX_ITERATION_LIMIT = 25
+AUTOPILOT_DEFAULT_RETRY_LIMIT = 1
+AUTOPILOT_MAX_RETRY_LIMIT = 10
+AUTOPILOT_DEFAULT_RUNTIME_LIMIT_SECONDS = 900
+AUTOPILOT_MAX_RUNTIME_LIMIT_SECONDS = 14400
+AUTOPILOT_DEFAULT_OPERATION_LIMIT = 8
+AUTOPILOT_MAX_OPERATION_LIMIT = 100
 AUTOPILOT_ACTOR = "project_autopilot"
 ABACUS_ACTOR = "abacus"
 NEMOCLAW_ACTOR = "nemoclaw"
 
 
 def _now_iso() -> str:
-    return datetime.now().isoformat()
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _elapsed_seconds(started_at: Any, current_time: datetime | None = None) -> int:
+    start_dt = _parse_iso_datetime(started_at)
+    if start_dt is None:
+        return 0
+    now_dt = current_time or datetime.now(timezone.utc)
+    if now_dt.tzinfo is None:
+        now_dt = now_dt.replace(tzinfo=timezone.utc)
+    elapsed = int((now_dt.astimezone(timezone.utc) - start_dt).total_seconds())
+    return max(0, elapsed)
 
 
 def _clamp_iteration_limit(value: Any) -> int:
@@ -57,6 +88,30 @@ def _clamp_iteration_limit(value: Any) -> int:
     except Exception:
         limit = AUTOPILOT_DEFAULT_ITERATION_LIMIT
     return max(1, min(limit, AUTOPILOT_MAX_ITERATION_LIMIT))
+
+
+def _clamp_retry_limit(value: Any) -> int:
+    try:
+        limit = int(value)
+    except Exception:
+        limit = AUTOPILOT_DEFAULT_RETRY_LIMIT
+    return max(1, min(limit, AUTOPILOT_MAX_RETRY_LIMIT))
+
+
+def _clamp_runtime_limit(value: Any) -> int:
+    try:
+        limit = int(value)
+    except Exception:
+        limit = AUTOPILOT_DEFAULT_RUNTIME_LIMIT_SECONDS
+    return max(1, min(limit, AUTOPILOT_MAX_RUNTIME_LIMIT_SECONDS))
+
+
+def _clamp_operation_limit(value: Any) -> int:
+    try:
+        limit = int(value)
+    except Exception:
+        limit = AUTOPILOT_DEFAULT_OPERATION_LIMIT
+    return max(1, min(limit, AUTOPILOT_MAX_OPERATION_LIMIT))
 
 
 def _normalize_status(value: Any) -> str:
@@ -100,6 +155,9 @@ def _mark_task_completed(state: dict[str, Any], task_id: str | None) -> tuple[li
 
 def _normalize_session(project_name: str, state: dict[str, Any]) -> dict[str, Any]:
     progress = state.get("autopilot_progress_summary") if isinstance(state.get("autopilot_progress_summary"), dict) else {}
+    stop_rail_config = state.get("autonomy_stop_rail_config") if isinstance(state.get("autonomy_stop_rail_config"), dict) else {}
+    current_counts = state.get("autonomy_current_counts") if isinstance(state.get("autonomy_current_counts"), dict) else {}
+    stop_rail_result = state.get("autonomy_stop_rail_result") if isinstance(state.get("autonomy_stop_rail_result"), dict) else {}
     session = {
         "autopilot_status": _normalize_status(state.get("autopilot_status")),
         "autopilot_session_id": str(state.get("autopilot_session_id") or ""),
@@ -117,11 +175,40 @@ def _normalize_session(project_name: str, state: dict[str, Any]) -> dict[str, An
         "autopilot_stop_reason": str(state.get("autopilot_stop_reason") or ""),
         "autopilot_escalation_reason": str(state.get("autopilot_escalation_reason") or ""),
         "autopilot_progress_summary": dict(progress),
+        "autopilot_retry_count": max(0, int(state.get("autopilot_retry_count") or 0)),
+        "autopilot_retry_limit": _clamp_retry_limit(
+            state.get("autopilot_retry_limit")
+            or stop_rail_config.get("max_retries")
+            or AUTOPILOT_DEFAULT_RETRY_LIMIT
+        ),
+        "autopilot_operation_count": max(0, int(state.get("autopilot_operation_count") or 0)),
+        "autopilot_operation_limit": _clamp_operation_limit(
+            state.get("autopilot_operation_limit")
+            or stop_rail_config.get("max_operations")
+            or AUTOPILOT_DEFAULT_OPERATION_LIMIT
+        ),
+        "autopilot_runtime_started_at": str(
+            state.get("autopilot_runtime_started_at")
+            or state.get("autopilot_started_at")
+            or ""
+        ),
+        "autopilot_runtime_limit_seconds": _clamp_runtime_limit(
+            state.get("autopilot_runtime_limit_seconds")
+            or stop_rail_config.get("max_runtime_seconds")
+            or AUTOPILOT_DEFAULT_RUNTIME_LIMIT_SECONDS
+        ),
+        "autonomy_stop_rail_config": dict(stop_rail_config),
+        "autonomy_current_counts": dict(current_counts),
+        "autonomy_stop_rail_status": str(state.get("autonomy_stop_rail_status") or stop_rail_result.get("status") or "ok"),
+        "autonomy_stop_rail_result": dict(stop_rail_result),
+        "autonomy_governance_trace": dict(state.get("autonomy_governance_trace") or {}),
     }
     if not session["autopilot_started_at"] and session["autopilot_session_id"]:
         session["autopilot_started_at"] = str(state.get("saved_at") or "")
     if not session["autopilot_updated_at"]:
         session["autopilot_updated_at"] = str(state.get("saved_at") or "")
+    if not session["autopilot_runtime_started_at"]:
+        session["autopilot_runtime_started_at"] = session["autopilot_started_at"]
     return session
 
 
@@ -141,6 +228,17 @@ def _session_payload(session: dict[str, Any]) -> dict[str, Any]:
         "autopilot_stop_reason": session.get("autopilot_stop_reason"),
         "autopilot_escalation_reason": session.get("autopilot_escalation_reason"),
         "autopilot_progress_summary": session.get("autopilot_progress_summary"),
+        "autopilot_retry_count": session.get("autopilot_retry_count"),
+        "autopilot_retry_limit": session.get("autopilot_retry_limit"),
+        "autopilot_operation_count": session.get("autopilot_operation_count"),
+        "autopilot_operation_limit": session.get("autopilot_operation_limit"),
+        "autopilot_runtime_started_at": session.get("autopilot_runtime_started_at"),
+        "autopilot_runtime_limit_seconds": session.get("autopilot_runtime_limit_seconds"),
+        "autonomy_stop_rail_config": session.get("autonomy_stop_rail_config"),
+        "autonomy_current_counts": session.get("autonomy_current_counts"),
+        "autonomy_stop_rail_status": session.get("autonomy_stop_rail_status"),
+        "autonomy_stop_rail_result": session.get("autonomy_stop_rail_result"),
+        "autonomy_governance_trace": session.get("autonomy_governance_trace"),
     }
 
 
@@ -155,6 +253,170 @@ def _autonomy_state_fields(mode: Any, reason: str | None = None) -> dict[str, An
     return build_autonomy_mode_state(mode=normalize_autonomy_mode(mode), reason=reason)
 
 
+def _ensure_stop_rail_config(session: dict[str, Any], mode: Any) -> dict[str, Any]:
+    config = dict(get_mode_stop_rail_config(mode))
+    config["max_loops"] = _clamp_iteration_limit(
+        session.get("autopilot_iteration_limit") or config.get("max_loops") or AUTOPILOT_DEFAULT_ITERATION_LIMIT
+    )
+    config["max_retries"] = _clamp_retry_limit(
+        session.get("autopilot_retry_limit") or config.get("max_retries") or AUTOPILOT_DEFAULT_RETRY_LIMIT
+    )
+    config["max_runtime_seconds"] = _clamp_runtime_limit(
+        session.get("autopilot_runtime_limit_seconds")
+        or config.get("max_runtime_seconds")
+        or AUTOPILOT_DEFAULT_RUNTIME_LIMIT_SECONDS
+    )
+    config["max_operations"] = _clamp_operation_limit(
+        session.get("autopilot_operation_limit") or config.get("max_operations") or AUTOPILOT_DEFAULT_OPERATION_LIMIT
+    )
+    config["max_budget_units"] = _clamp_operation_limit(config.get("max_budget_units") or config["max_operations"])
+    config["time_window"] = {"max_runtime_seconds": config["max_runtime_seconds"]}
+    session["autopilot_iteration_limit"] = config["max_loops"]
+    session["autopilot_retry_limit"] = config["max_retries"]
+    session["autopilot_runtime_limit_seconds"] = config["max_runtime_seconds"]
+    session["autopilot_operation_limit"] = config["max_operations"]
+    session["autonomy_stop_rail_config"] = config
+    return config
+
+
+def _current_counts(session: dict[str, Any]) -> dict[str, int]:
+    counts = {
+        "loops": max(0, int(session.get("autopilot_iteration_count") or 0)),
+        "retries": max(0, int(session.get("autopilot_retry_count") or 0)),
+        "runtime_seconds": max(0, _elapsed_seconds(session.get("autopilot_runtime_started_at"))),
+        "operations": max(0, int(session.get("autopilot_operation_count") or 0)),
+        "budget_units": max(0, int(session.get("autopilot_operation_count") or 0)),
+    }
+    session["autonomy_current_counts"] = counts
+    return counts
+
+
+def _stop_action_for_mode(mode: Any, config: dict[str, Any], rail_type: str) -> str:
+    normalized_mode = normalize_autonomy_mode(mode)
+    if rail_type == "runtime":
+        return "stop"
+    if normalized_mode == "supervised_build":
+        return "pause"
+    if normalized_mode == "assisted_autopilot":
+        return "escalate"
+    return str(config.get("default_stop_action") or "stop").strip().lower() or "stop"
+
+
+def _build_stop_rail_result(
+    *,
+    session: dict[str, Any],
+    rail_type: str,
+    current_value: int,
+    limit_value: int,
+    routing_outcome: str,
+    stop_reason: str,
+) -> dict[str, Any]:
+    status_map = {"continue": "ok", "pause": "paused", "escalate": "escalated", "stop": "stopped"}
+    return {
+        "status": status_map.get(routing_outcome, "limited"),
+        "autonomy_mode": normalize_autonomy_mode(session.get("autopilot_mode")),
+        "rail_type": rail_type,
+        "current_value": max(0, int(current_value or 0)),
+        "limit_value": max(0, int(limit_value or 0)),
+        "stop_reason": stop_reason,
+        "routing_outcome": routing_outcome,
+        "current_counts": dict(session.get("autonomy_current_counts") or {}),
+        "rail_status": "hit" if routing_outcome != "continue" else "ok",
+        "governance_trace": {
+            "source": "project_autopilot",
+            "autopilot_session_id": str(session.get("autopilot_session_id") or ""),
+            "autopilot_status": str(session.get("autopilot_status") or ""),
+            "autonomy_mode": normalize_autonomy_mode(session.get("autopilot_mode")),
+        },
+    }
+
+
+def _evaluate_stop_rails(session: dict[str, Any], rail_types: tuple[str, ...] | None = None) -> dict[str, Any]:
+    config = _ensure_stop_rail_config(session, session.get("autopilot_mode"))
+    counts = _current_counts(session)
+    checks = (
+        ("loops", counts.get("loops", 0), int(config.get("max_loops") or 0), "autonomy_loop_limit_reached"),
+        ("retries", counts.get("retries", 0), int(config.get("max_retries") or 0), "autonomy_retry_limit_reached"),
+        ("runtime", counts.get("runtime_seconds", 0), int(config.get("max_runtime_seconds") or 0), "autonomy_runtime_limit_reached"),
+        ("operations", counts.get("operations", 0), int(config.get("max_operations") or 0), "autonomy_operation_limit_reached"),
+        ("budget", counts.get("budget_units", 0), int(config.get("max_budget_units") or 0), "autonomy_budget_limit_reached"),
+    )
+    for rail_type, current_value, limit_value, stop_reason in checks:
+        if rail_types and rail_type not in rail_types:
+            continue
+        if limit_value > 0 and current_value >= limit_value:
+            routing_outcome = _stop_action_for_mode(session.get("autopilot_mode"), config, rail_type)
+            result = _build_stop_rail_result(
+                session=session,
+                rail_type=rail_type,
+                current_value=current_value,
+                limit_value=limit_value,
+                routing_outcome=routing_outcome,
+                stop_reason=stop_reason,
+            )
+            session["autonomy_stop_rail_status"] = result["status"]
+            session["autonomy_stop_rail_result"] = result
+            session["autonomy_governance_trace"] = dict(result.get("governance_trace") or {})
+            return result
+    result = _build_stop_rail_result(
+        session=session,
+        rail_type="loops",
+        current_value=counts.get("loops", 0),
+        limit_value=int(config.get("max_loops") or 0),
+        routing_outcome="continue",
+        stop_reason="",
+    )
+    session["autonomy_stop_rail_status"] = "ok"
+    session["autonomy_stop_rail_result"] = result
+    session["autonomy_governance_trace"] = dict(result.get("governance_trace") or {})
+    return result
+
+
+def _apply_stop_rail_outcome(
+    *,
+    session: dict[str, Any],
+    state: dict[str, Any],
+    project_path: str,
+    project_name: str,
+    stop_rail_result: dict[str, Any],
+    current_task: dict[str, Any] | None = None,
+    package: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    routing_outcome = str(stop_rail_result.get("routing_outcome") or "stop").strip().lower()
+    status_map = {
+        "pause": ("paused", "operator_review", True),
+        "escalate": ("escalated", "operator_review", True),
+        "stop": ("completed", "stop", False),
+    }
+    autopilot_status, next_action, operator_review_required = status_map.get(routing_outcome, ("completed", "stop", False))
+    stop_reason = str(stop_rail_result.get("stop_reason") or "autonomy_limit_reached")
+    session["autopilot_status"] = autopilot_status
+    session["autopilot_next_action"] = next_action
+    session["autopilot_stop_reason"] = stop_reason
+    session["autopilot_escalation_reason"] = stop_reason if routing_outcome in ("pause", "escalate") else ""
+    session["autopilot_updated_at"] = _now_iso()
+    session["autopilot_last_result"] = dict(stop_rail_result)
+    session["autopilot_progress_summary"] = _build_progress_summary(
+        state=state,
+        session=session,
+        current_task=current_task,
+        package=package or {},
+        next_suggested_step=next_action,
+        operator_review_required=operator_review_required,
+    )
+    _persist_session(
+        project_path,
+        session,
+        extra_fields=_routing_state_fields(
+            project_name=project_name,
+            state=state,
+            session=session,
+            active_package=package,
+        ),
+    )
+    return {"status": "ok", "reason": stop_reason, "session": session}
+
+
 def _routing_state_fields(
     *,
     project_name: str,
@@ -162,17 +424,30 @@ def _routing_state_fields(
     session: dict[str, Any],
     active_package: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    routed_state = {
+        **state,
+        "autonomy_stop_rail_config": session.get("autonomy_stop_rail_config") or state.get("autonomy_stop_rail_config") or {},
+        "autonomy_current_counts": session.get("autonomy_current_counts") or state.get("autonomy_current_counts") or {},
+        "autonomy_stop_rail_status": session.get("autonomy_stop_rail_status") or state.get("autonomy_stop_rail_status") or "ok",
+        "autonomy_stop_rail_result": session.get("autonomy_stop_rail_result") or state.get("autonomy_stop_rail_result") or {},
+        "autonomy_governance_trace": session.get("autonomy_governance_trace") or state.get("autonomy_governance_trace") or {},
+    }
     routing = build_project_routing_decision(
         project_key=project_name,
-        state=state,
+        state=routed_state,
         active_package=active_package,
-        autonomy_mode=state.get("autonomy_mode"),
+        autonomy_mode=routed_state.get("autonomy_mode"),
     )
     mode_state = routing.get("mode_state") if isinstance(routing.get("mode_state"), dict) else _autonomy_state_fields(state.get("autonomy_mode"))
     return {
         "autonomy_mode": mode_state.get("autonomy_mode"),
         "autonomy_mode_status": mode_state.get("autonomy_mode_status"),
         "autonomy_mode_reason": mode_state.get("autonomy_mode_reason"),
+        "autonomy_stop_rail_config": session.get("autonomy_stop_rail_config") or mode_state.get("autonomy_stop_rail_config") or {},
+        "autonomy_current_counts": session.get("autonomy_current_counts") or {},
+        "autonomy_stop_rail_status": session.get("autonomy_stop_rail_status") or "ok",
+        "autonomy_stop_rail_result": session.get("autonomy_stop_rail_result") or {},
+        "autonomy_governance_trace": session.get("autonomy_governance_trace") or {},
         "allowed_actions": mode_state.get("allowed_actions") or [],
         "blocked_actions": mode_state.get("blocked_actions") or [],
         "escalation_threshold": mode_state.get("escalation_threshold"),
@@ -208,6 +483,14 @@ def _build_progress_summary(
         "current_task_summary": _task_label(current_task),
         "iteration_count": session.get("autopilot_iteration_count"),
         "iteration_limit": session.get("autopilot_iteration_limit"),
+        "retry_count": session.get("autopilot_retry_count"),
+        "retry_limit": session.get("autopilot_retry_limit"),
+        "operation_count": session.get("autopilot_operation_count"),
+        "operation_limit": session.get("autopilot_operation_limit"),
+        "runtime_seconds": _elapsed_seconds(session.get("autopilot_runtime_started_at")),
+        "runtime_limit_seconds": session.get("autopilot_runtime_limit_seconds"),
+        "stop_rail_status": session.get("autonomy_stop_rail_status") or "ok",
+        "stop_rail_result": session.get("autonomy_stop_rail_result") or {},
         "latest_package_id": str(pkg.get("package_id") or session.get("autopilot_last_package_id") or ""),
         "latest_execution_result": latest_execution_result or {
             "execution_status": pkg.get("execution_status") or "",
@@ -346,13 +629,15 @@ def _advance_package_pipeline(
     project_path: str,
     package: dict[str, Any],
     execution_bridge_summary: dict[str, Any],
-) -> tuple[dict[str, Any] | None, str, str]:
+) -> tuple[dict[str, Any] | None, str, str, int]:
     package_id = str(package.get("package_id") or "")
     if not package_id:
-        return None, "error_fallback", "missing_package_id"
+        return None, "error_fallback", "missing_package_id", 0
 
     current = package
+    operations_used = 0
     if str(current.get("decision_status") or "").strip().lower() == "pending":
+        operations_used += 1
         result = record_execution_package_decision_safe(
             project_path=project_path,
             package_id=package_id,
@@ -362,9 +647,10 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "decision_failed"
+            return None, "error_fallback", "decision_failed", operations_used
 
     if str(current.get("eligibility_status") or "").strip().lower() == "pending":
+        operations_used += 1
         result = record_execution_package_eligibility_safe(
             project_path=project_path,
             package_id=package_id,
@@ -372,12 +658,13 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "eligibility_failed"
+            return None, "error_fallback", "eligibility_failed", operations_used
 
     if str(current.get("eligibility_status") or "").strip().lower() != "eligible":
-        return current, "blocked", "eligibility_blocked"
+        return current, "blocked", "eligibility_blocked", operations_used
 
     if str(current.get("release_status") or "").strip().lower() == "pending":
+        operations_used += 1
         result = record_execution_package_release_safe(
             project_path=project_path,
             package_id=package_id,
@@ -386,10 +673,10 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "release_failed"
+            return None, "error_fallback", "release_failed", operations_used
 
     if str(current.get("release_status") or "").strip().lower() != "released":
-        return current, "blocked", "release_blocked"
+        return current, "blocked", "release_blocked", operations_used
 
     selected_target = str(execution_bridge_summary.get("selected_runtime_target") or "").strip().lower()
     fallback_target = str(execution_bridge_summary.get("fallback_runtime_target") or "").strip().lower()
@@ -398,6 +685,7 @@ def _advance_package_pipeline(
         executor_target_id = fallback_target if fallback_target and fallback_target != "windows_review_package" else "local"
 
     if str(current.get("handoff_status") or "").strip().lower() == "pending":
+        operations_used += 1
         result = record_execution_package_handoff_safe(
             project_path=project_path,
             package_id=package_id,
@@ -407,16 +695,17 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "handoff_failed"
+            return None, "error_fallback", "handoff_failed", operations_used
 
     if str(current.get("handoff_status") or "").strip().lower() != "authorized":
         handoff_aegis = current.get("handoff_aegis_result") if isinstance(current.get("handoff_aegis_result"), dict) else {}
         decision = str(handoff_aegis.get("aegis_decision") or "").strip().lower()
         if decision == "approval_required":
-            return current, "escalated", "handoff_approval_required"
-        return current, "blocked", "handoff_blocked"
+            return current, "escalated", "handoff_approval_required", operations_used
+        return current, "blocked", "handoff_blocked", operations_used
 
     if str(current.get("execution_status") or "").strip().lower() == "pending":
+        operations_used += 1
         result = record_execution_package_execution_safe(
             project_path=project_path,
             package_id=package_id,
@@ -424,12 +713,13 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "execution_failed"
+            return None, "error_fallback", "execution_failed", operations_used
 
     if str(current.get("execution_status") or "").strip().lower() == "blocked":
-        return current, "escalated", "execution_blocked"
+        return current, "escalated", "execution_blocked", operations_used
 
     if str(current.get("evaluation_status") or "").strip().lower() != "completed":
+        operations_used += 1
         result = record_execution_package_evaluation_safe(
             project_path=project_path,
             package_id=package_id,
@@ -437,12 +727,13 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "evaluation_failed"
+            return None, "error_fallback", "evaluation_failed", operations_used
 
     if str(current.get("evaluation_status") or "").strip().lower() != "completed":
-        return current, "escalated", "evaluation_blocked"
+        return current, "escalated", "evaluation_blocked", operations_used
 
     if str(current.get("local_analysis_status") or "").strip().lower() != "completed":
+        operations_used += 1
         result = record_execution_package_local_analysis_safe(
             project_path=project_path,
             package_id=package_id,
@@ -450,15 +741,15 @@ def _advance_package_pipeline(
         )
         current = result.get("package") if isinstance(result.get("package"), dict) else None
         if not current:
-            return None, "error_fallback", "local_analysis_failed"
+            return None, "error_fallback", "local_analysis_failed", operations_used
 
     if str(current.get("local_analysis_status") or "").strip().lower() != "completed":
-        return current, "escalated", "local_analysis_blocked"
+        return current, "escalated", "local_analysis_blocked", operations_used
 
     needs_escalation, escalation_reason = _escalation_needed(current)
     if needs_escalation:
-        return current, "escalated", escalation_reason
-    return current, "continue", ""
+        return current, "escalated", escalation_reason, operations_used
+    return current, "continue", "", operations_used
 
 
 def get_project_autopilot_status(*, project_path: str, project_name: str) -> dict[str, Any]:
@@ -470,6 +761,9 @@ def get_project_autopilot_status(*, project_path: str, project_name: str) -> dic
             "session": _normalize_session(project_name, {}),
         }
     session = _normalize_session(project_name, state)
+    _ensure_stop_rail_config(session, state.get("autonomy_mode") or session.get("autopilot_mode"))
+    _current_counts(session)
+    _evaluate_stop_rails(session)
     active_package = None
     package_id = str(session.get("autopilot_last_package_id") or state.get("execution_package_id") or "")
     if package_id:
@@ -498,9 +792,21 @@ def pause_project_autopilot(*, project_path: str, project_name: str) -> dict[str
         }
     session["autopilot_status"] = "paused"
     session["autopilot_next_action"] = "operator_review"
-    session["autopilot_stop_reason"] = ""
-    session["autopilot_escalation_reason"] = ""
+    session["autopilot_stop_reason"] = "operator_requested_pause"
+    session["autopilot_escalation_reason"] = "operator_requested_pause"
     session["autopilot_updated_at"] = _now_iso()
+    _ensure_stop_rail_config(session, load_project_state(project_path).get("autonomy_mode") or session.get("autopilot_mode"))
+    _current_counts(session)
+    session["autonomy_stop_rail_result"] = _build_stop_rail_result(
+        session=session,
+        rail_type="operations",
+        current_value=int((session.get("autonomy_current_counts") or {}).get("operations") or 0),
+        limit_value=int((session.get("autonomy_stop_rail_config") or {}).get("max_operations") or 0),
+        routing_outcome="pause",
+        stop_reason="operator_requested_pause",
+    )
+    session["autonomy_stop_rail_status"] = "paused"
+    session["autonomy_governance_trace"] = dict((session.get("autonomy_stop_rail_result") or {}).get("governance_trace") or {})
     session["autopilot_progress_summary"] = _build_progress_summary(
         state=load_project_state(project_path),
         session=session,
@@ -529,6 +835,18 @@ def stop_project_autopilot(*, project_path: str, project_name: str) -> dict[str,
     session["autopilot_stop_reason"] = "operator_requested_stop"
     session["autopilot_escalation_reason"] = ""
     session["autopilot_updated_at"] = _now_iso()
+    _ensure_stop_rail_config(session, load_project_state(project_path).get("autonomy_mode") or session.get("autopilot_mode"))
+    _current_counts(session)
+    session["autonomy_stop_rail_result"] = _build_stop_rail_result(
+        session=session,
+        rail_type="operations",
+        current_value=int((session.get("autonomy_current_counts") or {}).get("operations") or 0),
+        limit_value=int((session.get("autonomy_stop_rail_config") or {}).get("max_operations") or 0),
+        routing_outcome="stop",
+        stop_reason="operator_requested_stop",
+    )
+    session["autonomy_stop_rail_status"] = "stopped"
+    session["autonomy_governance_trace"] = dict((session.get("autonomy_stop_rail_result") or {}).get("governance_trace") or {})
     session["autopilot_progress_summary"] = _build_progress_summary(
         state=load_project_state(project_path),
         session=session,
@@ -561,13 +879,17 @@ def start_project_autopilot(
             "reason": str((state or {}).get("load_error") or "Failed to load project state."),
             "session": _normalize_session(project_name, {}),
         }
+    autonomy_mode = normalize_autonomy_mode(
+        autopilot_mode if autopilot_mode in (DEFAULT_AUTONOMY_MODE, "assisted_autopilot", "low_risk_autonomous_development") else state.get("autonomy_mode")
+    )
+    stop_rail_config = get_mode_stop_rail_config(autonomy_mode)
     session = {
         "autopilot_status": "ready",
         "autopilot_session_id": uuid.uuid4().hex[:16],
         "autopilot_project_key": project_name,
-        "autopilot_mode": str(autopilot_mode or AUTOPILOT_DEFAULT_MODE),
+        "autopilot_mode": autonomy_mode,
         "autopilot_iteration_count": 0,
-        "autopilot_iteration_limit": _clamp_iteration_limit(iteration_limit or AUTOPILOT_DEFAULT_ITERATION_LIMIT),
+        "autopilot_iteration_limit": _clamp_iteration_limit(iteration_limit or stop_rail_config.get("max_loops") or AUTOPILOT_DEFAULT_ITERATION_LIMIT),
         "autopilot_started_at": _now_iso(),
         "autopilot_updated_at": _now_iso(),
         "autopilot_last_package_id": "",
@@ -576,8 +898,21 @@ def start_project_autopilot(
         "autopilot_stop_reason": "",
         "autopilot_escalation_reason": "",
         "autopilot_progress_summary": {},
+        "autopilot_retry_count": 0,
+        "autopilot_retry_limit": _clamp_retry_limit(stop_rail_config.get("max_retries")),
+        "autopilot_operation_count": 0,
+        "autopilot_operation_limit": _clamp_operation_limit(stop_rail_config.get("max_operations")),
+        "autopilot_runtime_started_at": _now_iso(),
+        "autopilot_runtime_limit_seconds": _clamp_runtime_limit(stop_rail_config.get("max_runtime_seconds")),
+        "autonomy_stop_rail_config": {},
+        "autonomy_current_counts": {},
+        "autonomy_stop_rail_status": "ok",
+        "autonomy_stop_rail_result": {},
+        "autonomy_governance_trace": {},
     }
-    autonomy_mode = normalize_autonomy_mode(autopilot_mode if autopilot_mode in (DEFAULT_AUTONOMY_MODE, "assisted_autopilot", "low_risk_autonomous_development") else state.get("autonomy_mode"))
+    _ensure_stop_rail_config(session, autonomy_mode)
+    _current_counts(session)
+    _evaluate_stop_rails(session)
     session["autopilot_progress_summary"] = _build_progress_summary(
         state=state,
         session=session,
@@ -617,6 +952,19 @@ def resume_project_autopilot(*, project_path: str, project_name: str) -> dict[st
     session["autopilot_stop_reason"] = ""
     session["autopilot_escalation_reason"] = ""
     session["autopilot_updated_at"] = _now_iso()
+    _ensure_stop_rail_config(session, state.get("autonomy_mode") or session.get("autopilot_mode"))
+    _current_counts(session)
+    stop_rail_result = _evaluate_stop_rails(session)
+    if stop_rail_result.get("status") in ("paused", "escalated", "stopped"):
+        return _apply_stop_rail_outcome(
+            session=session,
+            state=state,
+            project_path=project_path,
+            project_name=project_name,
+            stop_rail_result=stop_rail_result,
+            current_task=_select_next_task(state),
+            package=_load_active_package(project_path=project_path, session=session, state=state) or {},
+        )
     _persist_session(
         project_path,
         session,
@@ -650,24 +998,19 @@ def _run_project_autopilot_loop(
             )
             return {"status": "error", "reason": "Failed to load project state during autopilot run.", "session": session}
 
-        if session["autopilot_iteration_count"] >= session["autopilot_iteration_limit"]:
-            session["autopilot_status"] = "completed"
-            session["autopilot_next_action"] = "stop"
-            session["autopilot_stop_reason"] = "iteration_limit_reached"
-            session["autopilot_escalation_reason"] = ""
-            session["autopilot_updated_at"] = _now_iso()
-            session["autopilot_progress_summary"] = _build_progress_summary(
-                state=state,
+        _ensure_stop_rail_config(session, state.get("autonomy_mode") or session.get("autopilot_mode"))
+        _current_counts(session)
+        precheck_stop_rail = _evaluate_stop_rails(session)
+        if precheck_stop_rail.get("status") in ("paused", "escalated", "stopped"):
+            return _apply_stop_rail_outcome(
                 session=session,
-                next_suggested_step="stop",
-                operator_review_required=False,
+                state=state,
+                project_path=project_path,
+                project_name=project_name,
+                stop_rail_result=precheck_stop_rail,
+                current_task=_select_next_task(state),
+                package=_load_active_package(project_path=project_path, session=session, state=state) or {},
             )
-            _persist_session(
-                project_path,
-                session,
-                extra_fields=_routing_state_fields(project_name=project_name, state=state, session=session),
-            )
-            return {"status": "ok", "reason": "Autopilot iteration limit reached.", "session": session}
 
         session["autopilot_status"] = "running"
         session["autopilot_updated_at"] = _now_iso()
@@ -724,6 +1067,9 @@ def _run_project_autopilot_loop(
 
             session["autopilot_last_package_id"] = str(package.get("package_id") or "")
             session["autopilot_iteration_count"] += 1
+            session["autopilot_operation_count"] += 1
+            session["autopilot_retry_count"] = 0
+            _current_counts(session)
             session["autopilot_last_result"] = {
                 "status": "package_prepared",
                 "task_id": str(task.get("id") or ""),
@@ -757,6 +1103,19 @@ def _run_project_autopilot_loop(
             active_package = package
         elif active_package:
             session["autopilot_iteration_count"] += 1
+            session["autopilot_retry_count"] += 1
+            _current_counts(session)
+            retry_stop_rail = _evaluate_stop_rails(session, rail_types=("retries", "runtime", "operations", "budget"))
+            if retry_stop_rail.get("status") in ("paused", "escalated", "stopped"):
+                return _apply_stop_rail_outcome(
+                    session=session,
+                    state=state,
+                    project_path=project_path,
+                    project_name=project_name,
+                    stop_rail_result=retry_stop_rail,
+                    current_task=task,
+                    package=active_package,
+                )
 
         routed_state = {**state, "execution_package_id": (active_package or {}).get("package_id")}
         routing_fields = _routing_state_fields(
@@ -816,19 +1175,33 @@ def _run_project_autopilot_loop(
             },
         )
 
-        advanced_package, outcome, outcome_reason = _advance_package_pipeline(
+        advanced_package, outcome, outcome_reason, operations_used = _advance_package_pipeline(
             project_path=project_path,
             package=active_package or {},
             execution_bridge_summary=state.get("execution_bridge_summary") if isinstance(state.get("execution_bridge_summary"), dict) else {},
         )
+        session["autopilot_operation_count"] += max(0, int(operations_used or 0))
+        _current_counts(session)
+        post_operation_stop_rail = _evaluate_stop_rails(session, rail_types=("runtime", "operations", "budget"))
         current_package = advanced_package or active_package or {}
         next_action = "continue"
         status_value = "running"
         stop_reason = ""
         escalation_reason = ""
         operator_review_required = False
+        if post_operation_stop_rail.get("status") in ("paused", "escalated", "stopped"):
+            return _apply_stop_rail_outcome(
+                session=session,
+                state=state,
+                project_path=project_path,
+                project_name=project_name,
+                stop_rail_result=post_operation_stop_rail,
+                current_task=task,
+                package=current_package,
+            )
         if outcome == "continue":
             next_action = "continue"
+            session["autopilot_retry_count"] = 0
         elif outcome == "blocked":
             next_action = "operator_review"
             status_value = "blocked"
@@ -871,6 +1244,8 @@ def _run_project_autopilot_loop(
                 session["autopilot_stop_reason"] = stop_reason
                 session["autopilot_escalation_reason"] = ""
                 session["autopilot_updated_at"] = _now_iso()
+                _current_counts(session)
+                _evaluate_stop_rails(session)
                 _persist_session(
                     project_path,
                     session,
@@ -911,6 +1286,8 @@ def _run_project_autopilot_loop(
         }
         if current_package and str(current_package.get("package_id") or "").strip():
             session["autopilot_last_package_id"] = str(current_package.get("package_id") or "")
+        _current_counts(session)
+        _evaluate_stop_rails(session)
         session["autopilot_progress_summary"] = _build_progress_summary(
             state=state,
             session=session,

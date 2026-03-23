@@ -92,6 +92,9 @@ def build_project_routing_decision(
     local_next = str(((pkg.get("local_analysis_summary") or {}).get("suggested_next_action") or "")).strip().lower()
     package_requires_human = bool(pkg.get("requires_human_approval"))
     aegis_decision = str(pkg.get("aegis_decision") or "").strip().lower()
+    stop_rail_result = loaded.get("autonomy_stop_rail_result") if isinstance(loaded.get("autonomy_stop_rail_result"), dict) else {}
+    stop_rail_status = str(loaded.get("autonomy_stop_rail_status") or stop_rail_result.get("status") or "ok").strip().lower()
+    stop_rail_outcome = str(stop_rail_result.get("routing_outcome") or "").strip().lower()
 
     decision: dict[str, Any] = {
         "selected_project_key": project_key,
@@ -115,8 +118,10 @@ def build_project_routing_decision(
             "failure_risk_band": risk_band,
             "local_analysis_next_action": local_next,
             "autopilot_status": str(loaded.get("autopilot_status") or "").strip().lower(),
+            "autonomy_stop_rail_status": stop_rail_status,
         },
         "mode_state": mode_state,
+        "autonomy_stop_rail_result": stop_rail_result,
     }
 
     if governance_routing_outcome in ("pause", "escalate", "stop") and governance_resolution_state != "resolved":
@@ -212,6 +217,18 @@ def build_project_routing_decision(
                 "requires_operator_review": True,
             }
         )
+    elif stop_rail_status in ("paused", "escalated", "stopped") and stop_rail_outcome in ("pause", "escalate", "stop"):
+        routing_status = "paused" if stop_rail_outcome == "pause" else ("stopped" if stop_rail_outcome == "stop" else "escalated")
+        decision.update(
+            {
+                "selected_action": stop_rail_outcome,
+                "routing_status": routing_status,
+                "routing_reason": str(stop_rail_result.get("stop_reason") or "autonomy_stop_rail_active"),
+                "routing_confidence": 0.99,
+                "routing_confidence_band": "high",
+                "requires_operator_review": stop_rail_outcome != "stop",
+            }
+        )
     elif pkg:
         package_stage = "continue"
         if str(pkg.get("decision_status") or "").strip().lower() == "pending":
@@ -268,6 +285,7 @@ def build_project_routing_decision(
         "autonomy_mode": mode_gate.get("autonomy_mode"),
         "autonomy_mode_status": mode_gate.get("autonomy_mode_status"),
         "autonomy_mode_reason": mode_gate.get("autonomy_mode_reason"),
+        "autonomy_stop_rail_config": mode_state.get("autonomy_stop_rail_config") or {},
         "allowed_actions": mode_gate.get("allowed_actions") or [],
         "blocked_actions": mode_gate.get("blocked_actions") or [],
         "escalation_threshold": mode_gate.get("escalation_threshold"),

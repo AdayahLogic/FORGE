@@ -81,6 +81,12 @@ def load_persistent_project_state(state: StudioState):
 
     loaded = load_project_state(state.project_path)
     state.previous_run_state = loaded
+    if isinstance(loaded, dict):
+        state.autonomy_stop_rail_status = loaded.get("autonomy_stop_rail_status")
+        state.autonomy_stop_rail_result = dict(loaded.get("autonomy_stop_rail_result") or {})
+        state.autonomy_stop_rail_config = dict(loaded.get("autonomy_stop_rail_config") or {})
+        state.autonomy_current_counts = dict(loaded.get("autonomy_current_counts") or {})
+        state.autonomy_governance_trace = dict(loaded.get("autonomy_governance_trace") or {})
 
     if loaded:
         state.notes = "Previous project state loaded."
@@ -1339,6 +1345,11 @@ def save_persistent_project_state_node(state: StudioState):
             launch_result=state.launch_result,
             autonomy_status=state.autonomy_status,
             autonomy_result=state.autonomy_result,
+            autonomy_stop_rail_status=state.autonomy_stop_rail_status,
+            autonomy_stop_rail_result=state.autonomy_stop_rail_result,
+            autonomy_stop_rail_config=state.autonomy_stop_rail_config,
+            autonomy_current_counts=state.autonomy_current_counts,
+            autonomy_governance_trace=state.autonomy_governance_trace,
             guardrail_status=state.guardrail_status,
             guardrail_result=state.guardrail_result,
             last_aegis_decision=last_aegis_decision_normalized,
