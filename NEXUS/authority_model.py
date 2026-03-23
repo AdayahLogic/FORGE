@@ -16,6 +16,7 @@ ACTOR_COMPONENT_HINTS: dict[str, str] = {
     "nexus": "nexus",
     "workflow": "nexus",
     "helix": "helix",
+    "helios": "helios",
     "aegis": "aegis",
     "openclaw": "openclaw",
     "nemoclaw": "nemoclaw",
@@ -32,6 +33,8 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
             "build_execution_package",
             "record_learning",
             "enforce_contracts",
+            "read_project_memory",
+            "read_cross_project_memory",
         },
     },
     "helix": {
@@ -53,6 +56,14 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
             "enforce_policy",
         },
     },
+    "helios": {
+        "role": "advisory_planning_only",
+        "allowed_actions": {
+            "read_project_memory",
+            "read_cross_project_memory",
+            "recommend_next_action",
+        },
+    },
     "openclaw": {
         "role": "execution_only",
         "allowed_actions": {
@@ -65,6 +76,8 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
         "allowed_actions": {
             "analyze_locally",
             "recommend_next_action",
+            "write_project_memory",
+            "write_cross_project_memory",
         },
     },
     "abacus": {
@@ -72,6 +85,8 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
         "allowed_actions": {
             "evaluate_execution",
             "score_execution",
+            "write_project_memory",
+            "write_cross_project_memory",
         },
     },
     "cursor_bridge": {

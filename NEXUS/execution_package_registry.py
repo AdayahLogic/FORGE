@@ -42,7 +42,7 @@ from NEXUS.execution_package_local_analysis import (
     normalize_local_analysis_reason,
     normalize_local_analysis_summary,
 )
-from NEXUS.memory_layer import record_memory_pattern_safe
+from NEXUS.memory_layer import write_governed_memory_safe
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
@@ -1551,14 +1551,35 @@ def record_execution_package_evaluation(
     )
     if persisted.get("status") == "ok":
         normalized = persisted.get("package") or {}
-        record_memory_pattern_safe(
-            project_name=str(normalized.get("project_name") or ""),
-            source="abacus",
-            pattern_key=f"evaluation:{((normalized.get('evaluation_reason') or {}).get('code') or 'unknown')}",
-            attributes={
-                "failure_risk_band": ((normalized.get("evaluation_summary") or {}).get("failure_risk_band") or ""),
-                "execution_status": normalized.get("execution_status"),
+        write_governed_memory_safe(
+            actor="abacus",
+            entry={
+                "source_type": "abacus_evaluation",
+                "source_project": str(normalized.get("project_name") or ""),
+                "scope": "cross_project",
+                "category": f"evaluation:{((normalized.get('evaluation_reason') or {}).get('code') or 'unknown')}",
+                "summary": (
+                    f"Abacus evaluation observed execution_status="
+                    f"{str(normalized.get('execution_status') or 'unknown')} with failure_risk_band="
+                    f"{str(((normalized.get('evaluation_summary') or {}).get('failure_risk_band') or 'unknown'))}."
+                ),
+                "evidence": [
+                    f"package_id:{str(normalized.get('package_id') or '')}",
+                    f"evaluation_id:{str(normalized.get('evaluation_id') or '')}",
+                    f"reason_code:{str(((normalized.get('evaluation_reason') or {}).get('code') or 'unknown'))}",
+                ],
+                "confidence": 0.8,
+                "attribution": "abacus:evaluation_pipeline",
+                "status": "active",
+                "governance_trace": {
+                    "advisory_only": True,
+                    "origin": "record_execution_package_evaluation",
+                    "package_id": normalized.get("package_id"),
+                    "evaluation_status": normalized.get("evaluation_status"),
+                },
             },
+            allowed_components=("abacus",),
+            reason="Abacus evaluation pattern recorded through governed memory.",
         )
     return persisted
 
@@ -1624,14 +1645,35 @@ def record_execution_package_local_analysis(
     )
     if persisted.get("status") == "ok":
         normalized = persisted.get("package") or {}
-        record_memory_pattern_safe(
-            project_name=str(normalized.get("project_name") or ""),
-            source="nemoclaw",
-            pattern_key=f"local_analysis:{((normalized.get('local_analysis_summary') or {}).get('suggested_next_action') or 'unknown')}",
-            attributes={
-                "confidence_band": ((normalized.get("local_analysis_summary") or {}).get("confidence_band") or ""),
-                "execution_status": normalized.get("execution_status"),
+        write_governed_memory_safe(
+            actor="nemoclaw",
+            entry={
+                "source_type": "nemoclaw_advisory",
+                "source_project": str(normalized.get("project_name") or ""),
+                "scope": "project",
+                "category": f"local_analysis:{((normalized.get('local_analysis_summary') or {}).get('suggested_next_action') or 'unknown')}",
+                "summary": (
+                    f"NemoClaw advisory suggested next_action="
+                    f"{str(((normalized.get('local_analysis_summary') or {}).get('suggested_next_action') or 'unknown'))} "
+                    f"for execution_status={str(normalized.get('execution_status') or 'unknown')}."
+                ),
+                "evidence": [
+                    f"package_id:{str(normalized.get('package_id') or '')}",
+                    f"local_analysis_id:{str(normalized.get('local_analysis_id') or '')}",
+                    f"confidence_band:{str(((normalized.get('local_analysis_summary') or {}).get('confidence_band') or 'unknown'))}",
+                ],
+                "confidence": 0.7,
+                "attribution": "nemoclaw:local_analysis_pipeline",
+                "status": "active",
+                "governance_trace": {
+                    "advisory_only": True,
+                    "origin": "record_execution_package_local_analysis",
+                    "package_id": normalized.get("package_id"),
+                    "local_analysis_status": normalized.get("local_analysis_status"),
+                },
             },
+            allowed_components=("nemoclaw",),
+            reason="NemoClaw advisory pattern recorded through governed memory.",
         )
     return persisted
 

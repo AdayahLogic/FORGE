@@ -150,6 +150,34 @@ def test_abacus_authority_denied():
     assert denial["required_role"] == "evaluation_only"
 
 
+def test_nexus_memory_write_denied():
+    from NEXUS.authority_model import enforce_component_authority_safe
+
+    result = enforce_component_authority_safe(
+        component_name="nexus",
+        actor="nexus",
+        requested_actions=["write_cross_project_memory"],
+        allowed_components=["nexus"],
+    )
+    denial = result["authority_denial"]
+    assert result["status"] == "denied"
+    assert denial["denied_action"] == "write_cross_project_memory"
+    assert denial["required_role"] == "orchestration_only"
+
+
+def test_helios_memory_read_authorized():
+    from NEXUS.authority_model import enforce_component_authority_safe
+
+    result = enforce_component_authority_safe(
+        component_name="helios",
+        actor="helios",
+        requested_actions=["read_cross_project_memory"],
+        allowed_components=["helios"],
+    )
+    assert result["status"] == "authorized"
+    assert result["authority_trace"]["authority_status"] == "authorized"
+
+
 def test_cursor_bridge_execution_denied():
     from NEXUS.runtimes.cursor_runtime import dispatch
 
@@ -194,6 +222,8 @@ def main():
         test_helix_direct_execution_denied,
         test_nemoclaw_authority_denied,
         test_abacus_authority_denied,
+        test_nexus_memory_write_denied,
+        test_helios_memory_read_authorized,
         test_cursor_bridge_execution_denied,
         test_nexus_bypass_attempt_denied,
     ]

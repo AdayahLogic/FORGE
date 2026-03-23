@@ -22,6 +22,7 @@ from NEXUS.registry_dashboard import build_registry_dashboard_summary
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import select_runtime_target
 from NEXUS.execution_environment_summary import build_per_project_environment_summary
+from NEXUS.memory_layer import build_memory_layer_summary_safe, read_governed_memory_safe
 
 from NEXUS.logging_engine import log_system_event
 
@@ -95,6 +96,7 @@ SUPPORTED_COMMANDS = frozenset({
     "portfolio_status",
     "runtime_infrastructure",
     "execution_environment",
+    "memory_status",
     "meta_engine_status",
     "titan_status",
     "leviathan_status",
@@ -3222,6 +3224,56 @@ def run_command(
                     "per_project_summaries": {},
                     "reason": "Execution environment summary failed.",
                     "error": str(e),
+                },
+            )
+
+    if cmd == "memory_status":
+        try:
+            scope = str(kwargs.get("scope") or ("project" if proj_name else "cross_project")).strip().lower()
+            purpose = str(kwargs.get("purpose") or "advisory_context").strip() or "advisory_context"
+            actor = str(kwargs.get("actor") or "nexus").strip() or "nexus"
+            limit = max(1, min(int(kwargs.get("limit") or 10), 50))
+            summary_payload = build_memory_layer_summary_safe(project_name=proj_name if scope == "project" else None)
+            read_payload = read_governed_memory_safe(
+                actor=actor,
+                purpose=purpose,
+                scope=scope,
+                project_name=proj_name,
+                category=kwargs.get("category"),
+                source_type=kwargs.get("source_type"),
+                limit=limit,
+                allowed_components=("nexus", "helios"),
+            )
+            payload = {
+                "memory_summary": summary_payload,
+                "memory_read": read_payload,
+            }
+            summary_line = (
+                f"memory_status={read_payload.get('status')}; "
+                f"scope={read_payload.get('memory_scope')}; "
+                f"records={read_payload.get('record_count', len(read_payload.get('records') or []))}; "
+                f"advisory_only=True"
+            )
+            status = "ok" if read_payload.get("status") == "ok" else "blocked" if read_payload.get("status") == "denied" else "error"
+            return _result(command=cmd, status=status, project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary=str(e),
+                payload={
+                    "memory_summary": build_memory_layer_summary_safe(project_name=proj_name),
+                    "memory_read": {
+                        "status": "error",
+                        "operation": "read",
+                        "memory_scope": "project" if proj_name else "cross_project",
+                        "actor": "nexus",
+                        "source_type": "",
+                        "reason": str(e),
+                        "governance_trace": {"advisory_only": True},
+                        "records": [],
+                    },
                 },
             )
 

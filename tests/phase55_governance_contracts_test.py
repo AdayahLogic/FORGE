@@ -166,19 +166,31 @@ def test_meta_engine_governance_uses_required_priority_order():
 
 
 def test_memory_layer_records_reusable_patterns_without_self_modifying():
-    from NEXUS.memory_layer import build_memory_layer_summary_safe, record_memory_pattern_safe
+    from NEXUS.memory_layer import build_memory_layer_summary_safe, write_governed_memory_safe
 
     before = build_memory_layer_summary_safe()
-    record_memory_pattern_safe(
-        project_name="phase55proj",
-        source="abacus",
-        pattern_key="evaluation:completed",
-        attributes={"failure_risk_band": "low"},
+    result = write_governed_memory_safe(
+        actor="abacus",
+        entry={
+            "source_type": "abacus_evaluation",
+            "source_project": "phase55proj",
+            "scope": "cross_project",
+            "category": "evaluation:completed",
+            "summary": "Abacus evaluation completed with low failure risk.",
+            "evidence": ["package_id:phase55pkg", "evaluation_id:phase55eval"],
+            "confidence": 0.8,
+            "attribution": "abacus:evaluation_pipeline",
+            "status": "active",
+            "governance_trace": {"origin": "phase55_test", "advisory_only": True},
+        },
     )
     after = build_memory_layer_summary_safe()
+    assert result["status"] == "ok"
     assert after["self_modification_policy"] == "approval_required"
+    assert after["advisory_only"] is True
     assert after["total_records"] >= before["total_records"]
     assert after["patterns_by_key"].get("evaluation:completed", 0) >= 1
+    assert after["records_by_scope"].get("cross_project", 0) >= 1
 
 
 def test_cursor_runtime_exposes_phase16_bridge_scaffold_without_execution():

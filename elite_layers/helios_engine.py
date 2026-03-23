@@ -5,6 +5,7 @@ from typing import Any
 from AEGIS.aegis_contract import normalize_aegis_result
 from elite_layers.change_proposal import build_change_proposal_safe
 from NEXUS.change_safety_gate import evaluate_change_gate_safe
+from NEXUS.memory_layer import read_governed_memory_safe
 from NEXUS.regression_checks import run_regression_checks_safe
 from NEXUS.self_improvement_engine import build_self_improvement_backlog_safe, select_next_improvement_safe
 
@@ -179,6 +180,20 @@ def build_helios_expanded_summary(
         memory_layer_summary = dash.get("memory_layer_summary") if isinstance(dash.get("memory_layer_summary"), dict) else {}
         memory_record_count = int(memory_layer_summary.get("total_records") or 0)
         self_modification_policy = str(memory_layer_summary.get("self_modification_policy") or "approval_required")
+        memory_advisory_read = read_governed_memory_safe(
+            actor="helios",
+            purpose="advisory_context",
+            scope="cross_project",
+            project_name=target_project,
+            limit=5,
+            allowed_components=("helios",),
+        )
+        memory_advisory_records = memory_advisory_read.get("records") if isinstance(memory_advisory_read.get("records"), list) else []
+        advisory_memory_categories = [
+            str(item.get("category") or "")
+            for item in memory_advisory_records
+            if isinstance(item, dict) and str(item.get("category") or "").strip()
+        ][:3]
 
         last_aegis_decision = dash.get("last_aegis_decision")
         if isinstance(last_aegis_decision, dict):
@@ -295,6 +310,10 @@ def build_helios_expanded_summary(
                 f"regression={regression_status}; veritas={veritas_status}; sentinel={sentinel_status}; "
                 f"aegis={aegis_decision}; prism={prism_status or 'none'}:{prism_recommendation or 'none'}; "
                 f"memory_records={memory_record_count}; self_modification_policy={self_modification_policy}; "
+                f"memory_advisory_status={memory_advisory_read.get('status')}; "
+                f"memory_advisory_records={len(memory_advisory_records)}; "
+                f"memory_advisory_categories={','.join(advisory_memory_categories) or 'none'}; "
+                f"memory_usage=advisory_only; "
                 f"mode={helios_mode}."
             )
 
@@ -305,6 +324,13 @@ def build_helios_expanded_summary(
             "improvement_reason": improvement_reason,
             "execution_gated": bool(execution_gated),
             "helios_evaluation_mode": helios_mode,
+            "memory_advisory_context": {
+                "status": memory_advisory_read.get("status"),
+                "record_count": len(memory_advisory_records),
+                "categories": advisory_memory_categories,
+                "purpose": "advisory_context",
+                "advisory_only": True,
+            },
             "change_proposal": change_proposal,
         }
     except Exception as e:
@@ -316,6 +342,13 @@ def build_helios_expanded_summary(
             "improvement_reason": f"HELIOS expanded evaluation failed: {e}",
             "execution_gated": True,
             "helios_evaluation_mode": (helios_evaluation_mode or "dashboard_cached"),
+            "memory_advisory_context": {
+                "status": "error",
+                "record_count": 0,
+                "categories": [],
+                "purpose": "advisory_context",
+                "advisory_only": True,
+            },
             "change_proposal": build_change_proposal_safe(
                 proposal_id="helios-change-proposal-error_fallback",
                 target_area="none",
@@ -343,6 +376,13 @@ def build_helios_expanded_summary_safe(**kwargs: Any) -> dict[str, Any]:
             "improvement_reason": "HELIOS expanded evaluation failed.",
             "execution_gated": True,
             "helios_evaluation_mode": kwargs.get("helios_evaluation_mode") or "dashboard_cached",
+            "memory_advisory_context": {
+                "status": "error",
+                "record_count": 0,
+                "categories": [],
+                "purpose": "advisory_context",
+                "advisory_only": True,
+            },
             "change_proposal": build_change_proposal_safe(
                 proposal_id="helios-change-proposal-error_fallback",
                 target_area="none",

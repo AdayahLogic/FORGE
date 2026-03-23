@@ -872,13 +872,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             )
         except Exception:
             memory_layer_summary = {
-                "memory_layer_version": "1.0",
+                "memory_layer_version": "2.0",
                 "last_updated": "",
                 "self_modification_policy": "approval_required",
+                "advisory_only": True,
                 "total_records": 0,
                 "patterns_by_key": {},
                 "records_by_project": {},
                 "records_by_source": {},
+                "records_by_scope": {"project": 0, "cross_project": 0},
+                "records_by_category": {},
+                "audit_event_count": 0,
+                "denied_write_count": 0,
+                "denied_read_count": 0,
+                "recent_audit_events": [],
             }
             meta_engine_governance = {
                 "status": "resolved",
@@ -1199,13 +1206,20 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             },
         }
         memory_layer_summary = {
-            "memory_layer_version": "1.0",
+            "memory_layer_version": "2.0",
             "last_updated": "",
             "self_modification_policy": "approval_required",
+            "advisory_only": True,
             "total_records": 0,
             "patterns_by_key": {},
             "records_by_project": {},
             "records_by_source": {},
+            "records_by_scope": {"project": 0, "cross_project": 0},
+            "records_by_category": {},
+            "audit_event_count": 0,
+            "denied_write_count": 0,
+            "denied_read_count": 0,
+            "recent_audit_events": [],
         }
         meta_engine_governance = {
             "status": "resolved",
