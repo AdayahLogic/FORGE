@@ -197,8 +197,10 @@ def test_cursor_runtime_exposes_phase16_bridge_scaffold_without_execution():
     from NEXUS.runtimes.cursor_runtime import dispatch
 
     result = dispatch({"ready_for_dispatch": True})
-    assert result["cursor_bridge_summary"]["bridge_phase"] == "phase_16_scaffold"
+    assert result["cursor_bridge_summary"]["bridge_phase"] == "phase_5_hardened"
     assert result["cursor_bridge_summary"]["execution_enabled"] is False
+    assert result["cursor_bridge_summary"]["bridge_task_id"]
+    assert result["cursor_bridge_summary"]["requested_artifacts"]
     assert result["authority_trace"]["component_name"] == "cursor_bridge"
 
 

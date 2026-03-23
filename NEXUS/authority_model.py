@@ -94,6 +94,7 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
         "allowed_actions": {
             "prepare_ide_handoff",
             "package_generation_output",
+            "return_governed_artifacts",
         },
     },
 }

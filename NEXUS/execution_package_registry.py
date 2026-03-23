@@ -43,6 +43,12 @@ from NEXUS.execution_package_local_analysis import (
     normalize_local_analysis_summary,
 )
 from NEXUS.memory_layer import write_governed_memory_safe
+from NEXUS.runtimes.cursor_runtime import (
+    build_cursor_bridge_result,
+    normalize_cursor_artifact_return,
+    normalize_cursor_bridge_handoff,
+    validate_cursor_artifact_return,
+)
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
@@ -57,6 +63,7 @@ def _utc_now_iso() -> str:
 def _build_execution_package_journal_record(normalized: dict[str, Any], package_path: str | None) -> dict[str, Any]:
     metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
     governance_conflict = metadata.get("governance_conflict") if isinstance(metadata.get("governance_conflict"), dict) else {}
+    cursor_bridge = normalized.get("cursor_bridge_summary") if isinstance(normalized.get("cursor_bridge_summary"), dict) else {}
     return {
         "package_id": normalized.get("package_id"),
         "project_name": normalized.get("project_name"),
@@ -128,6 +135,11 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "local_analysis_reason": normalized.get("local_analysis_reason"),
         "local_analysis_basis": normalized.get("local_analysis_basis"),
         "local_analysis_summary": normalized.get("local_analysis_summary"),
+        "bridge_task_id": cursor_bridge.get("bridge_task_id"),
+        "cursor_bridge_status": cursor_bridge.get("bridge_status"),
+        "cursor_bridge_artifact_count": cursor_bridge.get("artifact_count"),
+        "cursor_bridge_latest_artifact_type": cursor_bridge.get("latest_artifact_type"),
+        "cursor_bridge_latest_validation_status": cursor_bridge.get("latest_validation_status"),
         "governance_conflict_status": governance_conflict.get("status"),
         "governance_conflict_type": governance_conflict.get("conflict_type"),
         "governance_resolution_state": metadata.get("governance_resolution_state"),
@@ -289,6 +301,10 @@ def _normalize_execution_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def _dict_value(value: Any) -> dict[str, Any]:
+    return dict(value) if isinstance(value, dict) else {}
+
+
 def _with_package_authority_event(
     package: dict[str, Any] | None,
     *,
@@ -359,6 +375,40 @@ def _summarize_execution_receipt(value: Any) -> dict[str, Any]:
     }
 
 
+def _normalize_cursor_bridge_summary(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict) or not value:
+        return {}
+    normalized = normalize_cursor_bridge_handoff(
+        value,
+        authority_trace=value.get("authority_trace"),
+        governance_trace=value.get("governance_trace"),
+        package_id=value.get("package_id"),
+        package_reference=value.get("package_reference"),
+        status=str(value.get("status") or value.get("bridge_status") or "pending"),
+    )
+    return {
+        **normalized,
+        "bridge_status": str(value.get("bridge_status") or normalized.get("status") or "pending").strip().lower(),
+        "bridge_phase": str(value.get("bridge_phase") or ""),
+        "authority_scope": str(value.get("authority_scope") or "generation_bridge_only"),
+        "execution_enabled": bool(value.get("execution_enabled", False)),
+        "handoff_required": bool(value.get("handoff_required", True)),
+        "artifact_count": max(0, int(value.get("artifact_count") or 0)),
+        "latest_artifact_type": str(value.get("latest_artifact_type") or ""),
+        "latest_validation_status": str(value.get("latest_validation_status") or ""),
+        "latest_recorded_at": str(value.get("latest_recorded_at") or ""),
+        "package_path": str(value.get("package_path") or ""),
+    }
+
+
+def _normalize_cursor_bridge_artifact_record(value: Any) -> dict[str, Any]:
+    normalized = normalize_cursor_artifact_return(value if isinstance(value, dict) else {})
+    return {
+        **normalized,
+        "package_path": str((value or {}).get("package_path") or ""),
+    }
+
+
 def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Normalize execution package to stable review-only contract shape.
@@ -379,8 +429,28 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
     recovery_summary = normalize_recovery_summary(p.get("recovery_summary"))
     rollback_repair = normalize_rollback_repair(p.get("rollback_repair"))
     integrity_verification = normalize_integrity_verification(p.get("integrity_verification"))
+    metadata = dict(p.get("metadata") or {})
+    cursor_bridge_summary = _normalize_cursor_bridge_summary(p.get("cursor_bridge_summary") or metadata.get("cursor_bridge_summary"))
+    cursor_bridge_artifacts_source = p.get("cursor_bridge_artifacts")
+    if not isinstance(cursor_bridge_artifacts_source, list):
+        cursor_bridge_artifacts_source = metadata.get("cursor_bridge_artifacts")
+    if not isinstance(cursor_bridge_artifacts_source, list):
+        cursor_bridge_artifacts_source = []
+    cursor_bridge_artifacts = [
+        _normalize_cursor_bridge_artifact_record(item) for item in cursor_bridge_artifacts_source[:20] if isinstance(item, dict)
+    ]
     if not idempotency.get("idempotency_key"):
         idempotency["idempotency_key"] = derive_idempotency_key(p)
+    if cursor_bridge_artifacts and cursor_bridge_summary:
+        cursor_bridge_summary["artifact_count"] = len(cursor_bridge_artifacts)
+        latest_artifact = cursor_bridge_artifacts[-1]
+        cursor_bridge_summary["latest_artifact_type"] = str(latest_artifact.get("artifact_type") or "")
+        cursor_bridge_summary["latest_validation_status"] = str(latest_artifact.get("validation_status") or "")
+        cursor_bridge_summary["latest_recorded_at"] = str(latest_artifact.get("recorded_at") or "")
+    if cursor_bridge_summary:
+        metadata["cursor_bridge_summary"] = cursor_bridge_summary
+    if cursor_bridge_artifacts:
+        metadata["cursor_bridge_artifacts"] = cursor_bridge_artifacts
 
     return {
         "package_id": package_id,
@@ -414,7 +484,9 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "review_checklist": [str(x) for x in review_checklist[:20]],
         "rollback_notes": [str(x) for x in (p.get("rollback_notes") or []) if str(x).strip()][:20],
         "runtime_artifacts": [x for x in runtime_artifacts[:20] if isinstance(x, dict)],
-        "metadata": dict(p.get("metadata") or {}),
+        "cursor_bridge_summary": cursor_bridge_summary,
+        "cursor_bridge_artifacts": cursor_bridge_artifacts,
+        "metadata": metadata,
         "decision_status": str(p.get("decision_status") or "pending").strip().lower(),
         "decision_timestamp": str(p.get("decision_timestamp") or ""),
         "decision_actor": str(p.get("decision_actor") or ""),
@@ -500,6 +572,11 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "reason": str(r.get("reason") or ""),
         "helix_contract_summary": dict(r.get("helix_contract_summary") or {}),
         "package_file": str(r.get("package_file") or ""),
+        "bridge_task_id": str(r.get("bridge_task_id") or ""),
+        "cursor_bridge_status": str(r.get("cursor_bridge_status") or ""),
+        "cursor_bridge_artifact_count": max(0, int(r.get("cursor_bridge_artifact_count") or 0)),
+        "cursor_bridge_latest_artifact_type": str(r.get("cursor_bridge_latest_artifact_type") or ""),
+        "cursor_bridge_latest_validation_status": str(r.get("cursor_bridge_latest_validation_status") or ""),
         "decision_status": str(r.get("decision_status") or "pending").strip().lower(),
         "decision_timestamp": str(r.get("decision_timestamp") or ""),
         "decision_actor": str(r.get("decision_actor") or ""),
@@ -669,6 +746,197 @@ def list_reviewable_execution_packages(project_path: str | None, n: int = 20) ->
     reviewable = [normalize_execution_package_journal_record(r) for r in rows if _is_review_pending_package(r)]
     reviewable.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return reviewable[:limit]
+
+
+def record_cursor_bridge_artifact_return(
+    *,
+    project_path: str | None,
+    package_id: str | None = None,
+    artifact_payload: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Persist a governed Cursor development artifact onto a linked execution package."""
+    normalized_payload = normalize_cursor_artifact_return(artifact_payload)
+    actor = str(normalized_payload.get("actor") or "cursor_bridge").strip() or "cursor_bridge"
+    linked_package_id = str(package_id or normalized_payload.get("package_id") or "").strip()
+    if not linked_package_id:
+        validation = build_cursor_bridge_result(
+            status="denied",
+            operation="artifact_return",
+            actor=actor,
+            reason="Cursor artifact return requires package linkage.",
+            authority_trace=normalized_payload.get("authority_trace"),
+            governance_trace=normalized_payload.get("governance_trace"),
+            extra_fields={"validation_status": "rejected_package_linkage", "artifact_payload": normalized_payload},
+        )
+        return {**validation, "package": None, "artifact_record": normalized_payload}
+
+    package = read_execution_package(project_path=project_path, package_id=linked_package_id)
+    if not package:
+        validation = build_cursor_bridge_result(
+            status="denied",
+            operation="artifact_return",
+            actor=actor,
+            reason="Execution package not found for Cursor artifact return.",
+            authority_trace=normalized_payload.get("authority_trace"),
+            governance_trace=normalized_payload.get("governance_trace"),
+            extra_fields={"validation_status": "rejected_package_linkage", "artifact_payload": normalized_payload},
+        )
+        return {**validation, "package": None, "artifact_record": normalized_payload}
+
+    component_name = infer_component_name(actor) or "cursor_bridge"
+    authority = enforce_component_authority_safe(
+        component_name=component_name,
+        actor=actor,
+        requested_actions=["return_governed_artifacts"],
+        allowed_components=["cursor_bridge"],
+        authority_context={
+            "package_id": linked_package_id,
+            "bridge_task_id": normalized_payload.get("bridge_task_id"),
+            "project_name": package.get("project_name"),
+            "source_runtime": normalized_payload.get("source_runtime"),
+        },
+        denied_action="return_governed_artifacts",
+        reason_override="Cursor may only return governed development artifacts; it cannot claim execution, approval, or governance authority.",
+    )
+    cursor_bridge_summary = _normalize_cursor_bridge_summary(package.get("cursor_bridge_summary"))
+    package_governance_trace = _dict_value((package.get("metadata") or {}).get("governance_trace"))
+    if not cursor_bridge_summary or not str(cursor_bridge_summary.get("bridge_task_id") or "").strip():
+        validation = build_cursor_bridge_result(
+            status="denied",
+            operation="artifact_return",
+            actor=actor,
+            reason="Cursor artifact return requires a package already linked to a governed Cursor handoff.",
+            authority_trace=normalized_payload.get("authority_trace"),
+            governance_trace=normalized_payload.get("governance_trace") or package_governance_trace,
+            extra_fields={"validation_status": "rejected_package_linkage", "artifact_payload": normalized_payload},
+        )
+        return {**validation, "package": package, "artifact_record": normalized_payload}
+    if authority.get("status") == "denied":
+        denial = build_cursor_bridge_result(
+            status="denied",
+            operation="artifact_return",
+            actor=actor,
+            reason=str((authority.get("authority_denial") or {}).get("reason") or "Cursor artifact return denied."),
+            authority_trace=authority.get("authority_trace"),
+            governance_trace=normalized_payload.get("governance_trace") or package_governance_trace,
+            extra_fields={
+                "validation_status": "rejected_authority_boundary",
+                "artifact_payload": normalized_payload,
+                "authority_denial": authority.get("authority_denial") or {},
+            },
+        )
+        return {**denial, "package": package, "artifact_record": normalized_payload}
+
+    raw_payload = dict(artifact_payload or {})
+    validation = validate_cursor_artifact_return(
+        {
+            **raw_payload,
+            **normalized_payload,
+            "authority_trace": authority.get("authority_trace") or normalized_payload.get("authority_trace"),
+            "governance_trace": normalized_payload.get("governance_trace") or package_governance_trace,
+        },
+        required_package_id=linked_package_id,
+        expected_bridge_task_id=cursor_bridge_summary.get("bridge_task_id") or None,
+    )
+    if validation.get("status") != "ok":
+        return {**validation, "package": package, "artifact_record": normalized_payload}
+
+    artifact_record = _normalize_cursor_bridge_artifact_record(
+        {
+            **normalized_payload,
+            "package_id": linked_package_id,
+            "package_reference": {
+                **_dict_value(normalized_payload.get("package_reference")),
+                "package_id": linked_package_id,
+            },
+            "validation_status": str(validation.get("validation_status") or "validated"),
+            "authority_trace": authority.get("authority_trace") or normalized_payload.get("authority_trace"),
+            "governance_trace": normalized_payload.get("governance_trace") or package_governance_trace,
+            "package_path": get_execution_package_file_path(project_path, linked_package_id) or "",
+        }
+    )
+
+    runtime_artifact = {
+        "artifact_type": "cursor_bridge_artifact_return",
+        "bridge_task_id": artifact_record.get("bridge_task_id"),
+        "package_id": linked_package_id,
+        "artifact_summary": artifact_record.get("artifact_summary"),
+        "changed_files": artifact_record.get("changed_files"),
+        "patch_summary": artifact_record.get("patch_summary"),
+        "validation_status": artifact_record.get("validation_status"),
+        "source_runtime": artifact_record.get("source_runtime"),
+        "actor": artifact_record.get("actor"),
+        "recorded_at": artifact_record.get("recorded_at"),
+        "status": artifact_record.get("status"),
+        "authority_trace": artifact_record.get("authority_trace"),
+    }
+    runtime_artifacts = [x for x in list(package.get("runtime_artifacts") or []) if isinstance(x, dict)]
+    runtime_artifacts.append(runtime_artifact)
+    package["runtime_artifacts"] = runtime_artifacts[:20]
+
+    metadata = dict(package.get("metadata") or {})
+    cursor_artifacts = [
+        _normalize_cursor_bridge_artifact_record(item)
+        for item in list(metadata.get("cursor_bridge_artifacts") or [])
+        if isinstance(item, dict)
+    ]
+    cursor_artifacts.append(artifact_record)
+    metadata["cursor_bridge_artifacts"] = cursor_artifacts[:20]
+
+    summary = _normalize_cursor_bridge_summary(package.get("cursor_bridge_summary") or metadata.get("cursor_bridge_summary"))
+    summary["package_id"] = linked_package_id
+    summary["package_reference"] = {
+        **_dict_value(summary.get("package_reference")),
+        "package_id": linked_package_id,
+    }
+    summary["artifact_count"] = len(metadata["cursor_bridge_artifacts"])
+    summary["latest_artifact_type"] = str(artifact_record.get("artifact_type") or "")
+    summary["latest_validation_status"] = str(artifact_record.get("validation_status") or "")
+    summary["latest_recorded_at"] = str(artifact_record.get("recorded_at") or "")
+    summary["bridge_status"] = "artifact_recorded"
+    summary["status"] = "artifact_recorded"
+    metadata["cursor_bridge_summary"] = summary
+    package["cursor_bridge_summary"] = summary
+    package["cursor_bridge_artifacts"] = metadata["cursor_bridge_artifacts"]
+    package["metadata"] = metadata
+
+    persisted = _persist_package_update(
+        project_path=project_path,
+        package_id=linked_package_id,
+        package=package,
+        status="ok",
+        reason="Cursor artifact return recorded.",
+    )
+    return {
+        **build_cursor_bridge_result(
+            status="ok",
+            operation="artifact_return",
+            actor=actor,
+            reason="Cursor artifact return recorded and linked to the execution package.",
+            authority_trace=artifact_record.get("authority_trace"),
+            governance_trace=artifact_record.get("governance_trace"),
+            extra_fields={"validation_status": artifact_record.get("validation_status")},
+        ),
+        "package": persisted.get("package"),
+        "artifact_record": artifact_record,
+    }
+
+
+def record_cursor_bridge_artifact_return_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_cursor_bridge_artifact_return(**kwargs)
+    except Exception:
+        return {
+            "status": "error",
+            "operation": "artifact_return",
+            "actor": "cursor_bridge",
+            "reason": "Failed to record Cursor artifact return.",
+            "authority_trace": {},
+            "governance_trace": {},
+            "package": None,
+            "artifact_record": {},
+        }
 
 
 def record_execution_package_decision(

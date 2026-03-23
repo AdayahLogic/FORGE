@@ -192,6 +192,7 @@ def test_cursor_bridge_execution_denied():
         }
     )
     assert result["status"] == "blocked"
+    assert result["cursor_bridge_summary"]["execution_enabled"] is False
     assert result["authority_denial"]["status"] == "denied"
     assert result["authority_denial"]["denied_action"] == "execute_package"
 

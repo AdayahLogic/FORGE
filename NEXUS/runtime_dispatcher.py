@@ -36,6 +36,7 @@ def _create_review_only_execution_package(
     approval_id: str | None = None,
     package_reason: str,
     authority_trace: dict[str, Any] | None = None,
+    cursor_bridge_summary: dict[str, Any] | None = None,
 ) -> tuple[str | None, str | None]:
     """Persist a sealed review-only execution package and return (id, path)."""
     try:
@@ -49,8 +50,22 @@ def _create_review_only_execution_package(
             approval_id=approval_id,
             package_reason=package_reason,
             authority_trace=authority_trace,
+            cursor_bridge_summary=cursor_bridge_summary,
         )
         package_id = package.get("package_id")
+        if isinstance(cursor_bridge_summary, dict) and cursor_bridge_summary:
+            summary = {
+                **cursor_bridge_summary,
+                "package_id": str(package_id or cursor_bridge_summary.get("package_id") or ""),
+                "package_reference": {
+                    **dict(cursor_bridge_summary.get("package_reference") or {}),
+                    "package_id": str(package_id or cursor_bridge_summary.get("package_id") or ""),
+                },
+            }
+            metadata = dict(package.get("metadata") or {})
+            metadata["cursor_bridge_summary"] = summary
+            package["metadata"] = metadata
+            package["cursor_bridge_summary"] = summary
         package_path = write_execution_package_safe(
             project_path=(dispatch_plan.get("project") or {}).get("project_path"),
             package=package,
@@ -354,6 +369,44 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             dispatch_result["aegis"] = aegis_res
         if isinstance(dispatch_result, dict):
             dispatch_result["authority_trace"] = nexus_trace
+        if runtime_target_id == "cursor" and isinstance(dispatch_result, dict) and dispatch_result.get("status") != "blocked":
+            cursor_bridge_summary = dict(dispatch_result.get("cursor_bridge_summary") or {})
+            package_id, package_path = _create_review_only_execution_package(
+                dispatch_plan=dispatch_plan,
+                aegis_res=aegis_res,
+                approval_record=None,
+                approval_id=None,
+                package_reason="Governed Cursor bridge handoff created; development artifacts must return through package-linked validation.",
+                authority_trace=nexus_trace,
+                cursor_bridge_summary=cursor_bridge_summary,
+            )
+            updated_summary = {
+                **cursor_bridge_summary,
+                "package_id": str(package_id or cursor_bridge_summary.get("package_id") or ""),
+                "package_reference": {
+                    **dict(cursor_bridge_summary.get("package_reference") or {}),
+                    "package_id": str(package_id or cursor_bridge_summary.get("package_id") or ""),
+                    "package_path": str(package_path or ""),
+                },
+                "package_path": str(package_path or ""),
+            }
+            dispatch_result["cursor_bridge_summary"] = updated_summary
+            if isinstance(dispatch_result.get("cursor_bridge_result"), dict):
+                dispatch_result["cursor_bridge_result"] = {
+                    **dispatch_result["cursor_bridge_result"],
+                    "package_id": str(package_id or ""),
+                }
+            if package_id:
+                dispatch_result["execution_package_id"] = package_id
+                dispatch_result["execution_package_path"] = package_path
+                dispatch_result["package_review_required"] = True
+                artifacts = list(dispatch_result.get("artifacts") or [])
+                artifacts.extend(_build_review_package_artifact(package_id=package_id, package_path=package_path))
+                dispatch_result["artifacts"] = artifacts[:20]
+                dispatch_result["message"] = (
+                    "Governed Cursor bridge handoff prepared and linked to a sealed execution package."
+                )
+                dispatch_result["next_action"] = "review_execution_package"
         return {
             "dispatch_status": "accepted",
             "runtime_target": runtime_target_id,

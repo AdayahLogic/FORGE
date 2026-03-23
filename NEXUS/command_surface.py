@@ -217,6 +217,7 @@ def _execution_package_error_result(
 
 def _build_execution_package_review_header(package: dict[str, Any] | None) -> dict[str, Any]:
     p = package or {}
+    cursor_bridge = dict(p.get("cursor_bridge_summary") or {})
     return {
         "package_id": p.get("package_id"),
         "package_kind": p.get("package_kind"),
@@ -272,11 +273,17 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "local_analysis_actor": p.get("local_analysis_actor"),
         "local_analysis_id": p.get("local_analysis_id"),
         "local_analysis_reason": p.get("local_analysis_reason") or {"code": "", "message": ""},
+        "bridge_task_id": cursor_bridge.get("bridge_task_id"),
+        "cursor_bridge_status": cursor_bridge.get("bridge_status"),
+        "cursor_bridge_artifact_count": cursor_bridge.get("artifact_count"),
+        "cursor_bridge_latest_artifact_type": cursor_bridge.get("latest_artifact_type"),
+        "cursor_bridge_latest_validation_status": cursor_bridge.get("latest_validation_status"),
     }
 
 
 def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[str, Any]:
     p = package or {}
+    cursor_bridge = dict(p.get("cursor_bridge_summary") or {})
     return {
         "command_request": dict(p.get("command_request") or {}),
         "scope": {
@@ -300,6 +307,10 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
         },
         "rollback": {
             "rollback_notes": list(p.get("rollback_notes") or []),
+        },
+        "cursor_bridge": {
+            "summary": cursor_bridge,
+            "artifacts": list(p.get("cursor_bridge_artifacts") or []),
         },
         "decision": {
             "decision_status": p.get("decision_status") or "pending",
@@ -366,6 +377,7 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
 
 def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[str, Any]:
     p = package or {}
+    cursor_bridge = dict(p.get("cursor_bridge_summary") or {})
     return {
         "package_id": p.get("package_id"),
         "created_at": p.get("created_at"),
@@ -389,6 +401,10 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "failure_risk_band": ((p.get("evaluation_summary") or {}).get("failure_risk_band") or ""),
         "local_analysis_status": p.get("local_analysis_status"),
         "suggested_next_action": ((p.get("local_analysis_summary") or {}).get("suggested_next_action") or ""),
+        "bridge_task_id": cursor_bridge.get("bridge_task_id"),
+        "cursor_bridge_status": cursor_bridge.get("bridge_status"),
+        "cursor_bridge_artifact_count": cursor_bridge.get("artifact_count"),
+        "cursor_bridge_latest_validation_status": cursor_bridge.get("latest_validation_status"),
     }
 
 

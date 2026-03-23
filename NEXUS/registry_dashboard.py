@@ -261,6 +261,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     latest_execution_package_handoff_target_by_project: dict[str, str] = {}
     execution_package_handoff_authorized_projects: list[str] = []
     execution_package_handoff_blocked_projects: list[str] = []
+    execution_package_cursor_bridge_counts_by_project: dict[str, dict[str, int]] = {}
+    latest_execution_package_cursor_bridge_status_by_project: dict[str, str] = {}
+    latest_execution_package_bridge_task_id_by_project: dict[str, str] = {}
+    execution_package_cursor_bridge_artifact_count_by_project: dict[str, int] = {}
+    cursor_bridge_prepared_projects: list[str] = []
+    cursor_bridge_artifact_return_projects: list[str] = []
     execution_package_execution_counts_by_project: dict[str, dict[str, int]] = {}
     latest_execution_package_execution_status_by_project: dict[str, str] = {}
     latest_execution_package_execution_target_by_project: dict[str, str] = {}
@@ -457,6 +463,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             eligibility_counts = {"pending": 0, "eligible": 0, "ineligible": 0}
             release_counts = {"pending": 0, "released": 0, "blocked": 0}
             handoff_counts = {"pending": 0, "authorized": 0, "blocked": 0}
+            cursor_bridge_counts = {"none": 0, "prepared": 0, "artifact_recorded": 0, "denied": 0}
             execution_counts = {"pending": 0, "succeeded": 0, "failed": 0, "blocked": 0, "rolled_back": 0}
             evaluation_counts = {"pending": 0, "completed": 0, "blocked": 0, "error_fallback": 0}
             local_analysis_counts = {"pending": 0, "completed": 0, "blocked": 0, "error_fallback": 0}
@@ -483,6 +490,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 if hs not in handoff_counts:
                     hs = "pending"
                 handoff_counts[hs] += 1
+                cursor_status = str(row.get("cursor_bridge_status") or "none").strip().lower()
+                if cursor_status not in cursor_bridge_counts:
+                    cursor_status = "none"
+                cursor_bridge_counts[cursor_status] += 1
                 xs = str(row.get("execution_status") or "pending").strip().lower()
                 if xs not in execution_counts:
                     xs = "pending"
@@ -534,6 +545,7 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             execution_package_eligibility_counts_by_project[key] = eligibility_counts
             execution_package_release_counts_by_project[key] = release_counts
             execution_package_handoff_counts_by_project[key] = handoff_counts
+            execution_package_cursor_bridge_counts_by_project[key] = cursor_bridge_counts
             execution_package_execution_counts_by_project[key] = execution_counts
             execution_package_evaluation_counts_by_project[key] = evaluation_counts
             execution_package_local_analysis_counts_by_project[key] = local_analysis_counts
@@ -556,6 +568,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 latest_execution_package_handoff_status_by_project[key] = str(latest_row.get("handoff_status"))
             if latest_row.get("handoff_executor_target_id"):
                 latest_execution_package_handoff_target_by_project[key] = str(latest_row.get("handoff_executor_target_id"))
+            if latest_row.get("cursor_bridge_status"):
+                latest_execution_package_cursor_bridge_status_by_project[key] = str(latest_row.get("cursor_bridge_status"))
+            if latest_row.get("bridge_task_id"):
+                latest_execution_package_bridge_task_id_by_project[key] = str(latest_row.get("bridge_task_id"))
+            execution_package_cursor_bridge_artifact_count_by_project[key] = sum(
+                max(0, int(row.get("cursor_bridge_artifact_count") or 0)) for row in execution_package_rows
+            )
             if latest_row.get("execution_status"):
                 latest_execution_package_execution_status_by_project[key] = str(latest_row.get("execution_status"))
             if latest_row.get("execution_executor_target_id"):
@@ -576,6 +595,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 execution_package_handoff_authorized_projects.append(key)
             if handoff_counts.get("blocked", 0) > 0:
                 execution_package_handoff_blocked_projects.append(key)
+            if cursor_bridge_counts.get("prepared", 0) > 0:
+                cursor_bridge_prepared_projects.append(key)
+            if cursor_bridge_counts.get("artifact_recorded", 0) > 0:
+                cursor_bridge_artifact_return_projects.append(key)
             if execution_counts.get("succeeded", 0) > 0:
                 execution_package_execution_succeeded_projects.append(key)
             if execution_counts.get("failed", 0) > 0:
@@ -1276,6 +1299,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     authorized_handoff_count_total = sum(v.get("authorized", 0) for v in execution_package_handoff_counts_by_project.values())
     blocked_handoff_count_total = sum(v.get("blocked", 0) for v in execution_package_handoff_counts_by_project.values())
     pending_handoff_count_total = sum(v.get("pending", 0) for v in execution_package_handoff_counts_by_project.values())
+    prepared_cursor_bridge_count_total = sum(v.get("prepared", 0) for v in execution_package_cursor_bridge_counts_by_project.values())
+    artifact_recorded_cursor_bridge_count_total = sum(v.get("artifact_recorded", 0) for v in execution_package_cursor_bridge_counts_by_project.values())
+    denied_cursor_bridge_count_total = sum(v.get("denied", 0) for v in execution_package_cursor_bridge_counts_by_project.values())
     succeeded_execution_count_total = sum(v.get("succeeded", 0) for v in execution_package_execution_counts_by_project.values())
     failed_execution_count_total = sum(v.get("failed", 0) for v in execution_package_execution_counts_by_project.values())
     blocked_execution_count_total = sum(v.get("blocked", 0) for v in execution_package_execution_counts_by_project.values())
@@ -1413,6 +1439,19 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "authorized_projects": sorted(set(execution_package_handoff_authorized_projects)),
             "blocked_projects": sorted(set(execution_package_handoff_blocked_projects)),
             "reason": "No execution package handoff requests recorded." if authorized_handoff_count_total == 0 and blocked_handoff_count_total == 0 else "Execution package handoff results available.",
+        },
+        "execution_package_cursor_bridge_summary": {
+            "bridge_surface_status": "ok",
+            "prepared_count_total": prepared_cursor_bridge_count_total,
+            "artifact_recorded_count_total": artifact_recorded_cursor_bridge_count_total,
+            "denied_count_total": denied_cursor_bridge_count_total,
+            "bridge_counts_by_project": execution_package_cursor_bridge_counts_by_project,
+            "latest_bridge_status_by_project": latest_execution_package_cursor_bridge_status_by_project,
+            "latest_bridge_task_id_by_project": latest_execution_package_bridge_task_id_by_project,
+            "artifact_count_by_project": execution_package_cursor_bridge_artifact_count_by_project,
+            "prepared_projects": sorted(set(cursor_bridge_prepared_projects)),
+            "artifact_return_projects": sorted(set(cursor_bridge_artifact_return_projects)),
+            "reason": "No governed Cursor bridge records available." if prepared_cursor_bridge_count_total == 0 and artifact_recorded_cursor_bridge_count_total == 0 and denied_cursor_bridge_count_total == 0 else "Governed Cursor bridge records available.",
         },
         "execution_package_execution_summary": {
             "execution_surface_status": "ok",
