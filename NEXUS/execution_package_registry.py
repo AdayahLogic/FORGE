@@ -49,11 +49,13 @@ from NEXUS.runtimes.cursor_runtime import (
     normalize_cursor_bridge_handoff,
     validate_cursor_artifact_return,
 )
+from NEXUS.self_evolution_governance import build_self_change_audit_record
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
 EXECUTION_PACKAGE_DIRNAME = "execution_packages"
 MAX_EXECUTION_PACKAGE_LIST_LIMIT = 50
+SELF_CHANGE_AUDIT_FILENAME = "self_change_audit.jsonl"
 
 
 def _utc_now_iso() -> str:
@@ -746,6 +748,135 @@ def list_reviewable_execution_packages(project_path: str | None, n: int = 20) ->
     reviewable = [normalize_execution_package_journal_record(r) for r in rows if _is_review_pending_package(r)]
     reviewable.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return reviewable[:limit]
+
+
+def get_self_change_audit_path(project_path: str | None) -> str | None:
+    state_dir = get_execution_package_state_dir(project_path)
+    if not state_dir:
+        return None
+    return str(state_dir / SELF_CHANGE_AUDIT_FILENAME)
+
+
+def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[str, Any]:
+    r = record or {}
+    target_files = r.get("target_files")
+    if not isinstance(target_files, list):
+        target_files = []
+    protected_zones = r.get("protected_zones")
+    if not isinstance(protected_zones, list):
+        protected_zones = []
+    return {
+        "change_id": str(r.get("change_id") or ""),
+        "recorded_at": str(r.get("recorded_at") or ""),
+        "target_files": [str(item) for item in target_files if str(item).strip()][:50],
+        "change_type": str(r.get("change_type") or ""),
+        "risk_level": str(r.get("risk_level") or "medium_risk").strip().lower(),
+        "protected_zones": [str(item) for item in protected_zones if str(item).strip()][:20],
+        "protected_zone_hit": bool(r.get("protected_zone_hit")),
+        "reason": str(r.get("reason") or ""),
+        "expected_outcome": str(r.get("expected_outcome") or ""),
+        "validation_plan": dict(r.get("validation_plan") or {}),
+        "rollback_plan": dict(r.get("rollback_plan") or {}),
+        "approval_requirement": str(r.get("approval_requirement") or ""),
+        "approval_required": bool(r.get("approval_required")),
+        "approval_status": str(r.get("approval_status") or "optional").strip().lower(),
+        "approved_by": str(r.get("approved_by") or ""),
+        "outcome_status": str(r.get("outcome_status") or "proposed").strip().lower(),
+        "outcome_summary": str(r.get("outcome_summary") or ""),
+        "validation_status": str(r.get("validation_status") or "pending").strip().lower(),
+        "build_status": str(r.get("build_status") or "pending").strip().lower(),
+        "regression_status": str(r.get("regression_status") or "pending").strip().lower(),
+        "gate_outcome": str(r.get("gate_outcome") or "allow_for_review").strip().lower(),
+        "release_lane": str(r.get("release_lane") or "experimental").strip().lower(),
+        "rollback_required": bool(r.get("rollback_required")),
+        "validation_reasons": [str(item) for item in (r.get("validation_reasons") or []) if str(item).strip()][:20],
+        "stable_state_ref": str(r.get("stable_state_ref") or ""),
+        "success": bool(r.get("success")),
+        "authority_trace": dict(r.get("authority_trace") or {}),
+        "governance_trace": dict(r.get("governance_trace") or {}),
+        "contract_status": str(r.get("contract_status") or ""),
+    }
+
+
+def append_self_change_audit_record(
+    *,
+    project_path: str | None,
+    contract: dict[str, Any] | None,
+    outcome_status: str | None = None,
+    approved_by: str | None = None,
+    approval_status: str | None = None,
+    outcome_summary: str | None = None,
+    validation_status: str | None = None,
+    build_status: str | None = None,
+    regression_status: str | None = None,
+    stable_state_ref: str | None = None,
+    release_lane: str | None = None,
+) -> dict[str, Any]:
+    audit_path = get_self_change_audit_path(project_path)
+    if not audit_path:
+        return {"status": "error", "reason": "Self-change audit storage unavailable.", "record": None}
+    record = build_self_change_audit_record(
+        contract=contract,
+        outcome_status=outcome_status,
+        approved_by=approved_by,
+        approval_status=approval_status,
+        outcome_summary=outcome_summary,
+        validation_status=validation_status,
+        build_status=build_status,
+        regression_status=regression_status,
+        stable_state_ref=stable_state_ref,
+        release_lane=release_lane,
+    )
+    record["recorded_at"] = record.get("recorded_at") or _utc_now_iso()
+    governance_trace = dict(record.get("governance_trace") or {})
+    governance_trace["recorded_at"] = record["recorded_at"]
+    record["governance_trace"] = governance_trace
+    normalized = normalize_self_change_audit_record(record)
+    try:
+        with open(audit_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(normalized, ensure_ascii=False) + "\n")
+        return {"status": "ok", "reason": "Self-change audit recorded.", "record": normalized}
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist self-change audit record.", "record": None}
+
+
+def append_self_change_audit_record_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return append_self_change_audit_record(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist self-change audit record.", "record": None}
+
+
+def read_self_change_audit_tail(project_path: str | None, n: int = 50) -> list[dict[str, Any]]:
+    audit_path = get_self_change_audit_path(project_path)
+    if not audit_path:
+        return []
+    p = Path(audit_path)
+    if not p.exists():
+        return []
+    try:
+        lines = p.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+    out: list[dict[str, Any]] = []
+    for line in lines[-max(1, int(n or 50)):]:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            parsed = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            out.append(normalize_self_change_audit_record(parsed))
+    return out
+
+
+def list_self_change_audit_entries(project_path: str | None, n: int = 20) -> list[dict[str, Any]]:
+    limit = max(1, min(int(n or 20), MAX_EXECUTION_PACKAGE_LIST_LIMIT))
+    rows = read_self_change_audit_tail(project_path=project_path, n=MAX_EXECUTION_PACKAGE_LIST_LIMIT)
+    rows.sort(key=lambda item: str(item.get("recorded_at") or ""), reverse=True)
+    return rows[:limit]
 
 
 def record_cursor_bridge_artifact_return(

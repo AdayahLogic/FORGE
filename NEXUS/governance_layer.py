@@ -12,6 +12,7 @@ from typing import Any
 
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
+from NEXUS.self_evolution_governance import evaluate_self_change_governance_safe, evaluate_self_change_release_gate_safe
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 from NEXUS.studio_driver import build_studio_driver_result_safe
 
@@ -520,4 +521,82 @@ def evaluate_governance_outcome_safe(**kwargs: Any) -> dict[str, Any]:
                 "conflict": {},
                 "final_decision_source": "error_fallback",
             },
+        }
+
+
+def evaluate_self_change_governance_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_governance_safe(self_change_contract)
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "propose_self_change")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_governance_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_governance_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "self_change_status": "blocked",
+            "governance_status": "blocked",
+            "approval_required": True,
+            "approval_requirement": "mandatory",
+            "risk_level": "high_risk",
+            "protected_zones": [],
+            "validation_required": True,
+            "rollback_required": True,
+            "contract_status": "invalid",
+            "decision_reason": f"Self-change governance evaluation failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
+            "governance_trace": {"evaluation_scope": "self_evolution", "error": str(e)},
+            "normalized_contract": {},
+        }
+
+
+def evaluate_self_change_release_gate_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_release_gate_safe(self_change_contract)
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "propose_self_change")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_release_gate")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_release_gate_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_release_gate_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "blocked",
+            "change_id": "",
+            "risk_level": "high_risk",
+            "protected_zone_hit": False,
+            "validation_outcome": "pending",
+            "gate_outcome": "blocked_missing_validation",
+            "release_lane": "experimental",
+            "rollback_required": False,
+            "reason": f"Self-change release gating failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
+            "governance_trace": {"evaluation_scope": "self_evolution_release_gate", "error": str(e)},
         }

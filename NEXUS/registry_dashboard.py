@@ -8,6 +8,7 @@ status into one normalized studio snapshot. Read-only; no UI, no async.
 from __future__ import annotations
 
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 from NEXUS.registry import PROJECTS
@@ -777,6 +778,54 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     except Exception:
         backlog_count = 0
         selected_improvement_summary = {}
+
+    try:
+        from NEXUS.execution_package_registry import list_self_change_audit_entries
+
+        forge_root = str(Path(__file__).resolve().parent.parent)
+        self_change_entries = list_self_change_audit_entries(forge_root, n=20)
+    except Exception:
+        self_change_entries = []
+
+    self_change_risk_count_total: dict[str, int] = {"low_risk": 0, "medium_risk": 0, "high_risk": 0}
+    self_change_outcome_count_total: dict[str, int] = {}
+    self_change_approval_requirement_count_total: dict[str, int] = {"optional": 0, "recommended": 0, "mandatory": 0}
+    self_change_gate_outcome_count_total: dict[str, int] = {}
+    self_change_release_lane_count_total: dict[str, int] = {"stable": 0, "experimental": 0}
+    self_change_validation_outcome_count_total: dict[str, int] = {}
+    self_change_protected_zone_hits: dict[str, int] = {}
+    self_change_pending_approval_count_total = 0
+    self_change_success_count_total = 0
+    self_change_failure_count_total = 0
+    self_change_rollback_required_count_total = 0
+    for entry in self_change_entries:
+        risk_level = str(entry.get("risk_level") or "medium_risk")
+        if risk_level in self_change_risk_count_total:
+            self_change_risk_count_total[risk_level] += 1
+        approval_requirement = str(entry.get("approval_requirement") or "")
+        if approval_requirement in self_change_approval_requirement_count_total:
+            self_change_approval_requirement_count_total[approval_requirement] += 1
+        outcome_status = str(entry.get("outcome_status") or "proposed")
+        self_change_outcome_count_total[outcome_status] = self_change_outcome_count_total.get(outcome_status, 0) + 1
+        gate_outcome = str(entry.get("gate_outcome") or "allow_for_review")
+        self_change_gate_outcome_count_total[gate_outcome] = self_change_gate_outcome_count_total.get(gate_outcome, 0) + 1
+        release_lane = str(entry.get("release_lane") or "")
+        if release_lane in self_change_release_lane_count_total:
+            self_change_release_lane_count_total[release_lane] += 1
+        validation_outcome = str(entry.get("validation_status") or "pending")
+        self_change_validation_outcome_count_total[validation_outcome] = self_change_validation_outcome_count_total.get(validation_outcome, 0) + 1
+        if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
+            self_change_pending_approval_count_total += 1
+        if bool(entry.get("success")):
+            self_change_success_count_total += 1
+        elif outcome_status in ("failed", "reverted", "blocked", "error"):
+            self_change_failure_count_total += 1
+        if bool(entry.get("rollback_required")):
+            self_change_rollback_required_count_total += 1
+        for zone in entry.get("protected_zones") or []:
+            zone_name = str(zone or "").strip()
+            if zone_name:
+                self_change_protected_zone_hits[zone_name] = self_change_protected_zone_hits.get(zone_name, 0) + 1
 
     # Overall regression status
     if regression_status_count.get("blocked"):
@@ -1627,6 +1676,23 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "model_route_by_project": model_route_by_project,
         "model_route_count": model_route_count,
         "deployment_preflight_count": deployment_preflight_count,
+        "self_evolution_governance_summary": {
+            "status": "ok",
+            "recent_entries": self_change_entries,
+            "recent_count": len(self_change_entries),
+            "risk_count_total": self_change_risk_count_total,
+            "approval_requirement_count_total": self_change_approval_requirement_count_total,
+            "outcome_count_total": self_change_outcome_count_total,
+            "gate_outcome_count_total": self_change_gate_outcome_count_total,
+            "release_lane_count_total": self_change_release_lane_count_total,
+            "validation_outcome_count_total": self_change_validation_outcome_count_total,
+            "protected_zone_hits": self_change_protected_zone_hits,
+            "pending_approval_count_total": self_change_pending_approval_count_total,
+            "success_count_total": self_change_success_count_total,
+            "failure_count_total": self_change_failure_count_total,
+            "rollback_required_count_total": self_change_rollback_required_count_total,
+            "reason": "No self-change audit records available." if not self_change_entries else "Self-change audit records available.",
+        },
         "self_improvement_backlog_count": backlog_count,
         "selected_improvement_summary": selected_improvement_summary,
         "change_gate_status_count": change_gate_status_count,

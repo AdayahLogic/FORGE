@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 
-AUTHORITY_MODEL_VERSION = "1.0"
+AUTHORITY_MODEL_VERSION = "1.1"
 AUTHORITY_DENIAL_STATUS = "denied"
 ACTOR_COMPONENT_HINTS: dict[str, str] = {
     "nexus": "nexus",
@@ -35,6 +35,9 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
             "enforce_contracts",
             "read_project_memory",
             "read_cross_project_memory",
+            "propose_self_change",
+            "validate_self_change",
+            "record_self_change_audit",
         },
     },
     "helix": {
@@ -54,6 +57,8 @@ COMPONENT_AUTHORITIES: dict[str, dict[str, Any]] = {
             "deny_execution",
             "require_review",
             "enforce_policy",
+            "approve_self_change",
+            "deny_self_change",
         },
     },
     "helios": {
