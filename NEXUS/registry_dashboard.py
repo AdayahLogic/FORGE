@@ -804,6 +804,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_monitoring_status_count_total: dict[str, int] = {}
     self_change_rollback_trigger_outcome_count_total: dict[str, int] = {}
     self_change_stable_status_count_total: dict[str, int] = {}
+    self_change_rollback_scope_count_total: dict[str, int] = {}
+    self_change_blast_radius_count_total: dict[str, int] = {"low": 0, "medium": 0, "high": 0}
+    self_change_rollback_status_count_total: dict[str, int] = {}
+    self_change_rollback_follow_up_validation_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -864,6 +868,21 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         stable_status = str(entry.get("stable_status") or "provisionally_stable")
         self_change_stable_status_count_total[stable_status] = (
             self_change_stable_status_count_total.get(stable_status, 0) + 1
+        )
+        rollback_scope = str(entry.get("rollback_scope") or "file_only")
+        self_change_rollback_scope_count_total[rollback_scope] = (
+            self_change_rollback_scope_count_total.get(rollback_scope, 0) + 1
+        )
+        blast_radius_level = str(entry.get("blast_radius_level") or "low")
+        if blast_radius_level in self_change_blast_radius_count_total:
+            self_change_blast_radius_count_total[blast_radius_level] += 1
+        rollback_status = str(entry.get("rollback_status") or "rollback_pending")
+        self_change_rollback_status_count_total[rollback_status] = (
+            self_change_rollback_status_count_total.get(rollback_status, 0) + 1
+        )
+        rollback_follow_up_key = "required" if bool(entry.get("rollback_follow_up_validation_required")) else "not_required"
+        self_change_rollback_follow_up_validation_required_count_total[rollback_follow_up_key] = (
+            self_change_rollback_follow_up_validation_required_count_total.get(rollback_follow_up_key, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1748,6 +1767,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "monitoring_status_count_total": self_change_monitoring_status_count_total,
             "rollback_trigger_outcome_count_total": self_change_rollback_trigger_outcome_count_total,
             "stable_status_count_total": self_change_stable_status_count_total,
+            "rollback_scope_count_total": self_change_rollback_scope_count_total,
+            "blast_radius_count_total": self_change_blast_radius_count_total,
+            "rollback_status_count_total": self_change_rollback_status_count_total,
+            "rollback_follow_up_validation_required_count_total": self_change_rollback_follow_up_validation_required_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

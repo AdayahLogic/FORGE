@@ -16,6 +16,7 @@ from NEXUS.self_evolution_governance import (
     evaluate_self_change_comparative_scoring_safe,
     evaluate_self_change_governance_safe,
     evaluate_self_change_post_promotion_monitoring_safe,
+    evaluate_self_change_rollback_execution_safe,
     evaluate_self_change_release_gate_safe,
     evaluate_self_change_sandbox_promotion_safe,
 )
@@ -739,4 +740,48 @@ def evaluate_self_change_post_promotion_monitoring_outcome_safe(**kwargs: Any) -
             "stable_status": "provisionally_stable",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
             "governance_trace": {"evaluation_scope": "self_evolution_post_promotion_monitoring", "error": str(e)},
+        }
+
+
+def evaluate_self_change_rollback_execution_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_rollback_execution_safe(self_change_contract)
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "execute_self_change_rollback")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_rollback_execution")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_rollback_execution_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_rollback_execution_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "rollback_failed",
+            "change_id": "",
+            "rollback_id": "",
+            "rollback_scope": "file_only",
+            "rollback_target_files": [],
+            "rollback_target_components": [],
+            "blast_radius_level": "high",
+            "rollback_status": "rollback_failed",
+            "rollback_reason": f"Self-change rollback execution failed: {e}",
+            "rollback_approval_required": True,
+            "rollback_sequence": ["validate", "approve", "execute", "verify"],
+            "rollback_result": f"Self-change rollback execution failed: {e}",
+            "rollback_execution_eligible": False,
+            "rollback_follow_up_validation_required": True,
+            "rollback_validation_status": "pending",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "execute_self_change_rollback"},
+            "governance_trace": {"evaluation_scope": "self_evolution_rollback_execution", "error": str(e)},
         }

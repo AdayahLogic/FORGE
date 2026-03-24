@@ -94,6 +94,22 @@ VALID_STABLE_STATUSES = {
     "stable_degraded",
     "rollback_pending",
 }
+VALID_ROLLBACK_EXECUTION_STATUSES = {
+    "rollback_pending",
+    "rollback_approved",
+    "rollback_blocked",
+    "rollback_executing",
+    "rollback_completed",
+    "rollback_failed",
+}
+VALID_ROLLBACK_SCOPES = {
+    "file_only",
+    "component_only",
+    "project_only",
+    "protected_core_limited",
+}
+VALID_BLAST_RADIUS_LEVELS = {"low", "medium", "high"}
+DEFAULT_ROLLBACK_SEQUENCE = ["validate", "approve", "execute", "verify"]
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -211,6 +227,159 @@ def _normalize_rollback_trigger_outcome(value: Any, *, default: str) -> str:
 def _normalize_stable_status(value: Any, *, default: str) -> str:
     status = _normalize_text(value).lower()
     return status if status in VALID_STABLE_STATUSES else default
+
+
+def _normalize_rollback_scope(value: Any, *, default: str) -> str:
+    scope = _normalize_text(value).lower()
+    return scope if scope in VALID_ROLLBACK_SCOPES else default
+
+
+def _normalize_blast_radius_level(value: Any, *, default: str) -> str:
+    level = _normalize_text(value).lower()
+    return level if level in VALID_BLAST_RADIUS_LEVELS else default
+
+
+def _normalize_string_list(value: Any, *, limit: int = 50, lower: bool = False) -> list[str]:
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = []
+    out: list[str] = []
+    for item in items:
+        normalized = _normalize_text(item)
+        if lower:
+            normalized = normalized.lower()
+        if normalized and normalized not in out:
+            out.append(normalized)
+    return out[:limit]
+
+
+def _normalize_rollback_sequence(value: Any) -> list[str]:
+    sequence = _normalize_string_list(value, limit=10, lower=True)
+    normalized: list[str] = []
+    for step in sequence or DEFAULT_ROLLBACK_SEQUENCE:
+        if step in {"validate", "approve", "execute", "verify"} and step not in normalized:
+            normalized.append(step)
+    return normalized or list(DEFAULT_ROLLBACK_SEQUENCE)
+
+
+def _infer_rollback_scope(
+    *,
+    raw_scope: Any,
+    target_files: list[str],
+    target_components: list[str],
+    protected_zones: list[str],
+) -> str:
+    explicit = _normalize_rollback_scope(raw_scope, default="")
+    if explicit:
+        return explicit
+    if protected_zones:
+        return "protected_core_limited"
+    if target_components and not target_files:
+        return "component_only"
+    if len(target_files) > 1:
+        return "project_only"
+    return "file_only"
+
+
+def _infer_blast_radius_level(
+    *,
+    raw_level: Any,
+    rollback_scope: str,
+    protected_zones: list[str],
+    target_files: list[str],
+    target_components: list[str],
+) -> str:
+    explicit = _normalize_blast_radius_level(raw_level, default="")
+    if explicit:
+        return explicit
+    if protected_zones or rollback_scope == "protected_core_limited":
+        return "high"
+    if rollback_scope == "project_only" or len(target_components) > 1 or len(target_files) > 5:
+        return "medium"
+    return "low"
+
+
+def _determine_rollback_approval_requirement(
+    *,
+    blast_radius_level: str,
+    rollback_scope: str,
+    protected_zones: list[str],
+) -> bool:
+    if protected_zones or rollback_scope == "protected_core_limited":
+        return True
+    return blast_radius_level in {"medium", "high"}
+
+
+def _extract_project_roots(target_files: list[str]) -> list[str]:
+    roots: list[str] = []
+    for path in target_files:
+        normalized = _normalize_path(path)
+        if not normalized:
+            continue
+        parts = [part for part in normalized.split("/") if part]
+        if len(parts) >= 2:
+            root = "/".join(parts[:2])
+        elif parts:
+            root = parts[0]
+        else:
+            continue
+        if root not in roots:
+            roots.append(root)
+    return roots
+
+
+def _resolve_component_targets(components: list[str]) -> list[str]:
+    resolved: list[str] = []
+    component_set = {component.lower() for component in components if component}
+    for zone_name, patterns in PROTECTED_CORE_ZONES.items():
+        normalized_zone_name = zone_name.lower()
+        if normalized_zone_name in component_set:
+            for pattern in patterns:
+                normalized = _normalize_text(pattern)
+                if normalized and normalized not in resolved:
+                    resolved.append(normalized)
+    return resolved
+
+
+def _is_path_within_scope(
+    path: str,
+    *,
+    rollback_scope: str,
+    allowed_files: list[str],
+    allowed_components: list[str],
+    protected_zones: list[str],
+    project_roots: list[str],
+) -> bool:
+    normalized_path = _normalize_path(path)
+    if not normalized_path:
+        return False
+    allowed_file_paths = {_normalize_path(item) for item in allowed_files if _normalize_text(item)}
+    component_patterns = {_normalize_path(item) for item in _resolve_component_targets(allowed_components)}
+    protected_patterns = {
+        _normalize_path(pattern)
+        for zone_name, patterns in PROTECTED_CORE_ZONES.items()
+        if zone_name in protected_zones
+        for pattern in patterns
+    }
+
+    if rollback_scope == "file_only":
+        return normalized_path in allowed_file_paths
+    if rollback_scope == "component_only":
+        return any(pattern and pattern in normalized_path for pattern in component_patterns)
+    if rollback_scope == "project_only":
+        return any(root and normalized_path.startswith(root) for root in project_roots)
+    if rollback_scope == "protected_core_limited":
+        return any(pattern and pattern in normalized_path for pattern in protected_patterns)
+    return False
+
+
+def _normalize_follow_up_validation_required(value: Any, *, blast_radius_level: str, approval_required: bool) -> bool:
+    if value is None:
+        return approval_required or blast_radius_level in {"medium", "high"}
+    return bool(value)
 
 
 def _contains_any(text: str, hints: tuple[str, ...] | list[str]) -> bool:
@@ -355,6 +524,31 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         raw.get("release_lane") or raw.get("requested_release_lane"),
         default="experimental" if risk_level == "high_risk" or classification["protected_zones"] else "stable",
     )
+    rollback_target_files = _normalize_target_files(raw.get("rollback_target_files") or raw.get("target_files"))
+    rollback_target_components = _normalize_string_list(raw.get("rollback_target_components"), limit=20, lower=True)
+    protected_zones = list(classification.get("protected_zones") or [])
+    rollback_scope = _infer_rollback_scope(
+        raw_scope=raw.get("rollback_scope"),
+        target_files=rollback_target_files,
+        target_components=rollback_target_components,
+        protected_zones=protected_zones,
+    )
+    blast_radius_level = _infer_blast_radius_level(
+        raw_level=raw.get("blast_radius_level"),
+        rollback_scope=rollback_scope,
+        protected_zones=protected_zones,
+        target_files=rollback_target_files,
+        target_components=rollback_target_components,
+    )
+    rollback_approval_required = _determine_rollback_approval_requirement(
+        blast_radius_level=blast_radius_level,
+        rollback_scope=rollback_scope,
+        protected_zones=protected_zones,
+    )
+    rollback_status = _normalize_text(raw.get("rollback_status")).lower()
+    if rollback_status not in VALID_ROLLBACK_EXECUTION_STATUSES:
+        rollback_status = "rollback_pending"
+    rollback_sequence = _normalize_rollback_sequence(raw.get("rollback_sequence"))
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -369,7 +563,7 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "authority_trace": dict(raw.get("authority_trace") or {}),
         "governance_trace": dict(raw.get("governance_trace") or {}),
         "classification": classification,
-        "protected_zones": list(classification.get("protected_zones") or []),
+        "protected_zones": protected_zones,
         "approval_requirement": VALID_APPROVAL_REQUIREMENTS[risk_level],
         "approval_status": _normalize_approval_status(raw.get("approval_status"), approval_required=approval_required),
         "validation_outcome": validation_outcome,
@@ -413,6 +607,24 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
             raw.get("stable_status"),
             default="provisionally_stable",
         ),
+        "rollback_id": _normalize_text(raw.get("rollback_id")),
+        "rollback_scope": rollback_scope,
+        "rollback_target_files": rollback_target_files,
+        "rollback_target_components": rollback_target_components,
+        "blast_radius_level": blast_radius_level,
+        "rollback_status": rollback_status,
+        "rollback_result": _normalize_text(raw.get("rollback_result")),
+        "rollback_execution_eligible": bool(raw.get("rollback_execution_eligible", False)),
+        "rollback_reason": _normalize_text(raw.get("rollback_reason")),
+        "rollback_approval_required": rollback_approval_required,
+        "rollback_sequence": rollback_sequence,
+        "rollback_sequence_completed": _normalize_string_list(raw.get("rollback_sequence_completed"), limit=10, lower=True),
+        "rollback_follow_up_validation_required": _normalize_follow_up_validation_required(
+            raw.get("rollback_follow_up_validation_required"),
+            blast_radius_level=blast_radius_level,
+            approval_required=rollback_approval_required,
+        ),
+        "rollback_validation_status": _normalize_text(raw.get("rollback_validation_status")).lower() or "pending",
     }
 
 
@@ -1155,6 +1367,152 @@ def evaluate_self_change_post_promotion_monitoring(contract: dict[str, Any] | No
     }
 
 
+def evaluate_self_change_rollback_execution(contract: dict[str, Any] | None) -> dict[str, Any]:
+    monitored = evaluate_self_change_post_promotion_monitoring(contract)
+    normalized = monitored["normalized_contract"]
+    rollback_id = str(normalized.get("rollback_id") or f"rollback-{uuid.uuid4().hex[:12]}")
+    rollback_scope = str(normalized.get("rollback_scope") or "file_only")
+    rollback_target_files = list(normalized.get("rollback_target_files") or [])
+    rollback_target_components = list(normalized.get("rollback_target_components") or [])
+    protected_zones = list(monitored.get("protected_zones") or [])
+    blast_radius_level = str(normalized.get("blast_radius_level") or "low")
+    rollback_reason = str(normalized.get("rollback_reason") or monitored.get("rollback_reason") or "")
+    approval_status = str(normalized.get("approval_status") or monitored.get("approval_status") or "optional").lower()
+    rollback_approval_required = bool(normalized.get("rollback_approval_required"))
+    rollback_sequence = list(normalized.get("rollback_sequence") or DEFAULT_ROLLBACK_SEQUENCE)
+    project_roots = _extract_project_roots(rollback_target_files)
+
+    rollback_trigger_outcome = str(monitored.get("rollback_trigger_outcome") or "monitor_more")
+    rollback_required = bool(monitored.get("rollback_required"))
+    governance_trace = {
+        **dict(monitored.get("governance_trace") or {}),
+    }
+    authority_trace = dict(monitored.get("authority_trace") or {})
+
+    if rollback_trigger_outcome not in {"rollback_recommended", "rollback_required"} and not rollback_required:
+        status = "rollback_blocked"
+        rollback_result = "Rollback execution is not eligible because no governed rollback trigger is active."
+        sequence_completed = ["validate"]
+        rollback_execution_eligible = False
+    else:
+        rollback_execution_eligible = True
+        status = "rollback_pending"
+        rollback_result = "Rollback execution remains pending governed validation."
+        sequence_completed = ["validate"]
+
+    scope_expansion_detected = False
+    scope_expansion_details: list[str] = []
+    for candidate in rollback_target_files:
+        if not _is_path_within_scope(
+            candidate,
+            rollback_scope=rollback_scope,
+            allowed_files=rollback_target_files,
+            allowed_components=rollback_target_components,
+            protected_zones=protected_zones,
+            project_roots=project_roots,
+        ):
+            scope_expansion_detected = True
+            scope_expansion_details.append(candidate)
+
+    if rollback_scope == "component_only" and not rollback_target_components:
+        scope_expansion_detected = True
+        scope_expansion_details.append("missing rollback_target_components")
+    if rollback_scope == "file_only" and len(rollback_target_files) != 1:
+        scope_expansion_detected = True
+        scope_expansion_details.append("file_only scope requires exactly one rollback target file")
+    if rollback_scope == "protected_core_limited" and not protected_zones:
+        scope_expansion_detected = True
+        scope_expansion_details.append("missing protected_zones")
+
+    if scope_expansion_detected:
+        status = "rollback_blocked"
+        rollback_result = "Rollback scope expansion was denied."
+        rollback_execution_eligible = False
+        rollback_reason = rollback_reason or "Rollback attempted to exceed its declared governed scope."
+
+    approval_satisfied = approval_status in {"approved", "optional", "not_required"}
+    if rollback_approval_required and approval_status != "approved":
+        status = "rollback_blocked"
+        rollback_result = "Rollback approval is required before execution can proceed."
+        rollback_execution_eligible = rollback_execution_eligible and not scope_expansion_detected
+    elif rollback_execution_eligible and not scope_expansion_detected:
+        if blast_radius_level == "low":
+            status = "rollback_approved"
+            rollback_result = "Rollback is eligible for governed execution within its bounded scope."
+            sequence_completed = ["validate", "approve"]
+        elif approval_satisfied:
+            status = "rollback_approved"
+            rollback_result = "Rollback received required approval and is ready for governed execution."
+            sequence_completed = ["validate", "approve"]
+
+    rollback_validation_status = str(normalized.get("rollback_validation_status") or "pending").lower()
+    if rollback_execution_eligible and not scope_expansion_detected and (
+        (blast_radius_level == "low" and not rollback_approval_required) or approval_status == "approved"
+    ):
+        status = "rollback_completed"
+        rollback_result = "Rollback completed within its governed scope."
+        sequence_completed = list(rollback_sequence)
+        rollback_validation_status = "required" if bool(normalized.get("rollback_follow_up_validation_required")) else "not_required"
+    elif rollback_execution_eligible and status == "rollback_approved":
+        status = "rollback_approved"
+
+    if status == "rollback_completed":
+        governance_trace["rollback_execution"] = {
+            "rollback_id": rollback_id,
+            "rollback_scope": rollback_scope,
+            "rollback_target_files": rollback_target_files,
+            "rollback_target_components": rollback_target_components,
+            "blast_radius_level": blast_radius_level,
+            "rollback_trigger_outcome": rollback_trigger_outcome,
+            "rollback_follow_up_validation_required": bool(normalized.get("rollback_follow_up_validation_required")),
+            "rollback_validation_status": rollback_validation_status,
+            "rollback_sequence": rollback_sequence,
+            "rollback_sequence_completed": sequence_completed,
+            "scope_expansion_detected": False,
+        }
+    else:
+        governance_trace["rollback_execution"] = {
+            "rollback_id": rollback_id,
+            "rollback_scope": rollback_scope,
+            "rollback_target_files": rollback_target_files,
+            "rollback_target_components": rollback_target_components,
+            "blast_radius_level": blast_radius_level,
+            "rollback_trigger_outcome": rollback_trigger_outcome,
+            "rollback_follow_up_validation_required": bool(normalized.get("rollback_follow_up_validation_required")),
+            "rollback_validation_status": rollback_validation_status,
+            "rollback_sequence": rollback_sequence,
+            "rollback_sequence_completed": sequence_completed,
+            "scope_expansion_detected": scope_expansion_detected,
+            "scope_expansion_details": scope_expansion_details,
+        }
+
+    return {
+        "status": status,
+        "change_id": str(monitored.get("change_id") or ""),
+        "rollback_id": rollback_id,
+        "rollback_scope": rollback_scope,
+        "rollback_target_files": rollback_target_files,
+        "rollback_target_components": rollback_target_components,
+        "blast_radius_level": blast_radius_level,
+        "rollback_status": status,
+        "rollback_reason": rollback_reason,
+        "rollback_approval_required": rollback_approval_required,
+        "rollback_sequence": rollback_sequence,
+        "rollback_result": rollback_result,
+        "rollback_execution_eligible": rollback_execution_eligible,
+        "rollback_follow_up_validation_required": bool(normalized.get("rollback_follow_up_validation_required")),
+        "rollback_validation_status": rollback_validation_status,
+        "rollback_triggered": bool(monitored.get("rollback_triggered")),
+        "rollback_trigger_outcome": rollback_trigger_outcome,
+        "approval_status": approval_status,
+        "protected_zone_hit": bool(monitored.get("protected_zone_hit")),
+        "protected_zones": protected_zones,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -1183,6 +1541,7 @@ def build_self_change_audit_record(
         source_contract["application_state"] = "failed" if _normalize_text(outcome_status).lower() in {"failed", "rolled_back"} else "proposed"
 
     monitored = evaluate_self_change_post_promotion_monitoring(source_contract)
+    rollback_execution = evaluate_self_change_rollback_execution(source_contract)
     normalized = monitored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
@@ -1236,11 +1595,30 @@ def build_self_change_audit_record(
         "rollback_reason": str(monitored.get("rollback_reason") or ""),
         "stable_status": str(monitored.get("stable_status") or "provisionally_stable"),
         "rollback_required": bool(monitored.get("rollback_required")),
+        "rollback_id": str(rollback_execution.get("rollback_id") or normalized.get("rollback_id") or ""),
+        "rollback_scope": str(rollback_execution.get("rollback_scope") or normalized.get("rollback_scope") or "file_only"),
+        "rollback_target_files": list(rollback_execution.get("rollback_target_files") or normalized.get("rollback_target_files") or []),
+        "rollback_target_components": list(
+            rollback_execution.get("rollback_target_components") or normalized.get("rollback_target_components") or []
+        ),
+        "blast_radius_level": str(rollback_execution.get("blast_radius_level") or normalized.get("blast_radius_level") or "low"),
+        "rollback_status": str(rollback_execution.get("rollback_status") or "rollback_pending"),
+        "rollback_result": str(rollback_execution.get("rollback_result") or ""),
+        "rollback_execution_eligible": bool(rollback_execution.get("rollback_execution_eligible")),
+        "rollback_approval_required": bool(rollback_execution.get("rollback_approval_required")),
+        "rollback_sequence": list(rollback_execution.get("rollback_sequence") or normalized.get("rollback_sequence") or []),
+        "rollback_follow_up_validation_required": bool(
+            rollback_execution.get("rollback_follow_up_validation_required")
+            or normalized.get("rollback_follow_up_validation_required")
+        ),
+        "rollback_validation_status": str(
+            rollback_execution.get("rollback_validation_status") or normalized.get("rollback_validation_status") or "pending"
+        ),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(monitored.get("authority_trace") or {}),
-        "governance_trace": dict(monitored.get("governance_trace") or {}),
+        "authority_trace": dict(rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "governance_trace": dict(rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
         "contract_status": str(monitored.get("contract_status") or ""),
     }
 
@@ -1446,5 +1824,42 @@ def evaluate_self_change_post_promotion_monitoring_safe(contract: dict[str, Any]
             "build_status": str(normalized.get("build_status") or "pending"),
             "regression_status": str(normalized.get("regression_status") or "pending"),
             "contract_status": "invalid",
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_rollback_execution_safe(contract: dict[str, Any] | None) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_rollback_execution(contract)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        rollback_id = str(normalized.get("rollback_id") or "")
+        return {
+            "status": "rollback_failed",
+            "change_id": str(normalized.get("change_id") or ""),
+            "rollback_id": rollback_id,
+            "rollback_scope": str(normalized.get("rollback_scope") or "file_only"),
+            "rollback_target_files": list(normalized.get("rollback_target_files") or []),
+            "rollback_target_components": list(normalized.get("rollback_target_components") or []),
+            "blast_radius_level": str(normalized.get("blast_radius_level") or "high"),
+            "rollback_status": "rollback_failed",
+            "rollback_reason": str(normalized.get("rollback_reason") or f"Rollback execution failed: {e}"),
+            "rollback_approval_required": bool(normalized.get("rollback_approval_required", True)),
+            "rollback_sequence": list(normalized.get("rollback_sequence") or DEFAULT_ROLLBACK_SEQUENCE),
+            "rollback_result": f"Rollback execution failed: {e}",
+            "rollback_execution_eligible": False,
+            "rollback_follow_up_validation_required": bool(normalized.get("rollback_follow_up_validation_required")),
+            "rollback_validation_status": str(normalized.get("rollback_validation_status") or "pending"),
+            "rollback_triggered": False,
+            "rollback_trigger_outcome": str(normalized.get("rollback_trigger_outcome") or "monitor_more"),
+            "approval_status": str(normalized.get("approval_status") or "pending"),
+            "protected_zone_hit": bool(normalized.get("protected_zones")),
+            "protected_zones": list(normalized.get("protected_zones") or []),
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "rollback_execution_error": str(e),
+            },
             "normalized_contract": normalized,
         }

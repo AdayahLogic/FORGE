@@ -762,12 +762,21 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
     target_files = r.get("target_files")
     if not isinstance(target_files, list):
         target_files = []
+    rollback_target_files = r.get("rollback_target_files")
+    if not isinstance(rollback_target_files, list):
+        rollback_target_files = []
     protected_zones = r.get("protected_zones")
     if not isinstance(protected_zones, list):
         protected_zones = []
     comparison_dimensions = r.get("comparison_dimensions")
     if not isinstance(comparison_dimensions, list):
         comparison_dimensions = []
+    rollback_target_components = r.get("rollback_target_components")
+    if not isinstance(rollback_target_components, list):
+        rollback_target_components = []
+    rollback_sequence = r.get("rollback_sequence")
+    if not isinstance(rollback_sequence, list):
+        rollback_sequence = []
     return {
         "change_id": str(r.get("change_id") or ""),
         "recorded_at": str(r.get("recorded_at") or ""),
@@ -821,6 +830,18 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
         "rollback_reason": str(r.get("rollback_reason") or ""),
         "stable_status": str(r.get("stable_status") or "provisionally_stable").strip().lower(),
         "rollback_required": bool(r.get("rollback_required")),
+        "rollback_id": str(r.get("rollback_id") or ""),
+        "rollback_scope": str(r.get("rollback_scope") or "file_only").strip().lower(),
+        "rollback_target_files": [str(item) for item in rollback_target_files if str(item).strip()][:50],
+        "rollback_target_components": [str(item).strip().lower() for item in rollback_target_components if str(item).strip()][:20],
+        "blast_radius_level": str(r.get("blast_radius_level") or "low").strip().lower(),
+        "rollback_status": str(r.get("rollback_status") or "rollback_pending").strip().lower(),
+        "rollback_result": str(r.get("rollback_result") or ""),
+        "rollback_execution_eligible": bool(r.get("rollback_execution_eligible")),
+        "rollback_approval_required": bool(r.get("rollback_approval_required")),
+        "rollback_sequence": [str(item).strip().lower() for item in rollback_sequence if str(item).strip()][:10],
+        "rollback_follow_up_validation_required": bool(r.get("rollback_follow_up_validation_required")),
+        "rollback_validation_status": str(r.get("rollback_validation_status") or "pending").strip().lower(),
         "validation_reasons": [str(item) for item in (r.get("validation_reasons") or []) if str(item).strip()][:20],
         "stable_state_ref": str(r.get("stable_state_ref") or ""),
         "success": bool(r.get("success")),
