@@ -20,6 +20,7 @@ from NEXUS.self_evolution_governance import (
     evaluate_self_change_rollback_execution_safe,
     evaluate_self_change_release_gate_safe,
     evaluate_self_change_sandbox_promotion_safe,
+    evaluate_self_change_staged_rollout_safe,
     evaluate_self_change_stability_posture_safe,
     evaluate_self_change_executive_checkpoint_safe,
 )
@@ -927,4 +928,50 @@ def evaluate_self_change_executive_checkpoint_outcome_safe(**kwargs: Any) -> dic
             "reason": f"Self-change executive checkpoint failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_checkpoint"},
             "governance_trace": {"evaluation_scope": "self_evolution_executive_checkpoint", "error": str(e)},
+        }
+
+
+def evaluate_self_change_staged_rollout_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_staged_rollout_safe(
+        self_change_contract,
+        recent_audit_entries=recent_audit_entries,
+    )
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "govern_self_change_rollout")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_staged_rollout")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_staged_rollout_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_staged_rollout_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "rollout_blocked",
+            "change_id": "",
+            "rollout_stage": "experimental_only",
+            "rollout_scope": "project_scoped_subset",
+            "rollout_status": "rollout_blocked",
+            "cohort_type": "project_scoped_subset",
+            "cohort_size": 1,
+            "cohort_selection_reason": "Safe fallback applied.",
+            "stage_promotion_required": True,
+            "broader_rollout_blocked": True,
+            "rollout_reason": f"Self-change staged rollout failed: {e}",
+            "blast_radius_level": "high",
+            "reason": f"Self-change staged rollout failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_rollout"},
+            "governance_trace": {"evaluation_scope": "self_evolution_staged_rollout", "error": str(e)},
         }

@@ -823,6 +823,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_manual_hold_active_count_total: dict[str, int] = {"active": 0, "inactive": 0}
     self_change_manual_hold_scope_count_total: dict[str, int] = {}
     self_change_override_status_count_total: dict[str, int] = {}
+    self_change_rollout_stage_count_total: dict[str, int] = {}
+    self_change_rollout_scope_count_total: dict[str, int] = {}
+    self_change_rollout_status_count_total: dict[str, int] = {}
+    self_change_cohort_type_count_total: dict[str, int] = {}
+    self_change_stage_promotion_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_broader_rollout_blocked_count_total: dict[str, int] = {"blocked": 0, "not_blocked": 0}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -959,6 +965,30 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         override_status = str(entry.get("override_status") or "no_override")
         self_change_override_status_count_total[override_status] = (
             self_change_override_status_count_total.get(override_status, 0) + 1
+        )
+        rollout_stage = str(entry.get("rollout_stage") or "limited_cohort")
+        self_change_rollout_stage_count_total[rollout_stage] = (
+            self_change_rollout_stage_count_total.get(rollout_stage, 0) + 1
+        )
+        rollout_scope = str(entry.get("rollout_scope") or "")
+        self_change_rollout_scope_count_total[rollout_scope] = (
+            self_change_rollout_scope_count_total.get(rollout_scope, 0) + 1
+        )
+        rollout_status = str(entry.get("rollout_status") or "rollout_pending")
+        self_change_rollout_status_count_total[rollout_status] = (
+            self_change_rollout_status_count_total.get(rollout_status, 0) + 1
+        )
+        cohort_type = str(entry.get("cohort_type") or "low_risk_subset")
+        self_change_cohort_type_count_total[cohort_type] = (
+            self_change_cohort_type_count_total.get(cohort_type, 0) + 1
+        )
+        stage_promotion_key = "required" if bool(entry.get("stage_promotion_required")) else "not_required"
+        self_change_stage_promotion_required_count_total[stage_promotion_key] = (
+            self_change_stage_promotion_required_count_total.get(stage_promotion_key, 0) + 1
+        )
+        broader_rollout_key = "blocked" if bool(entry.get("broader_rollout_blocked")) else "not_blocked"
+        self_change_broader_rollout_blocked_count_total[broader_rollout_key] = (
+            self_change_broader_rollout_blocked_count_total.get(broader_rollout_key, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1865,6 +1895,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "manual_hold_active_count_total": self_change_manual_hold_active_count_total,
             "manual_hold_scope_count_total": self_change_manual_hold_scope_count_total,
             "override_status_count_total": self_change_override_status_count_total,
+            "rollout_stage_count_total": self_change_rollout_stage_count_total,
+            "rollout_scope_count_total": self_change_rollout_scope_count_total,
+            "rollout_status_count_total": self_change_rollout_status_count_total,
+            "cohort_type_count_total": self_change_cohort_type_count_total,
+            "stage_promotion_required_count_total": self_change_stage_promotion_required_count_total,
+            "broader_rollout_blocked_count_total": self_change_broader_rollout_blocked_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

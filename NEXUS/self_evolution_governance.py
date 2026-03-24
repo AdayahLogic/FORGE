@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.4"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.5"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -131,6 +131,21 @@ VALID_EXECUTIVE_CHECKPOINT_STATUSES = {
     "blocked_by_hold",
 }
 VALID_MANUAL_HOLD_STATUSES = {"no_hold", "hold_requested", "hold_active", "hold_release_pending", "hold_released"}
+VALID_ROLLOUT_STAGES = {"experimental_only", "limited_cohort", "broader_cohort", "platform_wide"}
+VALID_ROLLOUT_EVALUATION_STATUSES = {
+    "rollout_pending",
+    "rollout_blocked",
+    "rollout_advancing",
+    "rollout_halted",
+    "rollout_reverted",
+}
+VALID_COHORT_TYPES = {
+    "protected_core_subset",
+    "low_risk_subset",
+    "project_scoped_subset",
+    "broader_general_subset",
+}
+ROLLOUT_STAGE_ORDER = ["experimental_only", "limited_cohort", "broader_cohort", "platform_wide"]
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -313,6 +328,105 @@ def _normalize_manual_hold_status(value: Any, *, default: str) -> str:
     }
     status = aliases.get(status, status)
     return status if status in VALID_MANUAL_HOLD_STATUSES else default
+
+
+def _normalize_rollout_stage(value: Any, *, default: str) -> str:
+    stage = _normalize_text(value).lower()
+    return stage if stage in VALID_ROLLOUT_STAGES else default
+
+
+def _normalize_rollout_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    return status if status in VALID_ROLLOUT_EVALUATION_STATUSES else default
+
+
+def _normalize_cohort_type(value: Any, *, default: str) -> str:
+    cohort_type = _normalize_text(value).lower()
+    return cohort_type if cohort_type in VALID_COHORT_TYPES else default
+
+
+def _requires_staged_rollout(
+    *,
+    risk_level: str,
+    protected_zone_hit: bool,
+    blast_radius_level: str,
+    sandbox_required: bool,
+    checkpoint_required: bool,
+) -> bool:
+    return (
+        protected_zone_hit
+        or blast_radius_level in {"medium", "high"}
+        or risk_level in {"medium_risk", "high_risk"}
+        or sandbox_required
+        or checkpoint_required
+    )
+
+
+def _infer_default_rollout_stage(
+    *,
+    risk_level: str,
+    protected_zone_hit: bool,
+    blast_radius_level: str,
+    rollout_required: bool,
+) -> str:
+    if protected_zone_hit or blast_radius_level == "high":
+        return "experimental_only"
+    if rollout_required:
+        return "limited_cohort"
+    if blast_radius_level == "medium" or risk_level == "medium_risk":
+        return "limited_cohort"
+    return "platform_wide"
+
+
+def _infer_default_cohort_type(
+    *,
+    protected_zone_hit: bool,
+    blast_radius_level: str,
+    risk_level: str,
+    target_files: list[str],
+    project_roots: list[str],
+) -> str:
+    if protected_zone_hit:
+        return "protected_core_subset"
+    if blast_radius_level == "high":
+        return "project_scoped_subset"
+    if len(project_roots) == 1 and target_files:
+        return "project_scoped_subset"
+    if blast_radius_level == "medium" or risk_level == "medium_risk":
+        return "low_risk_subset"
+    return "broader_general_subset"
+
+
+def _default_cohort_size(*, rollout_stage: str, cohort_type: str) -> int:
+    if rollout_stage == "experimental_only":
+        return 1 if cohort_type == "protected_core_subset" else 2
+    if rollout_stage == "limited_cohort":
+        return 3 if cohort_type == "protected_core_subset" else 5
+    if rollout_stage == "broader_cohort":
+        return 10 if cohort_type in {"protected_core_subset", "project_scoped_subset"} else 25
+    return 100
+
+
+def _next_rollout_stage(current_stage: str) -> str:
+    try:
+        idx = ROLLOUT_STAGE_ORDER.index(current_stage)
+    except ValueError:
+        return "limited_cohort"
+    if idx >= len(ROLLOUT_STAGE_ORDER) - 1:
+        return current_stage
+    return ROLLOUT_STAGE_ORDER[idx + 1]
+
+
+def _rollout_scope_label(*, rollout_stage: str, cohort_type: str, project_roots: list[str]) -> str:
+    if rollout_stage == "platform_wide":
+        return "platform_wide"
+    if cohort_type == "protected_core_subset":
+        return "protected_core_subset"
+    if cohort_type == "project_scoped_subset":
+        return project_roots[0] if len(project_roots) == 1 else "project_scoped_subset"
+    if cohort_type == "low_risk_subset":
+        return "low_risk_subset"
+    return rollout_stage
 
 
 def _normalize_rollback_sequence(value: Any) -> list[str]:
@@ -704,6 +818,49 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
     manual_hold_status = _normalize_manual_hold_status(raw.get("manual_hold_status") or raw.get("status"), default="no_hold")
     manual_hold_scope = _normalize_checkpoint_scope(raw.get("manual_hold_scope"), default="project_scoped")
     hold_release_requirements = _normalize_string_list(raw.get("hold_release_requirements"), limit=20, lower=True)
+    rollout_required = _requires_staged_rollout(
+        risk_level=risk_level,
+        protected_zone_hit=bool(protected_zones),
+        blast_radius_level=blast_radius_level,
+        sandbox_required=bool(protected_zones) or risk_level == "high_risk",
+        checkpoint_required=bool(raw.get("checkpoint_required")),
+    )
+    default_rollout_stage = _infer_default_rollout_stage(
+        risk_level=risk_level,
+        protected_zone_hit=bool(protected_zones),
+        blast_radius_level=blast_radius_level,
+        rollout_required=rollout_required,
+    )
+    project_roots = _extract_project_roots(normalized_target_files)
+    default_cohort_type = _infer_default_cohort_type(
+        protected_zone_hit=bool(protected_zones),
+        blast_radius_level=blast_radius_level,
+        risk_level=risk_level,
+        target_files=normalized_target_files,
+        project_roots=project_roots,
+    )
+    rollout_stage = _normalize_rollout_stage(raw.get("rollout_stage"), default=default_rollout_stage)
+    cohort_type = _normalize_cohort_type(raw.get("cohort_type"), default=default_cohort_type)
+    rollout_status = _normalize_rollout_status(raw.get("rollout_status") or raw.get("status"), default="rollout_pending")
+    stage_promotion_required = bool(raw.get("stage_promotion_required")) or rollout_stage != "platform_wide"
+    broader_rollout_blocked = bool(raw.get("broader_rollout_blocked")) or rollout_required
+    cohort_selection_reason = _normalize_text(raw.get("cohort_selection_reason"))
+    if not cohort_selection_reason:
+        if cohort_type == "protected_core_subset":
+            cohort_selection_reason = "Protected-core exposure requires the narrowest governed cohort."
+        elif cohort_type == "project_scoped_subset":
+            cohort_selection_reason = "Blast radius is constrained to project-scoped adoption first."
+        elif cohort_type == "low_risk_subset":
+            cohort_selection_reason = "Governed adoption begins with a smaller low-risk cohort."
+        else:
+            cohort_selection_reason = "Broader general cohort is allowed by the current risk posture."
+    rollout_reason = _normalize_text(raw.get("rollout_reason"))
+    rollout_scope = _normalize_text(raw.get("rollout_scope")) or _rollout_scope_label(
+        rollout_stage=rollout_stage,
+        cohort_type=cohort_type,
+        project_roots=project_roots,
+    )
+    cohort_size = max(0, int(raw.get("cohort_size") or _default_cohort_size(rollout_stage=rollout_stage, cohort_type=cohort_type)))
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -815,6 +972,15 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "hold_reason": _normalize_text(raw.get("hold_reason")),
         "hold_release_requirements": hold_release_requirements,
         "override_status": _normalize_text(raw.get("override_status")).lower() or "no_override",
+        "rollout_stage": rollout_stage,
+        "rollout_scope": rollout_scope,
+        "rollout_status": rollout_status,
+        "cohort_type": cohort_type,
+        "cohort_size": cohort_size,
+        "cohort_selection_reason": cohort_selection_reason,
+        "stage_promotion_required": stage_promotion_required,
+        "broader_rollout_blocked": broader_rollout_blocked,
+        "rollout_reason": rollout_reason,
     }
 
 
@@ -2243,6 +2409,191 @@ def evaluate_self_change_executive_checkpoint(
     }
 
 
+def evaluate_self_change_staged_rollout(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    executive_checkpoint = evaluate_self_change_executive_checkpoint(contract, recent_audit_entries=recent_audit_entries)
+    stability_posture = evaluate_self_change_stability_posture(contract, recent_audit_entries=recent_audit_entries)
+    monitored = evaluate_self_change_post_promotion_monitoring(contract)
+    rollback_execution = evaluate_self_change_rollback_execution(contract)
+    normalized = executive_checkpoint["normalized_contract"]
+    risk_level = str(monitored.get("risk_level") or normalized.get("risk_level") or "medium_risk")
+    protected_zone_hit = bool(monitored.get("protected_zone_hit") or normalized.get("protected_zones"))
+    blast_radius_level = str(rollback_execution.get("blast_radius_level") or normalized.get("blast_radius_level") or "low")
+    sandbox_required = bool(monitored.get("sandbox_required"))
+    checkpoint_required = bool(executive_checkpoint.get("checkpoint_required"))
+    rollout_required = _requires_staged_rollout(
+        risk_level=risk_level,
+        protected_zone_hit=protected_zone_hit,
+        blast_radius_level=blast_radius_level,
+        sandbox_required=sandbox_required,
+        checkpoint_required=checkpoint_required,
+    )
+    project_roots = _extract_project_roots(list(normalized.get("target_files") or []))
+    current_stage = _normalize_rollout_stage(
+        normalized.get("rollout_stage"),
+        default=_infer_default_rollout_stage(
+            risk_level=risk_level,
+            protected_zone_hit=protected_zone_hit,
+            blast_radius_level=blast_radius_level,
+            rollout_required=rollout_required,
+        ),
+    )
+    cohort_type = _normalize_cohort_type(
+        normalized.get("cohort_type"),
+        default=_infer_default_cohort_type(
+            protected_zone_hit=protected_zone_hit,
+            blast_radius_level=blast_radius_level,
+            risk_level=risk_level,
+            target_files=list(normalized.get("target_files") or []),
+            project_roots=project_roots,
+        ),
+    )
+    stage_promotion_required = current_stage != "platform_wide"
+    rollout_scope = _normalize_text(normalized.get("rollout_scope")) or _rollout_scope_label(
+        rollout_stage=current_stage,
+        cohort_type=cohort_type,
+        project_roots=project_roots,
+    )
+    cohort_size = max(0, int(normalized.get("cohort_size") or _default_cohort_size(rollout_stage=current_stage, cohort_type=cohort_type)))
+    promotion_status = str(monitored.get("promotion_status") or normalized.get("promotion_status") or "promotion_pending")
+    monitoring_status = str(monitored.get("monitoring_status") or "pending_monitoring")
+    rollback_trigger_outcome = str(monitored.get("rollback_trigger_outcome") or "monitor_more")
+    rollback_status = str(rollback_execution.get("rollback_status") or normalized.get("rollback_status") or "rollback_pending")
+    confidence_band = str(monitored.get("confidence_band") or normalized.get("confidence_band") or "weak")
+    promotion_confidence = str(monitored.get("promotion_confidence") or normalized.get("promotion_confidence") or "insufficient_evidence")
+    observation_count = max(0, int(monitored.get("observation_count") or normalized.get("observation_count") or 0))
+    regression_detected = bool(monitored.get("regression_detected"))
+    freeze_required = bool(stability_posture.get("freeze_required"))
+    recovery_only_mode = bool(stability_posture.get("recovery_only_mode"))
+    manual_hold_active = bool(executive_checkpoint.get("manual_hold_active"))
+    checkpoint_status = str(executive_checkpoint.get("checkpoint_status") or "not_required")
+    monitoring_healthy = monitoring_status in {"actively_monitored", "monitoring_passed"} and not regression_detected
+    no_rollback_conflict = (
+        rollback_trigger_outcome not in {"rollback_recommended", "rollback_required"}
+        and rollback_status not in {"rollback_completed", "rollback_failed"}
+    )
+    confidence_acceptable = promotion_confidence in {"promote_ready", "keep_experimental"} and confidence_band in {"moderate", "strong"}
+    executive_ok = not checkpoint_required or checkpoint_status == "checkpoint_satisfied"
+    no_hold_freeze_conflict = not manual_hold_active and not freeze_required and not recovery_only_mode
+    promoted = promotion_status in {"promoted_to_stable", "promotion_ready", "kept_experimental"}
+    broader_rollout_blocked = False
+    status = "rollout_pending"
+    rollout_reason = ""
+    rollout_stage = current_stage
+    next_stage = _next_rollout_stage(current_stage)
+
+    if not promoted:
+        status = "rollout_pending"
+        broader_rollout_blocked = rollout_required
+        rollout_reason = "Rollout remains pending until the self-change reaches a governed promoted state."
+    elif rollback_trigger_outcome == "rollback_required" or rollback_status in {"rollback_completed", "rollback_failed"}:
+        status = "rollout_reverted"
+        rollout_stage = "experimental_only"
+        broader_rollout_blocked = True
+        rollout_reason = "Rollback signals require rollout reversion to the narrowest governed stage."
+    elif monitoring_status == "monitoring_failed":
+        status = "rollout_halted"
+        broader_rollout_blocked = True
+        rollout_reason = "Monitoring degradation halts broader rollout until health recovers."
+    elif monitoring_status == "pending_monitoring" or observation_count <= 0:
+        status = "rollout_pending"
+        broader_rollout_blocked = True
+        rollout_reason = "Rollout remains pending until initial governed monitoring observations are available."
+    elif not executive_ok or not no_hold_freeze_conflict:
+        status = "rollout_blocked"
+        broader_rollout_blocked = True
+        rollout_reason = "Checkpoint, hold, freeze, or recovery policy blocks broader rollout."
+    elif not monitoring_healthy or not no_rollback_conflict or not confidence_acceptable:
+        status = "rollout_blocked" if rollout_required else "rollout_pending"
+        broader_rollout_blocked = True
+        if not confidence_acceptable:
+            rollout_reason = "Confidence remains below the threshold required for broader rollout."
+        elif not no_rollback_conflict:
+            rollout_reason = "Rollback recommendations or execution state block broader rollout."
+        else:
+            rollout_reason = "Monitoring must remain healthy before broader rollout can proceed."
+    elif current_stage == "platform_wide":
+        status = "rollout_advancing"
+        broader_rollout_blocked = False
+        rollout_reason = "Rollout posture is healthy and the self-change is already platform-wide."
+    else:
+        required_observations = 1 if current_stage == "experimental_only" else 3 if current_stage == "limited_cohort" else 5
+        if observation_count >= required_observations:
+            status = "rollout_advancing"
+            rollout_stage = next_stage
+            broader_rollout_blocked = rollout_stage != "platform_wide"
+            rollout_reason = f"Monitoring and confidence remain healthy, allowing rollout to advance to {rollout_stage}."
+        else:
+            status = "rollout_pending"
+            broader_rollout_blocked = True
+            rollout_reason = "Rollout remains in the current cohort until more governed observations are collected."
+
+    cohort_selection_reason = _normalize_text(normalized.get("cohort_selection_reason"))
+    if not cohort_selection_reason:
+        if cohort_type == "protected_core_subset":
+            cohort_selection_reason = "Protected-core or high blast-radius exposure requires the narrowest subset first."
+        elif cohort_type == "project_scoped_subset":
+            cohort_selection_reason = "Project-scoped rollout constrains blast radius while evidence accumulates."
+        elif cohort_type == "low_risk_subset":
+            cohort_selection_reason = "A smaller low-risk cohort is sufficient before broader trust expansion."
+        else:
+            cohort_selection_reason = "Current posture supports a broader general subset."
+
+    rollout_scope = _rollout_scope_label(
+        rollout_stage=rollout_stage,
+        cohort_type=cohort_type,
+        project_roots=project_roots,
+    )
+    if status == "rollout_reverted":
+        cohort_size = _default_cohort_size(rollout_stage="experimental_only", cohort_type=cohort_type)
+    elif status == "rollout_advancing":
+        cohort_size = _default_cohort_size(rollout_stage=rollout_stage, cohort_type=cohort_type)
+
+    governance_trace = {
+        **dict(executive_checkpoint.get("governance_trace") or stability_posture.get("governance_trace") or monitored.get("governance_trace") or {}),
+        "staged_rollout": {
+            "rollout_required": rollout_required,
+            "rollout_stage": rollout_stage,
+            "rollout_scope": rollout_scope,
+            "rollout_status": status,
+            "cohort_type": cohort_type,
+            "cohort_size": cohort_size,
+            "cohort_selection_reason": cohort_selection_reason,
+            "stage_promotion_required": stage_promotion_required,
+            "broader_rollout_blocked": broader_rollout_blocked,
+            "rollout_reason": rollout_reason,
+            "monitoring_healthy": monitoring_healthy,
+            "rollback_clear": no_rollback_conflict,
+            "confidence_acceptable": confidence_acceptable,
+            "executive_ok": executive_ok,
+            "hold_freeze_clear": no_hold_freeze_conflict,
+            "observation_count": observation_count,
+            "next_stage": next_stage,
+        },
+    }
+
+    return {
+        "status": status,
+        "change_id": str(normalized.get("change_id") or ""),
+        "rollout_stage": rollout_stage,
+        "rollout_scope": rollout_scope,
+        "rollout_status": status,
+        "cohort_type": cohort_type,
+        "cohort_size": cohort_size,
+        "cohort_selection_reason": cohort_selection_reason,
+        "stage_promotion_required": stage_promotion_required,
+        "broader_rollout_blocked": broader_rollout_blocked,
+        "rollout_reason": rollout_reason,
+        "blast_radius_level": blast_radius_level,
+        "reason": rollout_reason,
+        "authority_trace": dict(executive_checkpoint.get("authority_trace") or stability_posture.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -2276,6 +2627,7 @@ def build_self_change_audit_record(
     mutation_budget = evaluate_self_change_mutation_budget(source_contract, recent_audit_entries=recent_audit_entries)
     stability_posture = evaluate_self_change_stability_posture(source_contract, recent_audit_entries=recent_audit_entries)
     executive_checkpoint = evaluate_self_change_executive_checkpoint(source_contract, recent_audit_entries=recent_audit_entries)
+    staged_rollout = evaluate_self_change_staged_rollout(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
@@ -2378,12 +2730,29 @@ def build_self_change_audit_record(
         "hold_reason": str(executive_checkpoint.get("hold_reason") or ""),
         "hold_release_requirements": list(executive_checkpoint.get("hold_release_requirements") or []),
         "override_status": str(executive_checkpoint.get("override_status") or "no_override"),
+        "rollout_stage": str(staged_rollout.get("rollout_stage") or normalized.get("rollout_stage") or "limited_cohort"),
+        "rollout_scope": str(staged_rollout.get("rollout_scope") or normalized.get("rollout_scope") or ""),
+        "rollout_status": str(staged_rollout.get("rollout_status") or "rollout_pending"),
+        "cohort_type": str(staged_rollout.get("cohort_type") or normalized.get("cohort_type") or "low_risk_subset"),
+        "cohort_size": int(staged_rollout.get("cohort_size") or normalized.get("cohort_size") or 0),
+        "cohort_selection_reason": str(staged_rollout.get("cohort_selection_reason") or normalized.get("cohort_selection_reason") or ""),
+        "stage_promotion_required": bool(
+            staged_rollout.get("stage_promotion_required")
+            if staged_rollout.get("stage_promotion_required") is not None
+            else normalized.get("stage_promotion_required")
+        ),
+        "broader_rollout_blocked": bool(
+            staged_rollout.get("broader_rollout_blocked")
+            if staged_rollout.get("broader_rollout_blocked") is not None
+            else normalized.get("broader_rollout_blocked")
+        ),
+        "rollout_reason": str(staged_rollout.get("rollout_reason") or normalized.get("rollout_reason") or ""),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(executive_checkpoint.get("authority_trace") or stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "authority_trace": dict(staged_rollout.get("authority_trace") or executive_checkpoint.get("authority_trace") or stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
         "governance_trace": {
-            **dict(executive_checkpoint.get("governance_trace") or stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+            **dict(staged_rollout.get("governance_trace") or executive_checkpoint.get("governance_trace") or stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
             **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
         },
         "contract_status": str(monitored.get("contract_status") or ""),
@@ -2730,6 +3099,69 @@ def evaluate_self_change_executive_checkpoint_safe(
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "executive_checkpoint_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_staged_rollout_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_staged_rollout(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        blast_radius_level = str(normalized.get("blast_radius_level") or "high")
+        protected_zone_hit = bool(normalized.get("protected_zones"))
+        cohort_type = _infer_default_cohort_type(
+            protected_zone_hit=protected_zone_hit,
+            blast_radius_level=blast_radius_level,
+            risk_level=str(normalized.get("risk_level") or "high_risk"),
+            target_files=list(normalized.get("target_files") or []),
+            project_roots=_extract_project_roots(list(normalized.get("target_files") or [])),
+        )
+        return {
+            "status": "rollout_blocked",
+            "change_id": str(normalized.get("change_id") or ""),
+            "rollout_stage": _infer_default_rollout_stage(
+                risk_level=str(normalized.get("risk_level") or "high_risk"),
+                protected_zone_hit=protected_zone_hit,
+                blast_radius_level=blast_radius_level,
+                rollout_required=True,
+            ),
+            "rollout_scope": _rollout_scope_label(
+                rollout_stage=_infer_default_rollout_stage(
+                    risk_level=str(normalized.get("risk_level") or "high_risk"),
+                    protected_zone_hit=protected_zone_hit,
+                    blast_radius_level=blast_radius_level,
+                    rollout_required=True,
+                ),
+                cohort_type=cohort_type,
+                project_roots=_extract_project_roots(list(normalized.get("target_files") or [])),
+            ),
+            "rollout_status": "rollout_blocked",
+            "cohort_type": cohort_type,
+            "cohort_size": _default_cohort_size(
+                rollout_stage=_infer_default_rollout_stage(
+                    risk_level=str(normalized.get("risk_level") or "high_risk"),
+                    protected_zone_hit=protected_zone_hit,
+                    blast_radius_level=blast_radius_level,
+                    rollout_required=True,
+                ),
+                cohort_type=cohort_type,
+            ),
+            "cohort_selection_reason": "Safe fallback selected the narrowest governed rollout posture.",
+            "stage_promotion_required": True,
+            "broader_rollout_blocked": True,
+            "rollout_reason": f"Staged rollout evaluation failed: {e}",
+            "blast_radius_level": blast_radius_level,
+            "reason": f"Staged rollout evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "staged_rollout_error": str(e),
             },
             "normalized_contract": normalized,
         }
