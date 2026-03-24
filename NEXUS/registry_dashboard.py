@@ -834,6 +834,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_revalidation_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
     self_change_trust_outcome_count_total: dict[str, int] = {}
     self_change_drift_detected_count_total: dict[str, int] = {"detected": 0, "not_detected": 0}
+    self_change_strategic_intent_category_count_total: dict[str, int] = {}
+    self_change_alignment_status_count_total: dict[str, int] = {}
+    self_change_prohibited_goal_hit_count_total: dict[str, int] = {"hit": 0, "not_hit": 0}
+    self_change_executive_priority_match_count_total: dict[str, int] = {"matched": 0, "not_matched": 0}
+    self_change_mission_scope_count_total: dict[str, int] = {}
+    self_change_strategic_outcome_count_total: dict[str, int] = {}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -1014,6 +1020,30 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         drift_key = "detected" if bool(entry.get("drift_detected")) else "not_detected"
         self_change_drift_detected_count_total[drift_key] = (
             self_change_drift_detected_count_total.get(drift_key, 0) + 1
+        )
+        strategic_intent_category = str(entry.get("strategic_intent_category") or "mission_out_of_scope")
+        self_change_strategic_intent_category_count_total[strategic_intent_category] = (
+            self_change_strategic_intent_category_count_total.get(strategic_intent_category, 0) + 1
+        )
+        alignment_status = str(entry.get("alignment_status") or "aligned_low_priority")
+        self_change_alignment_status_count_total[alignment_status] = (
+            self_change_alignment_status_count_total.get(alignment_status, 0) + 1
+        )
+        prohibited_key = "hit" if bool(entry.get("prohibited_goal_hit")) else "not_hit"
+        self_change_prohibited_goal_hit_count_total[prohibited_key] = (
+            self_change_prohibited_goal_hit_count_total.get(prohibited_key, 0) + 1
+        )
+        priority_key = "matched" if bool(entry.get("executive_priority_match")) else "not_matched"
+        self_change_executive_priority_match_count_total[priority_key] = (
+            self_change_executive_priority_match_count_total.get(priority_key, 0) + 1
+        )
+        mission_scope = str(entry.get("mission_scope") or "core_mission")
+        self_change_mission_scope_count_total[mission_scope] = (
+            self_change_mission_scope_count_total.get(mission_scope, 0) + 1
+        )
+        strategic_outcome = str(entry.get("strategic_outcome") or "aligned_but_low_priority")
+        self_change_strategic_outcome_count_total[strategic_outcome] = (
+            self_change_strategic_outcome_count_total.get(strategic_outcome, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1931,6 +1961,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "revalidation_required_count_total": self_change_revalidation_required_count_total,
             "trust_outcome_count_total": self_change_trust_outcome_count_total,
             "drift_detected_count_total": self_change_drift_detected_count_total,
+            "strategic_intent_category_count_total": self_change_strategic_intent_category_count_total,
+            "alignment_status_count_total": self_change_alignment_status_count_total,
+            "prohibited_goal_hit_count_total": self_change_prohibited_goal_hit_count_total,
+            "executive_priority_match_count_total": self_change_executive_priority_match_count_total,
+            "mission_scope_count_total": self_change_mission_scope_count_total,
+            "strategic_outcome_count_total": self_change_strategic_outcome_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

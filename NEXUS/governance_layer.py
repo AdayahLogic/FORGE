@@ -22,6 +22,7 @@ from NEXUS.self_evolution_governance import (
     evaluate_self_change_sandbox_promotion_safe,
     evaluate_self_change_staged_rollout_safe,
     evaluate_self_change_stability_posture_safe,
+    evaluate_self_change_strategic_intent_safe,
     evaluate_self_change_trust_revalidation_safe,
     evaluate_self_change_executive_checkpoint_safe,
 )
@@ -929,6 +930,51 @@ def evaluate_self_change_executive_checkpoint_outcome_safe(**kwargs: Any) -> dic
             "reason": f"Self-change executive checkpoint failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_checkpoint"},
             "governance_trace": {"evaluation_scope": "self_evolution_executive_checkpoint", "error": str(e)},
+        }
+
+
+def evaluate_self_change_strategic_intent_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_strategic_intent_safe(
+        self_change_contract,
+        recent_audit_entries=recent_audit_entries,
+    )
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "govern_self_change_strategy")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_strategic_intent")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_strategic_intent_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_strategic_intent_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "executive_review_required",
+            "change_id": "",
+            "strategic_intent_category": "mission_out_of_scope",
+            "alignment_status": "executive_review_required",
+            "alignment_score": 0.0,
+            "alignment_reason": f"Self-change strategic intent evaluation failed: {e}",
+            "allowed_goal_class": "",
+            "prohibited_goal_hit": False,
+            "executive_priority_match": False,
+            "mission_scope": "core_mission",
+            "strategic_outcome": "executive_review_required",
+            "reason": f"Self-change strategic intent evaluation failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_strategy"},
+            "governance_trace": {"evaluation_scope": "self_evolution_strategic_intent", "error": str(e)},
         }
 
 

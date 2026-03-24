@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.6"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.7"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -167,6 +167,29 @@ VALID_TRUST_OUTCOMES = {
     "trust_expired",
     "trust_restored",
 }
+VALID_STRATEGIC_INTENT_CATEGORIES = {
+    "safety_hardening",
+    "governance_strengthening",
+    "reliability_improvement",
+    "operator_experience",
+    "client_safe_presentation",
+    "controlled_scaling",
+    "mission_out_of_scope",
+}
+VALID_STRATEGIC_ALIGNMENT_STATUSES = {
+    "aligned",
+    "aligned_low_priority",
+    "out_of_scope",
+    "prohibited",
+    "executive_review_required",
+}
+VALID_STRATEGIC_OUTCOMES = {
+    "aligned_and_allowed",
+    "aligned_but_low_priority",
+    "out_of_scope",
+    "prohibited_direction",
+    "executive_review_required",
+}
 ROLLOUT_STAGE_ORDER = ["experimental_only", "limited_cohort", "broader_cohort", "platform_wide"]
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
@@ -192,6 +215,25 @@ HIGH_RISK_HINTS = (
     "orchestration",
     "self_modification",
 )
+SAFETY_HARDENING_HINTS = ("safety", "guardrail", "hardening", "sanitize", "validation")
+GOVERNANCE_STRENGTHENING_HINTS = ("governance", "policy", "approval", "checkpoint", "rollback", "trust", "audit")
+RELIABILITY_IMPROVEMENT_HINTS = ("reliability", "stability", "resilience", "monitor", "recovery", "regression")
+OPERATOR_EXPERIENCE_HINTS = ("operator", "review", "console", "dashboard", "visibility", "summary")
+CLIENT_SAFE_PRESENTATION_HINTS = ("presentation", "client", "display", "safe_ui", "read_only")
+CONTROLLED_SCALING_HINTS = ("scaling", "cohort", "rollout", "controlled", "bounded", "capacity")
+PROHIBITED_STRATEGIC_HINTS = (
+    "disable_governance",
+    "bypass_approval",
+    "bypass_validation",
+    "bypass_release_gate",
+    "hidden_authority",
+    "autonomy_expansion",
+    "self_authorize",
+    "silent_override",
+    "remove_guardrail",
+    "skip_review",
+)
+OUT_OF_SCOPE_HINTS = ("monetization", "growth_hack", "marketing", "social", "gamification", "unbounded_research")
 
 
 def _normalize_text(value: Any) -> str:
@@ -380,6 +422,21 @@ def _normalize_decay_state(value: Any, *, default: str) -> str:
 def _normalize_trust_outcome(value: Any, *, default: str) -> str:
     outcome = _normalize_text(value).lower()
     return outcome if outcome in VALID_TRUST_OUTCOMES else default
+
+
+def _normalize_strategic_intent_category(value: Any, *, default: str) -> str:
+    category = _normalize_text(value).lower()
+    return category if category in VALID_STRATEGIC_INTENT_CATEGORIES else default
+
+
+def _normalize_alignment_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    return status if status in VALID_STRATEGIC_ALIGNMENT_STATUSES else default
+
+
+def _normalize_strategic_outcome(value: Any, *, default: str) -> str:
+    outcome = _normalize_text(value).lower()
+    return outcome if outcome in VALID_STRATEGIC_OUTCOMES else default
 
 
 def _requires_staged_rollout(
@@ -698,6 +755,21 @@ def _format_confidence_age(reference_time: datetime | None, *, now: datetime | N
     return f"{hours}h"
 
 
+def _contains_hint(values: list[str], hints: tuple[str, ...]) -> bool:
+    return any(hint in value for hint in hints for value in values)
+
+
+def _strategic_signal_texts(raw: dict[str, Any], *, target_files: list[str]) -> list[str]:
+    values = [
+        _normalize_text(raw.get("change_type")).lower(),
+        _normalize_text(raw.get("reason")).lower(),
+        _normalize_text(raw.get("expected_outcome")).lower(),
+    ]
+    values.extend(_normalize_path(item) for item in target_files)
+    values.extend(_normalize_text(item).lower() for item in _normalize_string_list(raw.get("executive_priorities"), limit=20, lower=True))
+    return [value for value in values if value]
+
+
 def _budget_limit_for_change(*, risk_level: str, protected_zone_hit: bool) -> int:
     base = {"low_risk": 5, "medium_risk": 3, "high_risk": 2}.get(risk_level, 3)
     if protected_zone_hit:
@@ -979,6 +1051,15 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
     revalidation_required = bool(raw.get("revalidation_required"))
     revalidation_reason = _normalize_text(raw.get("revalidation_reason"))
     trust_outcome = _normalize_trust_outcome(raw.get("trust_outcome"), default="trust_retained")
+    strategic_intent_category = _normalize_strategic_intent_category(raw.get("strategic_intent_category"), default="")
+    alignment_status = _normalize_alignment_status(raw.get("alignment_status"), default="aligned_low_priority")
+    alignment_score = _normalize_float(raw.get("alignment_score"), default=0.0)
+    alignment_reason = _normalize_text(raw.get("alignment_reason"))
+    allowed_goal_class = _normalize_text(raw.get("allowed_goal_class"))
+    prohibited_goal_hit = bool(raw.get("prohibited_goal_hit"))
+    executive_priority_match = bool(raw.get("executive_priority_match"))
+    mission_scope = _normalize_text(raw.get("mission_scope")) or "core_mission"
+    strategic_outcome = _normalize_strategic_outcome(raw.get("strategic_outcome"), default="aligned_but_low_priority")
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -1109,6 +1190,15 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "last_revalidated_at": last_revalidated_at,
         "drift_detected": drift_detected,
         "trust_outcome": trust_outcome,
+        "strategic_intent_category": strategic_intent_category,
+        "alignment_status": alignment_status,
+        "alignment_score": alignment_score,
+        "alignment_reason": alignment_reason,
+        "allowed_goal_class": allowed_goal_class,
+        "prohibited_goal_hit": prohibited_goal_hit,
+        "executive_priority_match": executive_priority_match,
+        "mission_scope": mission_scope,
+        "strategic_outcome": strategic_outcome,
     }
 
 
@@ -2537,6 +2627,127 @@ def evaluate_self_change_executive_checkpoint(
     }
 
 
+def evaluate_self_change_strategic_intent(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    monitored = evaluate_self_change_post_promotion_monitoring(contract)
+    normalized = monitored["normalized_contract"]
+    executive_checkpoint = evaluate_self_change_executive_checkpoint(contract, recent_audit_entries=recent_audit_entries)
+    target_files = list(normalized.get("target_files") or [])
+    signals = _strategic_signal_texts(normalized, target_files=target_files)
+    protected_zone_hit = bool(monitored.get("protected_zone_hit") or normalized.get("protected_zones"))
+    risk_level = str(monitored.get("risk_level") or normalized.get("risk_level") or "medium_risk")
+    checkpoint_required = bool(executive_checkpoint.get("checkpoint_required"))
+    manual_hold_active = bool(executive_checkpoint.get("manual_hold_active"))
+    rollout_stage = str(normalized.get("rollout_stage") or "limited_cohort")
+
+    prohibited_goal_hit = bool(normalized.get("prohibited_goal_hit")) or _contains_hint(signals, PROHIBITED_STRATEGIC_HINTS)
+    explicit_priority_values = set(_normalize_string_list(normalized.get("executive_priorities"), limit=20, lower=True))
+
+    category = _normalize_strategic_intent_category(normalized.get("strategic_intent_category"), default="")
+    if not category:
+        if _contains_hint(signals, SAFETY_HARDENING_HINTS):
+            category = "safety_hardening"
+        elif _contains_hint(signals, GOVERNANCE_STRENGTHENING_HINTS):
+            category = "governance_strengthening"
+        elif _contains_hint(signals, RELIABILITY_IMPROVEMENT_HINTS):
+            category = "reliability_improvement"
+        elif _contains_hint(signals, OPERATOR_EXPERIENCE_HINTS):
+            category = "operator_experience"
+        elif _contains_hint(signals, CLIENT_SAFE_PRESENTATION_HINTS):
+            category = "client_safe_presentation"
+        elif _contains_hint(signals, CONTROLLED_SCALING_HINTS):
+            category = "controlled_scaling"
+        else:
+            category = "mission_out_of_scope"
+
+    mission_scope = _normalize_text(normalized.get("mission_scope"))
+    if not mission_scope:
+        mission_scope = "outside_scope" if category == "mission_out_of_scope" or _contains_hint(signals, OUT_OF_SCOPE_HINTS) else "core_mission"
+
+    allowed_goal_class = _normalize_text(normalized.get("allowed_goal_class"))
+    if not allowed_goal_class:
+        allowed_goal_class = "" if category == "mission_out_of_scope" else category
+
+    executive_priority_match = bool(normalized.get("executive_priority_match"))
+    if not executive_priority_match:
+        default_priority_categories = {"safety_hardening", "governance_strengthening", "reliability_improvement"}
+        executive_priority_match = category in default_priority_categories or category in explicit_priority_values
+
+    alignment_status = "aligned"
+    strategic_outcome = "aligned_and_allowed"
+    alignment_score = 0.85 if executive_priority_match else 0.65
+    alignment_reason = "Self-change aligns with Forge's chartered mission and allowed improvement directions."
+    reason = alignment_reason
+
+    if prohibited_goal_hit:
+        alignment_status = "prohibited"
+        strategic_outcome = "prohibited_direction"
+        alignment_score = 0.0
+        allowed_goal_class = ""
+        mission_scope = "prohibited_direction"
+        alignment_reason = "Self-change enters a prohibited direction such as governance weakening, hidden authority, or unsupported autonomy expansion."
+        reason = alignment_reason
+    elif category == "mission_out_of_scope" or mission_scope == "outside_scope" or _contains_hint(signals, OUT_OF_SCOPE_HINTS):
+        alignment_status = "out_of_scope"
+        strategic_outcome = "out_of_scope"
+        alignment_score = 0.2
+        allowed_goal_class = ""
+        mission_scope = "outside_scope"
+        alignment_reason = "Self-change is technically plausible but falls outside Forge's current strategic mission scope."
+        reason = alignment_reason
+    elif (
+        bool(normalized.get("executive_review_required"))
+        or (protected_zone_hit and risk_level == "high_risk" and not executive_priority_match)
+        or (category == "controlled_scaling" and (checkpoint_required or rollout_stage in {"broader_cohort", "platform_wide"}))
+    ):
+        alignment_status = "executive_review_required"
+        strategic_outcome = "executive_review_required"
+        alignment_score = 0.55 if executive_priority_match else 0.45
+        alignment_reason = "Self-change is strategically aligned but sensitive enough to require executive confirmation before advancement."
+        reason = alignment_reason
+    elif not executive_priority_match:
+        alignment_status = "aligned_low_priority"
+        strategic_outcome = "aligned_but_low_priority"
+        alignment_score = 0.6
+        alignment_reason = "Self-change is aligned with mission but does not match current executive priorities."
+        reason = alignment_reason
+
+    governance_trace = {
+        **dict(monitored.get("governance_trace") or {}),
+        "strategic_intent": {
+            "strategic_intent_category": category,
+            "alignment_status": alignment_status,
+            "alignment_score": alignment_score,
+            "alignment_reason": alignment_reason,
+            "allowed_goal_class": allowed_goal_class,
+            "prohibited_goal_hit": prohibited_goal_hit,
+            "executive_priority_match": executive_priority_match,
+            "mission_scope": mission_scope,
+            "strategic_outcome": strategic_outcome,
+        },
+    }
+
+    return {
+        "status": strategic_outcome,
+        "change_id": str(monitored.get("change_id") or normalized.get("change_id") or ""),
+        "strategic_intent_category": category,
+        "alignment_status": alignment_status,
+        "alignment_score": alignment_score,
+        "alignment_reason": alignment_reason,
+        "allowed_goal_class": allowed_goal_class,
+        "prohibited_goal_hit": prohibited_goal_hit,
+        "executive_priority_match": executive_priority_match,
+        "mission_scope": mission_scope,
+        "strategic_outcome": strategic_outcome,
+        "reason": reason,
+        "authority_trace": dict(executive_checkpoint.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def evaluate_self_change_trust_revalidation(
     contract: dict[str, Any] | None,
     recent_audit_entries: list[dict[str, Any]] | None = None,
@@ -2714,6 +2925,7 @@ def evaluate_self_change_staged_rollout(
     contract: dict[str, Any] | None,
     recent_audit_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    strategic_intent = evaluate_self_change_strategic_intent(contract, recent_audit_entries=recent_audit_entries)
     trust_revalidation = evaluate_self_change_trust_revalidation(contract, recent_audit_entries=recent_audit_entries)
     executive_checkpoint = evaluate_self_change_executive_checkpoint(contract, recent_audit_entries=recent_audit_entries)
     stability_posture = evaluate_self_change_stability_posture(contract, recent_audit_entries=recent_audit_entries)
@@ -2771,6 +2983,7 @@ def evaluate_self_change_staged_rollout(
     recovery_only_mode = bool(stability_posture.get("recovery_only_mode"))
     manual_hold_active = bool(executive_checkpoint.get("manual_hold_active"))
     checkpoint_status = str(executive_checkpoint.get("checkpoint_status") or "not_required")
+    strategic_outcome = str(strategic_intent.get("strategic_outcome") or normalized.get("strategic_outcome") or "aligned_but_low_priority")
     trust_status = str(trust_revalidation.get("trust_status") or normalized.get("trust_status") or "trusted_current")
     trust_outcome = str(trust_revalidation.get("trust_outcome") or normalized.get("trust_outcome") or "trust_retained")
     revalidation_required = bool(trust_revalidation.get("revalidation_required"))
@@ -2806,6 +3019,10 @@ def evaluate_self_change_staged_rollout(
         status = "rollout_pending"
         broader_rollout_blocked = True
         rollout_reason = "Rollout remains pending until initial governed monitoring observations are available."
+    elif strategic_outcome in {"prohibited_direction", "out_of_scope", "executive_review_required"}:
+        status = "rollout_blocked"
+        broader_rollout_blocked = True
+        rollout_reason = str(strategic_intent.get("reason") or "Strategic charter policy blocks broader rollout.")
     elif revalidation_required or trust_status in {"trust_degraded", "trust_expired"} or trust_outcome in {"revalidation_required", "trust_degraded", "trust_expired"}:
         status = "rollout_blocked"
         broader_rollout_blocked = True
@@ -2861,13 +3078,11 @@ def evaluate_self_change_staged_rollout(
         cohort_size = _default_cohort_size(rollout_stage=rollout_stage, cohort_type=cohort_type)
 
     governance_trace = {
-        **dict(
-            trust_revalidation.get("governance_trace")
-            or executive_checkpoint.get("governance_trace")
-            or stability_posture.get("governance_trace")
-            or monitored.get("governance_trace")
-            or {}
-        ),
+        **dict(monitored.get("governance_trace") or {}),
+        **dict(stability_posture.get("governance_trace") or {}),
+        **dict(executive_checkpoint.get("governance_trace") or {}),
+        **dict(trust_revalidation.get("governance_trace") or {}),
+        **dict(strategic_intent.get("governance_trace") or {}),
         "staged_rollout": {
             "rollout_required": rollout_required,
             "rollout_stage": rollout_stage,
@@ -2884,6 +3099,7 @@ def evaluate_self_change_staged_rollout(
             "confidence_acceptable": confidence_acceptable,
             "executive_ok": executive_ok,
             "hold_freeze_clear": no_hold_freeze_conflict,
+            "strategic_outcome": strategic_outcome,
             "trust_status": trust_status,
             "trust_outcome": trust_outcome,
             "revalidation_required": revalidation_required,
@@ -2907,7 +3123,8 @@ def evaluate_self_change_staged_rollout(
         "blast_radius_level": blast_radius_level,
         "reason": rollout_reason,
         "authority_trace": dict(
-            trust_revalidation.get("authority_trace")
+            strategic_intent.get("authority_trace")
+            or trust_revalidation.get("authority_trace")
             or executive_checkpoint.get("authority_trace")
             or stability_posture.get("authority_trace")
             or monitored.get("authority_trace")
@@ -2951,6 +3168,7 @@ def build_self_change_audit_record(
     mutation_budget = evaluate_self_change_mutation_budget(source_contract, recent_audit_entries=recent_audit_entries)
     stability_posture = evaluate_self_change_stability_posture(source_contract, recent_audit_entries=recent_audit_entries)
     executive_checkpoint = evaluate_self_change_executive_checkpoint(source_contract, recent_audit_entries=recent_audit_entries)
+    strategic_intent = evaluate_self_change_strategic_intent(source_contract, recent_audit_entries=recent_audit_entries)
     trust_revalidation = evaluate_self_change_trust_revalidation(source_contract, recent_audit_entries=recent_audit_entries)
     staged_rollout = evaluate_self_change_staged_rollout(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
@@ -3082,11 +3300,25 @@ def build_self_change_audit_record(
         "last_revalidated_at": str(trust_revalidation.get("last_revalidated_at") or normalized.get("last_revalidated_at") or ""),
         "drift_detected": bool(trust_revalidation.get("drift_detected") or normalized.get("drift_detected")),
         "trust_outcome": str(trust_revalidation.get("trust_outcome") or normalized.get("trust_outcome") or "trust_retained"),
+        "strategic_intent_category": str(
+            strategic_intent.get("strategic_intent_category") or normalized.get("strategic_intent_category") or "mission_out_of_scope"
+        ),
+        "alignment_status": str(strategic_intent.get("alignment_status") or normalized.get("alignment_status") or "aligned_low_priority"),
+        "alignment_score": _normalize_float(strategic_intent.get("alignment_score") or normalized.get("alignment_score")),
+        "alignment_reason": str(strategic_intent.get("alignment_reason") or normalized.get("alignment_reason") or ""),
+        "allowed_goal_class": str(strategic_intent.get("allowed_goal_class") or normalized.get("allowed_goal_class") or ""),
+        "prohibited_goal_hit": bool(strategic_intent.get("prohibited_goal_hit") or normalized.get("prohibited_goal_hit")),
+        "executive_priority_match": bool(
+            strategic_intent.get("executive_priority_match") or normalized.get("executive_priority_match")
+        ),
+        "mission_scope": str(strategic_intent.get("mission_scope") or normalized.get("mission_scope") or "core_mission"),
+        "strategic_outcome": str(strategic_intent.get("strategic_outcome") or normalized.get("strategic_outcome") or "aligned_but_low_priority"),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
         "authority_trace": dict(
             staged_rollout.get("authority_trace")
+            or strategic_intent.get("authority_trace")
             or trust_revalidation.get("authority_trace")
             or executive_checkpoint.get("authority_trace")
             or stability_posture.get("authority_trace")
@@ -3095,15 +3327,13 @@ def build_self_change_audit_record(
             or {}
         ),
         "governance_trace": {
-            **dict(
-                staged_rollout.get("governance_trace")
-                or trust_revalidation.get("governance_trace")
-                or executive_checkpoint.get("governance_trace")
-                or stability_posture.get("governance_trace")
-                or rollback_execution.get("governance_trace")
-                or monitored.get("governance_trace")
-                or {}
-            ),
+            **dict(monitored.get("governance_trace") or {}),
+            **dict(rollback_execution.get("governance_trace") or {}),
+            **dict(stability_posture.get("governance_trace") or {}),
+            **dict(executive_checkpoint.get("governance_trace") or {}),
+            **dict(trust_revalidation.get("governance_trace") or {}),
+            **dict(strategic_intent.get("governance_trace") or {}),
+            **dict(staged_rollout.get("governance_trace") or {}),
             **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
         },
         "contract_status": str(monitored.get("contract_status") or ""),
@@ -3450,6 +3680,37 @@ def evaluate_self_change_executive_checkpoint_safe(
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "executive_checkpoint_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_strategic_intent_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_strategic_intent(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        return {
+            "status": "executive_review_required",
+            "change_id": str(normalized.get("change_id") or ""),
+            "strategic_intent_category": str(normalized.get("strategic_intent_category") or "mission_out_of_scope"),
+            "alignment_status": "executive_review_required",
+            "alignment_score": 0.0,
+            "alignment_reason": f"Strategic intent evaluation failed: {e}",
+            "allowed_goal_class": str(normalized.get("allowed_goal_class") or ""),
+            "prohibited_goal_hit": bool(normalized.get("prohibited_goal_hit")),
+            "executive_priority_match": bool(normalized.get("executive_priority_match")),
+            "mission_scope": str(normalized.get("mission_scope") or "core_mission"),
+            "strategic_outcome": "executive_review_required",
+            "reason": f"Strategic intent evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "strategic_intent_error": str(e),
             },
             "normalized_contract": normalized,
         }

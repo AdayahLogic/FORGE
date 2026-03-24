@@ -917,6 +917,17 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
         "last_revalidated_at": str(r.get("last_revalidated_at") or ""),
         "drift_detected": bool(r.get("drift_detected")),
         "trust_outcome": str(r.get("trust_outcome") or "trust_retained").strip().lower(),
+        "strategic_intent_category": str(r.get("strategic_intent_category") or "mission_out_of_scope").strip().lower(),
+        "alignment_status": str(r.get("alignment_status") or "aligned_low_priority").strip().lower(),
+        "alignment_score": float(r.get("alignment_score") or 0.0)
+        if str(r.get("alignment_score") or "").strip() not in ("", "None")
+        else 0.0,
+        "alignment_reason": str(r.get("alignment_reason") or ""),
+        "allowed_goal_class": str(r.get("allowed_goal_class") or ""),
+        "prohibited_goal_hit": bool(r.get("prohibited_goal_hit")),
+        "executive_priority_match": bool(r.get("executive_priority_match")),
+        "mission_scope": str(r.get("mission_scope") or "core_mission"),
+        "strategic_outcome": str(r.get("strategic_outcome") or "aligned_but_low_priority").strip().lower(),
         "validation_reasons": [str(item) for item in (r.get("validation_reasons") or []) if str(item).strip()][:20],
         "stable_state_ref": str(r.get("stable_state_ref") or ""),
         "success": bool(r.get("success")),
