@@ -223,10 +223,14 @@ def test_bridge_snapshots_are_read_only_and_shape_stable():
             }
 
             assert studio["overview"]["project_count"] >= 1
+            assert studio["overview"]["system_status"]["label"] == "Forge Running"
             assert "approval_center" in studio
             assert project["status"] == "ok"
             assert project["payload"]["package_queue"]["count"] >= 1
+            assert project["payload"]["system_status"]["label"] == "Forge Running"
+            assert project["payload"]["workflow_activity"]["current_project"]
             assert package["status"] == "ok"
+            assert package["payload"]["execution_feedback"]["package_created"] is True
             assert package["payload"]["evaluation"]["evaluation_status"] == "completed"
             assert package["payload"]["local_analysis"]["local_analysis_status"] == "completed"
             assert before == after

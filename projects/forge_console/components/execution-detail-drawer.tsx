@@ -42,6 +42,7 @@ function DetailCard({
 export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
   const reviewHeader = (detail?.review_header ?? {}) as Record<string, unknown>;
   const sections = (detail?.sections ?? {}) as Record<string, unknown>;
+  const feedback = detail?.execution_feedback;
   return (
     <section className={`drawer-panel ${open ? "open" : "closed"}`}>
       <div className="drawer-header">
@@ -82,6 +83,13 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
             <DetailCard title="Evaluation" value={detail?.evaluation ?? {}} />
             <DetailCard title="Local Analysis" value={detail?.local_analysis ?? {}} />
           </div>
+          <div className="detail-card-subsection">
+            <div className="stat-label">Execution Feedback</div>
+            <div style={{ marginTop: 8 }}>
+              {feedback?.status_summary ||
+                "No active execution yet. Create an intake request and let Forge prepare a governed package to populate this drawer."}
+            </div>
+          </div>
           <div className="section-title" style={{ marginTop: 18 }}>
             <div>
               <div className="eyebrow">Timeline</div>
@@ -89,18 +97,24 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
             </div>
           </div>
           <div className="audit-list">
-            {(detail?.timeline ?? []).map((item, index) => (
-              <div className="audit-item" key={`${index}-${String(item.created_at ?? "")}`}>
-                <div className="chip-row">
-                  <span className="chip info">{String(item.created_at ?? "unknown")}</span>
-                  <span className="chip">{String(item.review_status ?? "pending")}</span>
-                  <span className="chip">{String(item.decision_status ?? "pending")}</span>
-                  <span className="chip">{String(item.execution_status ?? "pending")}</span>
-                  <span className="chip">{String(item.evaluation_status ?? "pending")}</span>
-                  <span className="chip">{String(item.local_analysis_status ?? "pending")}</span>
+            {(detail?.timeline ?? []).length > 0 ? (
+              (detail?.timeline ?? []).map((item, index) => (
+                <div className="audit-item" key={`${index}-${String(item.created_at ?? "")}`}>
+                  <div className="chip-row">
+                    <span className="chip info">{String(item.created_at ?? "Not started")}</span>
+                    <span className="chip">{String(item.review_status ?? "waiting_for_input")}</span>
+                    <span className="chip">{String(item.decision_status ?? "waiting_for_input")}</span>
+                    <span className="chip">{String(item.execution_status ?? "waiting_for_input")}</span>
+                    <span className="chip">{String(item.evaluation_status ?? "waiting_for_input")}</span>
+                    <span className="chip">{String(item.local_analysis_status ?? "waiting_for_input")}</span>
+                  </div>
                 </div>
+              ))
+            ) : (
+              <div className="audit-item muted">
+                No lifecycle transitions are recorded yet. The drawer will show review, routing, execution, and advisory updates after a package is created.
               </div>
-            ))}
+            )}
           </div>
         </div>
       ) : null}

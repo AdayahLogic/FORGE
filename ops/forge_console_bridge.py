@@ -122,11 +122,173 @@ def _executor_health_summary(dashboard: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _decorate_queue_row(row: dict[str, Any]) -> dict[str, Any]:
+    execution_feedback = _build_execution_feedback(row)
+    return {
+        **row,
+        "lifecycle_status_label": execution_feedback.get("package_status") or "Not started",
+        "last_action_label": execution_feedback.get("active_transition") or "Waiting for input",
+    }
+
+
 def _pretty_label(value: str) -> str:
     text = str(value or "").replace("_", " ").replace("-", " ").strip()
     if not text:
         return "Untitled"
     return " ".join(part.capitalize() for part in text.split())
+
+
+def _meaningful_text(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"unknown", "none", "n/a", "null"}:
+        return fallback
+    return text
+
+
+def _display_status(value: Any, fallback: str) -> str:
+    text = str(value or "").strip()
+    if not text or text.lower() in {"unknown", "none", "n/a", "null"}:
+        return fallback
+    return _pretty_label(text)
+
+
+def _build_system_status(*, backend_reachable: bool, reason: str = "") -> dict[str, Any]:
+    if backend_reachable:
+        return {
+            "backend_reachable": True,
+            "status": "online",
+            "label": "Forge Running",
+            "reason": reason or "Forge backend responded to the console bridge.",
+        }
+    return {
+        "backend_reachable": False,
+        "status": "offline",
+        "label": "Forge Not Running",
+        "reason": reason or "Forge backend could not be reached from the console bridge.",
+    }
+
+
+def _lifecycle_stage_detail(stage_label: str, state: str) -> str:
+    display = _display_status(state, "Waiting for input")
+    state_key = str(state or "").strip().lower()
+    if display == "Waiting for input":
+        return f"{stage_label} is waiting for input."
+    if state_key in {"pending", "review_pending", "queued", "not_started"}:
+        return f"{stage_label} is waiting for input."
+    if state_key in {"succeeded", "completed", "approved", "eligible", "released", "authorized", "verified"}:
+        return f"{stage_label} completed with state {display}."
+    if state_key in {"blocked", "failed", "denied", "rolled_back", "error_fallback"}:
+        return f"{stage_label} needs operator attention: {display}."
+    return f"{stage_label} is currently {display}."
+
+
+def _build_execution_feedback(package: dict[str, Any], timeline: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    created_at = str(package.get("created_at") or "")
+    package_status = _display_status(package.get("package_status"), "Not started")
+    transitions: list[dict[str, Any]] = []
+    if created_at:
+        transitions.append(
+            {
+                "stage_id": "package_created",
+                "stage_label": "Package Created",
+                "state": "created",
+                "detail": f"Execution package created at {created_at}.",
+                "occurred_at": created_at,
+            }
+        )
+    for stage_id, stage_label, field in [
+        ("review", "Review", "review_status"),
+        ("decision", "Decision", "decision_status"),
+        ("eligibility", "Eligibility", "eligibility_status"),
+        ("release", "Release", "release_status"),
+        ("handoff", "Handoff", "handoff_status"),
+        ("execution", "Execution", "execution_status"),
+        ("evaluation", "Abacus Evaluation", "evaluation_status"),
+        ("local_analysis", "NemoClaw Advisory", "local_analysis_status"),
+    ]:
+        state = _meaningful_text(package.get(field), "")
+        if not state:
+            continue
+        transitions.append(
+            {
+                "stage_id": stage_id,
+                "stage_label": stage_label,
+                "state": state,
+                "detail": _lifecycle_stage_detail(stage_label, state),
+                "occurred_at": created_at,
+            }
+        )
+    current_transition = transitions[-1]["detail"] if transitions else "No active execution."
+    if created_at:
+        status_summary = f"Package created at {created_at}."
+    else:
+        status_summary = "Package not created yet."
+    if timeline:
+        status_summary = f"{status_summary} {current_transition}"
+    return {
+        "package_created": bool(created_at),
+        "package_created_at": created_at,
+        "package_status": package_status,
+        "status_summary": status_summary.strip(),
+        "active_transition": current_transition,
+        "lifecycle_transitions": transitions,
+    }
+
+
+def _derive_workflow_phase(project_state: dict[str, Any], package: dict[str, Any]) -> tuple[str, str]:
+    if not package:
+        return "planning", "Planning"
+    review_status = str(package.get("review_status") or "").strip().lower()
+    decision_status = str(package.get("decision_status") or "").strip().lower()
+    release_status = str(package.get("release_status") or "").strip().lower()
+    handoff_status = str(package.get("handoff_status") or "").strip().lower()
+    execution_status = str(package.get("execution_status") or "").strip().lower()
+    evaluation_status = str(package.get("evaluation_status") or "").strip().lower()
+    local_analysis_status = str(package.get("local_analysis_status") or "").strip().lower()
+    if review_status in {"pending", "review_pending", "ready_for_review", "reviewed"}:
+        return "review", "Review"
+    if any(
+        value not in {"", "pending", "not_started"}
+        for value in (execution_status, evaluation_status, local_analysis_status)
+    ):
+        return "execution", "Execution"
+    if any(
+        value not in {"", "pending", "not_started"}
+        for value in (decision_status, release_status, handoff_status)
+    ):
+        return "routing", "Routing"
+    lifecycle_status = str(project_state.get("project_lifecycle_status") or "").strip().lower()
+    if lifecycle_status in {"active", "queued", "running"}:
+        return "routing", "Routing"
+    return "planning", "Planning"
+
+
+def _derive_last_action(package: dict[str, Any], execution_feedback: dict[str, Any]) -> str:
+    if execution_feedback.get("active_transition"):
+        return str(execution_feedback["active_transition"])
+    if package:
+        return "Package created and waiting for the next backend transition."
+    return "Waiting for input"
+
+
+def _build_workflow_activity(
+    *,
+    project_name: str,
+    project_state: dict[str, Any],
+    package: dict[str, Any],
+    execution_feedback: dict[str, Any],
+) -> dict[str, Any]:
+    phase_id, phase_label = _derive_workflow_phase(project_state, package)
+    package_id = str(project_state.get("execution_package_id") or package.get("package_id") or "")
+    return {
+        "current_phase": phase_id,
+        "phase_label": phase_label,
+        "last_action": _derive_last_action(package, execution_feedback),
+        "current_project": project_name,
+        "active_package_id": package_id,
+        "package_status": _display_status(package.get("package_status"), "No active execution"),
+        "package_created_at": str(package.get("created_at") or ""),
+    }
 
 
 def _client_status_from_state(project_state: dict[str, Any], package: dict[str, Any]) -> str:
@@ -536,7 +698,14 @@ def build_studio_snapshot() -> dict[str, Any]:
         "generated_at": dashboard.get("summary_generated_at") or "",
         "studio_name": dashboard.get("studio_name") or "FORGE",
         "overview": {
-            "studio_health": (dashboard.get("release_readiness_summary") or {}).get("release_readiness_status") or "unknown",
+            "system_status": _build_system_status(
+                backend_reachable=True,
+                reason=str(dashboard_res.get("summary") or ""),
+            ),
+            "studio_health": _display_status(
+                (dashboard.get("release_readiness_summary") or {}).get("release_readiness_status"),
+                "Waiting for input",
+            ),
             "aegis_posture": dashboard.get("aegis_summary") or {},
             "queue_counts": {
                 "queued_projects": len(dashboard.get("queued_projects") or []),
@@ -584,12 +753,15 @@ def build_studio_snapshot() -> dict[str, Any]:
 def _normalize_package_queue(project_key: str, project_path: str) -> dict[str, Any]:
     queue_res = run_command("execution_package_queue", project_path=project_path, project_name=project_key, n=50)
     queue_payload = queue_res.get("payload") or {}
+    queue_rows = [
+        _decorate_queue_row(pkg) for pkg in (queue_payload.get("packages") or []) if isinstance(pkg, dict)
+    ]
     return {
         "project_key": project_key,
         "project_path": project_path,
         "count": queue_payload.get("count", 0),
         "pending_count": queue_payload.get("pending_count", 0),
-        "packages": queue_payload.get("packages") or [],
+        "packages": queue_rows,
     }
 
 
@@ -606,6 +778,8 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
     approvals = (run_command("pending_approvals", project_path=project_path, project_name=key).get("payload") or {})
     intake_workspace = build_intake_workspace(project_key=key, project_path=project_path)
     current_package_id = str(project_state.get("execution_package_id") or "")
+    current_package_data = _read_current_package(project_path, project_state)
+    execution_feedback = _build_execution_feedback(current_package_data)
     current_package = None
     if current_package_id:
         current_package = (
@@ -630,6 +804,16 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             "system_health": health,
             "package_queue": package_queue,
             "current_package": current_package,
+            "system_status": _build_system_status(
+                backend_reachable=True,
+                reason="Forge backend returned project snapshot data.",
+            ),
+            "workflow_activity": _build_workflow_activity(
+                project_name=str(project.get("name") or key),
+                project_state=project_state,
+                package=current_package_data,
+                execution_feedback=execution_feedback,
+            ),
             "approval_summary": approvals,
             "intake_workspace": intake_workspace,
             "degraded_sources": [
@@ -658,6 +842,7 @@ def build_intake_preview(
     linked_attachment_ids_json: str,
     autonomy_mode: str,
     lead_intake_json: str = "{}",
+    qualification_json: str = "{}",
 ) -> dict[str, Any]:
     key, project = _resolve_project(project_key)
     if not project:
@@ -668,6 +853,7 @@ def build_intake_preview(
         requested_artifacts = json.loads(requested_artifacts_json or "[]")
         linked_attachment_ids = json.loads(linked_attachment_ids_json or "[]")
         lead_intake_profile = json.loads(lead_intake_json or "{}")
+        qualification = json.loads(qualification_json or "{}")
     except json.JSONDecodeError as exc:
         return _result(
             "error",
@@ -685,6 +871,7 @@ def build_intake_preview(
         linked_attachment_ids=linked_attachment_ids if isinstance(linked_attachment_ids, list) else [],
         autonomy_mode=autonomy_mode,
         lead_intake_profile=lead_intake_profile if isinstance(lead_intake_profile, dict) else {},
+        qualification=qualification if isinstance(qualification, dict) else {},
     )
     return _result("ok", payload, "")
 
@@ -795,6 +982,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 "local_analysis_status": row.get("local_analysis_status") or "",
             }
         )
+    execution_feedback = _build_execution_feedback(package, timeline=timeline)
     return _result(
         "ok",
         {
@@ -807,6 +995,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "local_analysis": local_analysis.get("local_analysis") or {},
             "package_json": package,
             "timeline": timeline,
+            "execution_feedback": execution_feedback,
             "review_center": _build_review_center_snapshot(
                 package_id=package_id,
                 package=package,
@@ -867,7 +1056,7 @@ def _summarize_test_results(
         "execution_result_status": str(execution_receipt.get("result_status") or package.get("execution_status") or "pending"),
         "exit_code": execution_receipt.get("exit_code"),
         "log_ref": str(execution_receipt.get("log_ref") or ""),
-        "integrity_status": str((package.get("integrity_verification") or {}).get("integrity_status") or "unknown"),
+        "integrity_status": str((package.get("integrity_verification") or {}).get("integrity_status") or "waiting_for_input"),
         "evaluation_quality_band": str(evaluation_summary.get("execution_quality_band") or ""),
         "suggested_next_action": str(local_summary.get("suggested_next_action") or ""),
     }
@@ -884,6 +1073,7 @@ def _build_review_center_snapshot(
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
+    execution_feedback = _build_execution_feedback(package)
     return {
         "package_id": package_id,
         "approval_ready_context": {
@@ -899,6 +1089,7 @@ def _build_review_center_snapshot(
         "returned_artifacts": _summarize_returned_artifacts(package),
         "patch_context": _summarize_patch_context(package),
         "test_results": _summarize_test_results(package, evaluation, local_analysis),
+        "execution_feedback": execution_feedback,
         "evaluation_summary": dict(evaluation.get("evaluation_summary") or {}),
         "local_analysis_summary": dict(local_analysis.get("local_analysis_summary") or {}),
         "related_attachments": related_attachments,
@@ -993,6 +1184,7 @@ def main() -> int:
     parser.add_argument("--linked-attachment-ids-json", default="[]")
     parser.add_argument("--autonomy-mode", default="supervised_build")
     parser.add_argument("--lead-intake-json", default="{}")
+    parser.add_argument("--qualification-json", default="{}")
     args = parser.parse_args()
 
     if args.mode == "overview":
@@ -1012,6 +1204,7 @@ def main() -> int:
             linked_attachment_ids_json=args.linked_attachment_ids_json,
             autonomy_mode=args.autonomy_mode,
             lead_intake_json=args.lead_intake_json,
+            qualification_json=args.qualification_json,
         )
     elif args.mode == "upload_attachment":
         out = upload_attachment(

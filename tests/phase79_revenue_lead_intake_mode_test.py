@@ -1,5 +1,5 @@
 """
-Phase 79 revenue lead intake mode tests.
+Phase 79 revenue lead intake mode regression tests.
 
 Run: python tests/phase79_revenue_lead_intake_mode_test.py
 """
@@ -36,8 +36,8 @@ def _run(name: str, fn):
         fn()
         print(f"PASS: {name}")
         return True
-    except Exception as e:
-        print(f"FAIL: {name} - {e}")
+    except Exception as exc:
+        print(f"FAIL: {name} - {exc}")
         return False
 
 
@@ -94,6 +94,14 @@ def _write_state(project_path: Path):
     )
 
 
+def _set_lead_intake_mode(project_path: Path):
+    state_path = project_path / "state" / "project_state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["intake_mode"] = "lead_intake"
+    payload["request_kind"] = "lead_intake"
+    state_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
 def test_revenue_lead_intake_preview_is_governed_and_separate_from_dev_intake():
     from NEXUS.registry import PROJECTS
     from ops.forge_console_bridge import build_intake_preview
@@ -128,6 +136,7 @@ def test_revenue_lead_intake_preview_is_governed_and_separate_from_dev_intake():
                         "urgency_context": "Wants kickoff in 2 weeks.",
                     }
                 ),
+                qualification_json=json.dumps({}),
             )
 
             after = state_path.read_text(encoding="utf-8")
@@ -139,17 +148,17 @@ def test_revenue_lead_intake_preview_is_governed_and_separate_from_dev_intake():
             assert payload["readiness"] == "ready_for_governed_request"
             assert payload["composition_status"]["is_complete"] is True
             assert payload["lead_intake_profile"]["company_name"] == "Northwind Labs"
+            assert payload["qualification_summary"]["qualification_status"] == "needs_more_info"
             assert payload["package_preview"]["creation_mode"] == "lead_preview_only"
             assert payload["package_preview"]["package_creation_allowed"] is False
             assert payload["package_preview"]["routing_authority"] == "NEXUS"
             assert payload["package_preview"]["execution_authority"] == "package_governance_only"
-            assert "qualification" not in payload
             assert before == after
         finally:
             PROJECTS.pop(project_key, None)
 
 
-def test_revenue_lead_intake_requires_core_lead_fields_without_qualification_logic():
+def test_revenue_lead_intake_requires_core_lead_fields():
     from NEXUS.registry import PROJECTS
     from ops.forge_console_bridge import build_intake_preview
 
@@ -175,6 +184,7 @@ def test_revenue_lead_intake_requires_core_lead_fields_without_qualification_log
                         "problem_summary": "",
                     }
                 ),
+                qualification_json=json.dumps({}),
             )
             assert preview["status"] == "ok"
             payload = preview["payload"]
@@ -186,7 +196,69 @@ def test_revenue_lead_intake_requires_core_lead_fields_without_qualification_log
             assert "lead_contact_email" in missing
             assert "lead_company_name" in missing
             assert "lead_problem_summary" in missing
-            assert "qualification_status" not in payload
+        finally:
+            PROJECTS.pop(project_key, None)
+
+
+def test_lead_intake_mode_workspace_stays_preview_only():
+    from NEXUS.registry import PROJECTS
+    from ops.forge_console_bridge import build_project_snapshot
+
+    with _local_test_dir() as tmp:
+        _write_state(tmp)
+        _set_lead_intake_mode(tmp)
+        project_key = f"phase79_{uuid.uuid4().hex[:8]}"
+        PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 79 temp project"}
+        try:
+            snapshot = build_project_snapshot(project_key)
+            assert snapshot["status"] == "ok"
+            workspace = snapshot["payload"]["intake_workspace"]
+            assert workspace["draft_seed"]["request_kind"] == "lead_intake"
+            assert workspace["draft_seed"]["lead_qualification"]["budget_band"] == ""
+            assert workspace["preview"]["qualification_summary"]["qualification_status"] == "needs_more_info"
+            assert workspace["preview"]["package_preview"]["package_creation_allowed"] is False
+        finally:
+            PROJECTS.pop(project_key, None)
+
+
+def test_existing_update_request_preview_behavior_remains_intact():
+    from NEXUS.registry import PROJECTS
+    from ops.forge_console_bridge import build_intake_preview
+
+    with _local_test_dir() as tmp:
+        _write_state(tmp)
+        project_key = f"phase79_{uuid.uuid4().hex[:8]}"
+        PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 79 temp project"}
+        try:
+            preview = build_intake_preview(
+                request_kind="update_request",
+                project_key=project_key,
+                objective="Keep existing intake preview behavior stable.",
+                project_context="Regression check for phase 63/79 request preview.",
+                constraints_json=json.dumps(
+                    {
+                        "scope_boundaries": ["No governance bypass."],
+                        "risk_notes": ["No hidden package creation."],
+                        "runtime_preferences": ["UI remains composition-only."],
+                        "output_expectations": ["Preview payload remains explicit."],
+                        "review_expectations": ["Review remains governed."],
+                    }
+                ),
+                requested_artifacts_json=json.dumps(
+                    {
+                        "selected": ["implementation_plan"],
+                        "custom": [],
+                    }
+                ),
+                linked_attachment_ids_json=json.dumps([]),
+                autonomy_mode="supervised_build",
+                qualification_json=json.dumps({}),
+            )
+            assert preview["status"] == "ok"
+            payload = preview["payload"]
+            assert payload["request_kind"] == "update_request"
+            assert payload["qualification_summary"] is None
+            assert payload["package_preview"]["package_creation_allowed"] is False
         finally:
             PROJECTS.pop(project_key, None)
 
@@ -194,9 +266,11 @@ def test_revenue_lead_intake_requires_core_lead_fields_without_qualification_log
 def main():
     tests = [
         test_revenue_lead_intake_preview_is_governed_and_separate_from_dev_intake,
-        test_revenue_lead_intake_requires_core_lead_fields_without_qualification_logic,
+        test_revenue_lead_intake_requires_core_lead_fields,
+        test_lead_intake_mode_workspace_stays_preview_only,
+        test_existing_update_request_preview_behavior_remains_intact,
     ]
-    passed = sum(1 for t in tests if _run(t.__name__, t))
+    passed = sum(1 for test in tests if _run(test.__name__, test))
     print(f"\n{passed}/{len(tests)} passed")
     return 0 if passed == len(tests) else 1
 

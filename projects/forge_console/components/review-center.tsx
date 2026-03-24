@@ -32,6 +32,14 @@ function getReview(detail: PackageDetailSnapshot | null): ForgeReviewCenterSnaps
   return detail?.review_center ?? null;
 }
 
+function displayValue(value: unknown, fallback: string) {
+  const text = String(value ?? "").trim();
+  if (!text || ["unknown", "none", "n/a", "null"].includes(text.toLowerCase())) {
+    return fallback;
+  }
+  return text;
+}
+
 export function ReviewCenter({
   detail,
   clientProject = null,
@@ -197,10 +205,64 @@ export function ReviewCenter({
       </div>
       {!review ? (
         <div className="audit-item muted">
-          Select a package to review returned artifacts, diff context, tests, and related attachments.
+          No package is active for review yet. Create an intake request or select an execution package to inspect returned artifacts, lifecycle transitions, tests, and related attachments.
         </div>
       ) : (
         <div className="review-grid">
+          <div className="detail-card">
+            <h4>Execution Feedback</h4>
+            <div className="chip-row" style={{ marginBottom: 10 }}>
+              <span className={chipClass(review.execution_feedback.package_status)}>
+                {displayValue(review.execution_feedback.package_status, "No active execution")}
+              </span>
+              <span className="chip">
+                {review.execution_feedback.package_created
+                  ? "package created"
+                  : "package not created"}
+              </span>
+            </div>
+            <div className="detail-list">
+              <div className="detail-row">
+                <span>Package Created</span>
+                <strong>
+                  {displayValue(review.execution_feedback.package_created_at, "Not started")}
+                </strong>
+              </div>
+              <div className="detail-row">
+                <span>Current Transition</span>
+                <strong>
+                  {displayValue(review.execution_feedback.active_transition, "No active execution")}
+                </strong>
+              </div>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">Status Summary</div>
+              <div style={{ marginTop: 8 }}>
+                {displayValue(review.execution_feedback.status_summary, "Waiting for input")}
+              </div>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">Lifecycle Transitions</div>
+              <div className="detail-list" style={{ marginTop: 8 }}>
+                {review.execution_feedback.lifecycle_transitions.length > 0 ? (
+                  review.execution_feedback.lifecycle_transitions.map((item) => (
+                    <div className="audit-item" key={`${item.stage_id}-${item.state}`}>
+                      <div className="chip-row" style={{ marginBottom: 8 }}>
+                        <span className="chip info">{item.stage_label}</span>
+                        <span className={chipClass(item.state)}>{item.state}</span>
+                      </div>
+                      <div>{item.detail}</div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="audit-item muted">
+                    No lifecycle transitions have been recorded yet.
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
           <div className="detail-card">
             <h4>Approval Ready Context</h4>
             <div className="chip-row" style={{ marginBottom: 10 }}>
@@ -332,7 +394,9 @@ export function ReviewCenter({
               </div>
               <div className="detail-row">
                 <span>Evaluation Quality Band</span>
-                <strong>{review.test_results.evaluation_quality_band || "unknown"}</strong>
+                <strong>
+                  {displayValue(review.test_results.evaluation_quality_band, "Waiting for input")}
+                </strong>
               </div>
             </div>
           </div>

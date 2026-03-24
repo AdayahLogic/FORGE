@@ -50,76 +50,98 @@ export function PackageLifecycleBoard({
               {grouped[column].length} package{grouped[column].length === 1 ? "" : "s"}
             </div>
             <div className="package-stack">
-              {grouped[column].map((pkg) => {
-                const active = pkg.package_id === selectedPackageId;
-                return (
-                  <div
-                    className={`package-card ${active ? "active" : ""}`}
-                    key={pkg.package_id}
-                  >
-                    <button
-                      className="package-button"
-                      type="button"
-                      onClick={() => onSelectPackage(pkg.package_id)}
+              {grouped[column].length === 0 ? (
+                <div className="audit-item muted">
+                  No packages are in this lifecycle state right now. Create or preview an intake request to help Forge prepare the next governed execution package.
+                </div>
+              ) : (
+                grouped[column].map((pkg) => {
+                  const active = pkg.package_id === selectedPackageId;
+                  return (
+                    <div
+                      className={`package-card ${active ? "active" : ""}`}
+                      key={pkg.package_id}
                     >
-                      <div className="package-title">
-                        <span className="mono">{pkg.package_id}</span>
-                        <span className={chipClass(pkg.execution_status)}>
-                          {pkg.execution_status}
-                        </span>
-                      </div>
-                      <div className="package-path">{pkg.runtime_target_id}</div>
-                      <div className="chip-row" style={{ marginTop: 10 }}>
-                        <span className={chipClass(pkg.review_status)}>
-                          review {pkg.review_status}
-                        </span>
-                        <span className={chipClass(pkg.evaluation_status)}>
-                          eval {pkg.evaluation_status}
-                        </span>
-                        <span className={chipClass(pkg.local_analysis_status)}>
-                          local {pkg.local_analysis_status}
-                        </span>
-                      </div>
-                      <div className="metric-list" style={{ marginTop: 12 }}>
-                        <div>
-                          <div className="stat-label">Failure Risk</div>
-                          <div className="bar">
-                            <div
-                              className={`bar-fill ${
-                                ["high", "critical"].includes(pkg.failure_risk_band)
-                                  ? "danger"
-                                  : ["guarded", "elevated"].includes(pkg.failure_risk_band)
-                                    ? "warn"
-                                    : "success"
-                              }`}
-                              style={{
-                                width:
-                                  pkg.failure_risk_band === "critical"
-                                    ? "100%"
-                                    : pkg.failure_risk_band === "high"
-                                      ? "82%"
-                                      : pkg.failure_risk_band === "elevated"
-                                        ? "62%"
-                                        : pkg.failure_risk_band === "guarded"
-                                          ? "46%"
-                                          : "24%",
-                              }}
-                            />
+                      <button
+                        className="package-button"
+                        type="button"
+                        onClick={() => onSelectPackage(pkg.package_id)}
+                      >
+                        <div className="package-title">
+                          <span className="mono">{pkg.package_id}</span>
+                          <span className={chipClass(pkg.execution_status)}>
+                            {pkg.execution_status || "No active execution"}
+                          </span>
+                        </div>
+                        <div className="package-path">
+                          {pkg.runtime_target_id || "Waiting for input"}
+                        </div>
+                        <div className="detail-list" style={{ marginTop: 10 }}>
+                          <div className="detail-row">
+                            <span>Status</span>
+                            <strong>{pkg.lifecycle_status_label || "Not started"}</strong>
+                          </div>
+                          <div className="detail-row">
+                            <span>Last Action</span>
+                            <strong>{pkg.last_action_label || "Waiting for input"}</strong>
+                          </div>
+                          <div className="detail-row">
+                            <span>Package Created</span>
+                            <strong>{pkg.created_at || "Not started"}</strong>
                           </div>
                         </div>
-                        <div className="chip-row">
-                          {pkg.suggested_next_action ? (
-                            <span className="chip info">{pkg.suggested_next_action}</span>
-                          ) : null}
-                          {pkg.failure_class ? (
-                            <span className="chip danger">{pkg.failure_class}</span>
-                          ) : null}
+                        <div className="chip-row" style={{ marginTop: 10 }}>
+                          <span className={chipClass(pkg.review_status)}>
+                            review {pkg.review_status || "waiting_for_input"}
+                          </span>
+                          <span className={chipClass(pkg.evaluation_status)}>
+                            eval {pkg.evaluation_status || "waiting_for_input"}
+                          </span>
+                          <span className={chipClass(pkg.local_analysis_status)}>
+                            local {pkg.local_analysis_status || "waiting_for_input"}
+                          </span>
                         </div>
-                      </div>
-                    </button>
-                  </div>
-                );
-              })}
+                        <div className="metric-list" style={{ marginTop: 12 }}>
+                          <div>
+                            <div className="stat-label">Failure Risk</div>
+                            <div className="bar">
+                              <div
+                                className={`bar-fill ${
+                                  ["high", "critical"].includes(pkg.failure_risk_band)
+                                    ? "danger"
+                                    : ["guarded", "elevated"].includes(pkg.failure_risk_band)
+                                      ? "warn"
+                                      : "success"
+                                }`}
+                                style={{
+                                  width:
+                                    pkg.failure_risk_band === "critical"
+                                      ? "100%"
+                                      : pkg.failure_risk_band === "high"
+                                        ? "82%"
+                                        : pkg.failure_risk_band === "elevated"
+                                          ? "62%"
+                                          : pkg.failure_risk_band === "guarded"
+                                            ? "46%"
+                                            : "24%",
+                                }}
+                              />
+                            </div>
+                          </div>
+                          <div className="chip-row">
+                            {pkg.suggested_next_action ? (
+                              <span className="chip info">{pkg.suggested_next_action}</span>
+                            ) : null}
+                            {pkg.failure_class ? (
+                              <span className="chip danger">{pkg.failure_class}</span>
+                            ) : null}
+                          </div>
+                        </div>
+                      </button>
+                    </div>
+                  );
+                })
+              )}
             </div>
           </div>
         ))}

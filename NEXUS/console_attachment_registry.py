@@ -80,6 +80,19 @@ REQUIRED_LEAD_INTAKE_FIELDS = (
     "company_name",
     "problem_summary",
 )
+LEAD_QUALIFICATION_REQUIRED_FIELDS = (
+    "budget_band",
+    "urgency",
+    "problem_clarity",
+    "decision_readiness",
+)
+DEFAULT_LEAD_QUALIFICATION = {
+    "budget_band": "",
+    "urgency": "",
+    "problem_clarity": "",
+    "decision_readiness": "",
+    "fit_notes": "",
+}
 
 
 def _now() -> str:
@@ -428,6 +441,130 @@ def _autonomy_mode_detail(mode: Any) -> dict[str, str]:
     }
 
 
+def _normalize_request_kind(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized in {"update_request", "create_request", "lead_intake"}:
+        return normalized
+    return "update_request"
+
+
+def _default_lead_qualification() -> dict[str, str]:
+    return dict(DEFAULT_LEAD_QUALIFICATION)
+
+
+def _normalize_lead_qualification(value: Any) -> dict[str, str]:
+    normalized = _default_lead_qualification()
+    if not isinstance(value, dict):
+        return normalized
+    for key in normalized:
+        normalized[key] = str(value.get(key) or "").strip().lower()
+    return normalized
+
+
+def _score_budget_band(value: str) -> int:
+    mapping = {
+        "none": 0,
+        "unknown": 0,
+        "very_low": 0,
+        "low": 1,
+        "medium": 2,
+        "high": 3,
+        "enterprise": 4,
+    }
+    return mapping.get(str(value or "").strip().lower(), 0)
+
+
+def _score_urgency(value: str) -> int:
+    mapping = {
+        "low": 0,
+        "medium": 1,
+        "high": 2,
+        "critical": 3,
+    }
+    return mapping.get(str(value or "").strip().lower(), 0)
+
+
+def _score_problem_clarity(value: str) -> int:
+    mapping = {
+        "unclear": 0,
+        "partial": 1,
+        "clear": 2,
+        "very_clear": 3,
+    }
+    return mapping.get(str(value or "").strip().lower(), 0)
+
+
+def _score_decision_readiness(value: str) -> int:
+    mapping = {
+        "exploring": 0,
+        "evaluating": 1,
+        "ready": 2,
+        "committed": 3,
+    }
+    return mapping.get(str(value or "").strip().lower(), 0)
+
+
+def _build_lead_qualification_summary(value: Any) -> dict[str, Any]:
+    signals = _normalize_lead_qualification(value)
+    missing_fields = [field for field in LEAD_QUALIFICATION_REQUIRED_FIELDS if not signals.get(field)]
+    if missing_fields:
+        return {
+            "qualification_status": "needs_more_info",
+            "qualification_signals": {
+                "budget_band": signals["budget_band"],
+                "urgency": signals["urgency"],
+                "problem_clarity": signals["problem_clarity"],
+                "decision_readiness": signals["decision_readiness"],
+            },
+            "missing_qualification_fields": missing_fields,
+            "lead_readiness_level": "incomplete",
+            "qualification_reasoning_summary": (
+                "Lead qualification is incomplete. Populate budget band, urgency, "
+                "problem clarity, and decision readiness to assess lead readiness."
+            ),
+        }
+
+    budget_score = _score_budget_band(signals["budget_band"])
+    urgency_score = _score_urgency(signals["urgency"])
+    clarity_score = _score_problem_clarity(signals["problem_clarity"])
+    decision_score = _score_decision_readiness(signals["decision_readiness"])
+    total = budget_score + urgency_score + clarity_score + decision_score
+
+    if urgency_score >= 2 and decision_score >= 2 and clarity_score >= 2 and budget_score >= 1:
+        status = "high_priority"
+        readiness = "expedite"
+    elif decision_score <= 0 or clarity_score <= 0 or total <= 3:
+        status = "underqualified"
+        readiness = "low"
+    else:
+        status = "qualified"
+        readiness = "ready"
+
+    return {
+        "qualification_status": status,
+        "qualification_signals": {
+            "budget_band": signals["budget_band"],
+            "urgency": signals["urgency"],
+            "problem_clarity": signals["problem_clarity"],
+            "decision_readiness": signals["decision_readiness"],
+        },
+        "missing_qualification_fields": [],
+        "lead_readiness_level": readiness,
+        "qualification_reasoning_summary": (
+            f"Lead qualification assessed as {status}. "
+            f"Signals: budget={signals['budget_band']}, urgency={signals['urgency']}, "
+            f"clarity={signals['problem_clarity']}, decision readiness={signals['decision_readiness']}."
+        ),
+    }
+
+
+def _resolve_default_request_kind(project_state: dict[str, Any]) -> str:
+    intake_mode = str(project_state.get("intake_mode") or "").strip().lower()
+    if intake_mode == "lead_intake":
+        return "lead_intake"
+    return _normalize_request_kind(project_state.get("request_kind") or "update_request")
+
+
 def _composition_status(
     *,
     objective: str,
@@ -512,11 +649,12 @@ def build_intake_workspace(
         "custom": [],
     }
     lead_intake_profile = _empty_lead_intake_profile()
+    request_kind = _resolve_default_request_kind(project_state)
     return {
         "project_key": project_key,
         "project_path": project_path,
         "draft_seed": {
-            "request_kind": "update_request",
+            "request_kind": request_kind,
             "objective": "",
             "project_context": "",
             "constraints": _flatten_constraint_sections(structured_constraints),
@@ -526,6 +664,7 @@ def build_intake_workspace(
             "autonomy_mode": autonomy_mode,
             "linked_attachment_ids": [],
             "lead_intake_profile": lead_intake_profile,
+            "lead_qualification": _default_lead_qualification(),
         },
         "attachments": attachments[:20],
         "governance_notes": {
@@ -540,7 +679,7 @@ def build_intake_workspace(
             ],
         },
         "preview": preview_intake_request_safe(
-            request_kind="update_request",
+            request_kind=request_kind,
             project_key=project_key,
             project_path=project_path,
             objective="",
@@ -550,6 +689,7 @@ def build_intake_workspace(
             linked_attachment_ids=[],
             autonomy_mode=autonomy_mode,
             lead_intake_profile=lead_intake_profile,
+            qualification=_default_lead_qualification(),
         ),
     }
 
@@ -566,6 +706,7 @@ def preview_intake_request(
     linked_attachment_ids: list[str],
     autonomy_mode: str,
     lead_intake_profile: Any = None,
+    qualification: Any = None,
 ) -> dict[str, Any]:
     attachments = list_console_attachments_safe(project_path)
     attachments_by_id = {
@@ -638,9 +779,11 @@ def preview_intake_request(
             "Request composition is incomplete. Add project context, scope/output/review constraints, and requested artifacts before launch preview can be considered ready."
         )
     request_id = f"preview-{uuid.uuid4().hex[:8]}"
+    normalized_request_kind = _normalize_request_kind(request_kind)
+    qualification_summary = _build_lead_qualification_summary(qualification)
     return {
         "request_id": request_id,
-        "request_kind": str(request_kind or "update_request"),
+        "request_kind": normalized_request_kind,
         "objective": objective_value,
         "project_context": project_context_value,
         "constraints": flat_constraints,
@@ -658,6 +801,11 @@ def preview_intake_request(
         "linked_attachments": linked,
         "readiness": readiness,
         "warnings": warnings,
+        "qualification_summary": (
+            qualification_summary
+            if normalized_request_kind == "lead_intake"
+            else None
+        ),
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
@@ -681,7 +829,7 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
     except Exception as exc:
         return {
             "request_id": "",
-            "request_kind": str(kwargs.get("request_kind") or "update_request"),
+            "request_kind": _normalize_request_kind(kwargs.get("request_kind") or "update_request"),
             "objective": "",
             "project_context": "",
             "constraints": [],
@@ -701,6 +849,11 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
             "linked_attachments": [],
             "readiness": "error",
             "warnings": [f"Preview failed: {exc}"],
+            "qualification_summary": (
+                _build_lead_qualification_summary(kwargs.get("qualification"))
+                if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                else None
+            ),
             "package_preview": {
                 "creation_mode": "preview_only",
                 "package_creation_allowed": False,

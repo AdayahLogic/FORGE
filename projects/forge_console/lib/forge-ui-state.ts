@@ -67,6 +67,13 @@ export function createInitialUiState(): ForgeUiState {
         budget_context: "",
         urgency_context: "",
       },
+      leadQualificationDraft: {
+        budget_band: "",
+        urgency: "",
+        problem_clarity: "",
+        decision_readiness: "",
+        fit_notes: "",
+      },
       autonomyMode: "supervised_build",
       linkedAttachmentIds: [],
       previewing: false,

@@ -4,6 +4,40 @@ export type CommandResult<T> = {
   payload: T;
 };
 
+export type ForgeSystemStatus = {
+  backend_reachable: boolean;
+  status: "online" | "offline";
+  label: string;
+  reason: string;
+};
+
+export type ForgeWorkflowActivity = {
+  current_phase: "planning" | "routing" | "execution" | "review";
+  phase_label: string;
+  last_action: string;
+  current_project: string;
+  active_package_id: string;
+  package_status: string;
+  package_created_at: string;
+};
+
+export type ForgeLifecycleTransition = {
+  stage_id: string;
+  stage_label: string;
+  state: string;
+  detail: string;
+  occurred_at: string;
+};
+
+export type ForgeExecutionFeedback = {
+  package_created: boolean;
+  package_created_at: string;
+  package_status: string;
+  status_summary: string;
+  active_transition: string;
+  lifecycle_transitions: ForgeLifecycleTransition[];
+};
+
 export type ForgeConstraintSections = {
   scope_boundaries: string[];
   risk_notes: string[];
@@ -15,6 +49,31 @@ export type ForgeConstraintSections = {
 export type ForgeRequestedArtifactsDraft = {
   selected: string[];
   custom: string[];
+};
+
+export type ForgeLeadQualificationDraft = {
+  budget_band: string;
+  urgency: string;
+  problem_clarity: string;
+  decision_readiness: string;
+  fit_notes: string;
+};
+
+export type ForgeLeadQualificationSummary = {
+  qualification_status:
+    | "underqualified"
+    | "needs_more_info"
+    | "qualified"
+    | "high_priority";
+  qualification_signals: {
+    budget_band: string;
+    urgency: string;
+    problem_clarity: string;
+    decision_readiness: string;
+  };
+  missing_qualification_fields: string[];
+  lead_readiness_level: string;
+  qualification_reasoning_summary: string;
 };
 
 export type ForgeRequestedArtifactDetail = {
@@ -120,6 +179,7 @@ export type ForgeReviewCenterSnapshot = {
     evaluation_quality_band: string;
     suggested_next_action: string;
   };
+  execution_feedback: ForgeExecutionFeedback;
   evaluation_summary: Record<string, unknown>;
   local_analysis_summary: Record<string, unknown>;
   related_attachments: ForgeReviewAttachmentRecord[];
@@ -149,6 +209,7 @@ export type ForgeIntakePreview = {
   }>;
   readiness: string;
   warnings: string[];
+  qualification_summary: ForgeLeadQualificationSummary | null;
   package_preview: {
     creation_mode: string;
     package_creation_allowed: boolean;
@@ -172,6 +233,7 @@ export type ForgeIntakeWorkspace = {
     structured_constraints: ForgeConstraintSections;
     requested_artifacts: string[];
     requested_artifacts_draft: ForgeRequestedArtifactsDraft;
+    lead_qualification: ForgeLeadQualificationDraft;
     autonomy_mode: string;
     linked_attachment_ids: string[];
     lead_intake_profile: ForgeLeadIntakeProfile;
@@ -276,6 +338,7 @@ export type ForgeOverviewSnapshot = {
   generated_at: string;
   studio_name: string;
   overview: {
+    system_status: ForgeSystemStatus;
     studio_health: string;
     aegis_posture: Record<string, unknown>;
     queue_counts: Record<string, number>;
@@ -333,6 +396,8 @@ export type PackageQueueRow = {
   failure_risk_band: string;
   local_analysis_status: string;
   suggested_next_action: string;
+  lifecycle_status_label?: string;
+  last_action_label?: string;
 };
 
 export type PackageDetailSnapshot = {
@@ -345,6 +410,7 @@ export type PackageDetailSnapshot = {
   local_analysis: Record<string, unknown>;
   package_json: Record<string, unknown>;
   timeline: Array<Record<string, unknown>>;
+  execution_feedback: ForgeExecutionFeedback;
   review_center: ForgeReviewCenterSnapshot;
 };
 
@@ -365,8 +431,10 @@ export type ProjectSnapshot = {
     packages: PackageQueueRow[];
   };
   current_package: PackageDetailSnapshot | null;
+  system_status: ForgeSystemStatus;
+  workflow_activity: ForgeWorkflowActivity;
   approval_summary: Record<string, unknown>;
-  intake_workspace: ForgeIntakeWorkspace;
+  intake_workspace: ForgeIntakeWorkspace | null;
   degraded_sources: string[];
 };
 
@@ -406,6 +474,7 @@ export type ForgeUiState = {
     structuredConstraints: ForgeConstraintSections;
     requestedArtifacts: ForgeRequestedArtifactsDraft;
     leadIntake: ForgeLeadIntakeProfile;
+    leadQualificationDraft: ForgeLeadQualificationDraft;
     autonomyMode: string;
     linkedAttachmentIds: string[];
     previewing: boolean;

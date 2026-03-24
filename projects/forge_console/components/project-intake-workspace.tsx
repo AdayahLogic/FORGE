@@ -3,6 +3,7 @@ import type {
   ForgeIntakePreview,
   ForgeLeadIntakeProfile,
   ForgeIntakeWorkspace,
+  ForgeLeadQualificationDraft,
   ForgeRequestedArtifactsDraft,
 } from "../lib/forge-types";
 import { AttachmentDrawer } from "./attachment-drawer";
@@ -14,6 +15,7 @@ type IntakeDraft = {
   structuredConstraints: ForgeConstraintSections;
   requestedArtifacts: ForgeRequestedArtifactsDraft;
   leadIntake: ForgeLeadIntakeProfile;
+  leadQualificationDraft: ForgeLeadQualificationDraft;
   autonomyMode: string;
   linkedAttachmentIds: string[];
   previewing: boolean;
@@ -61,6 +63,11 @@ const REQUESTED_ARTIFACT_OPTIONS = [
   { value: "summary_report", label: "Summary / report" },
 ] as const;
 
+const LEAD_BUDGET_BANDS = ["", "none", "very_low", "low", "medium", "high", "enterprise"] as const;
+const LEAD_URGENCY_LEVELS = ["", "low", "medium", "high", "critical"] as const;
+const LEAD_PROBLEM_CLARITY_LEVELS = ["", "unclear", "partial", "clear", "very_clear"] as const;
+const LEAD_DECISION_READINESS_LEVELS = ["", "exploring", "evaluating", "ready", "committed"] as const;
+
 const CONSTRAINT_FIELDS = [
   {
     key: "scope_boundaries",
@@ -99,11 +106,13 @@ function getChipClass(value: string) {
       "ready_with_attachment_limits",
       "preview_only",
       "stale_preview",
+      "underqualified",
+      "needs_more_info",
     ].includes(value)
   ) {
     return "chip warn";
   }
-  if (["classified", "ready_for_governed_request"].includes(value)) {
+  if (["classified", "ready_for_governed_request", "qualified", "high_priority"].includes(value)) {
     return "chip success";
   }
   return "chip";
@@ -233,7 +242,12 @@ export function ProjectIntakeWorkspace({
                 />
               </label>
               {draft.requestKind === "lead_intake" ? (
-                <>
+                <div className="field field-span-2">
+                  <div className="package-title" style={{ marginBottom: 10 }}>
+                    <span>Lead Intake Profile (Phase 79)</span>
+                    <span className="chip">Governed preview profile</span>
+                  </div>
+                  <div className="constraint-grid">
                   <label className="field">
                     <span>Contact Name</span>
                     <input
@@ -378,7 +392,114 @@ export function ProjectIntakeWorkspace({
                       }
                     />
                   </label>
-                </>
+                  </div>
+                  <div className="package-title" style={{ margin: "14px 0 10px" }}>
+                    <span>Lead Qualification (Phase 80, Preview-Only)</span>
+                    <span className="chip warn">No automation</span>
+                  </div>
+                  <div className="constraint-grid">
+                    <label className="field">
+                      <span>Budget Band</span>
+                      <select
+                        className="project-select"
+                        value={draft.leadQualificationDraft.budget_band}
+                        onChange={(event) =>
+                          onDraftChange({
+                            leadQualificationDraft: {
+                              ...draft.leadQualificationDraft,
+                              budget_band: event.target.value,
+                            },
+                          })
+                        }
+                      >
+                        {LEAD_BUDGET_BANDS.map((value) => (
+                          <option key={value || "empty"} value={value}>
+                            {value || "select"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Urgency</span>
+                      <select
+                        className="project-select"
+                        value={draft.leadQualificationDraft.urgency}
+                        onChange={(event) =>
+                          onDraftChange({
+                            leadQualificationDraft: {
+                              ...draft.leadQualificationDraft,
+                              urgency: event.target.value,
+                            },
+                          })
+                        }
+                      >
+                        {LEAD_URGENCY_LEVELS.map((value) => (
+                          <option key={value || "empty"} value={value}>
+                            {value || "select"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Problem Clarity</span>
+                      <select
+                        className="project-select"
+                        value={draft.leadQualificationDraft.problem_clarity}
+                        onChange={(event) =>
+                          onDraftChange({
+                            leadQualificationDraft: {
+                              ...draft.leadQualificationDraft,
+                              problem_clarity: event.target.value,
+                            },
+                          })
+                        }
+                      >
+                        {LEAD_PROBLEM_CLARITY_LEVELS.map((value) => (
+                          <option key={value || "empty"} value={value}>
+                            {value || "select"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Decision Readiness</span>
+                      <select
+                        className="project-select"
+                        value={draft.leadQualificationDraft.decision_readiness}
+                        onChange={(event) =>
+                          onDraftChange({
+                            leadQualificationDraft: {
+                              ...draft.leadQualificationDraft,
+                              decision_readiness: event.target.value,
+                            },
+                          })
+                        }
+                      >
+                        {LEAD_DECISION_READINESS_LEVELS.map((value) => (
+                          <option key={value || "empty"} value={value}>
+                            {value || "select"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <label className="field" style={{ marginTop: 10 }}>
+                    <span>Fit Notes (optional)</span>
+                    <textarea
+                      className="text-area"
+                      rows={3}
+                      value={draft.leadQualificationDraft.fit_notes}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadQualificationDraft: {
+                            ...draft.leadQualificationDraft,
+                            fit_notes: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                </div>
               ) : null}
             </div>
             <div className="detail-card-subsection">
@@ -460,7 +581,7 @@ export function ProjectIntakeWorkspace({
             </div>
             <div className="chip-row" style={{ marginTop: 12 }}>
               <span className="chip info">Routing stays in NEXUS</span>
-              <span className="chip">No package created</span>
+              <span className="chip">{selectedProjectKey ? "No package created" : "Waiting for project selection"}</span>
               <span className="chip">No implicit execution</span>
             </div>
             <div className="button-row" style={{ marginTop: 14 }}>
@@ -473,7 +594,10 @@ export function ProjectIntakeWorkspace({
                 {draft.previewing ? "Previewing..." : "Preview Governed Request"}
               </button>
               <div className="muted">
-                {draft.lastMessage || "Draft changes remain local until you explicitly refresh preview."}
+                {draft.lastMessage ||
+                  (selectedProjectKey
+                    ? "Draft changes remain local until you explicitly refresh preview."
+                    : "Select a project first, then create an intake request preview to populate this workspace.")}
               </div>
             </div>
           </div>
@@ -695,6 +819,46 @@ export function ProjectIntakeWorkspace({
               </div>
 
               <div className="detail-grid-two" style={{ marginTop: 12 }}>
+                {effectivePreview.qualification_summary ? (
+                  <div className="detail-card">
+                    <h4>Lead Qualification Summary</h4>
+                    <div className="chip-row" style={{ marginBottom: 10 }}>
+                      <span className={getChipClass(effectivePreview.qualification_summary.qualification_status)}>
+                        {effectivePreview.qualification_summary.qualification_status}
+                      </span>
+                      <span className="chip">
+                        readiness {effectivePreview.qualification_summary.lead_readiness_level}
+                      </span>
+                    </div>
+                    <div className="detail-list">
+                      {Object.entries(effectivePreview.qualification_summary.qualification_signals).map(
+                        ([key, value]) => (
+                          <div className="detail-row" key={key}>
+                            <span>{key.replace(/_/g, " ")}</span>
+                            <strong>{value || "missing"}</strong>
+                          </div>
+                        ),
+                      )}
+                    </div>
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Reasoning</div>
+                      <div style={{ marginTop: 8 }}>
+                        {effectivePreview.qualification_summary.qualification_reasoning_summary}
+                      </div>
+                    </div>
+                    <div className="detail-list">
+                      {effectivePreview.qualification_summary.missing_qualification_fields.length > 0 ? (
+                        effectivePreview.qualification_summary.missing_qualification_fields.map((field) => (
+                          <div className="audit-item" key={field}>
+                            Missing qualification: {field.replace(/_/g, " ")}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="audit-item muted">No required qualification fields are missing.</div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="detail-card">
                   <h4>Package Preview Boundary</h4>
                   <div className="detail-list">
@@ -752,7 +916,7 @@ export function ProjectIntakeWorkspace({
             </>
           ) : (
             <div className="audit-item muted">
-              Preview data appears only after you explicitly request a governed preview. Until then, the workspace stays in composition mode and cannot show a ready state.
+              This panel is empty because no governed intake preview has been requested yet. Start with an objective, request context, and desired outputs, then click `Preview Governed Request` to let Forge explain what will happen next.
             </div>
           )}
         </div>

@@ -5,6 +5,7 @@ import type {
   ForgeConstraintSections,
   ForgeIntakePreview,
   ForgeLeadIntakeProfile,
+  ForgeLeadQualificationDraft,
   ForgeOverviewSnapshot,
   ForgeRequestedArtifactsDraft,
   PackageDetailSnapshot,
@@ -74,6 +75,7 @@ export function previewIntakeRequest(input: {
   constraints: ForgeConstraintSections;
   requestedArtifacts: ForgeRequestedArtifactsDraft;
   leadIntake: ForgeLeadIntakeProfile;
+  qualification: ForgeLeadQualificationDraft;
   linkedAttachmentIds: string[];
   autonomyMode: string;
 }) {

@@ -28,7 +28,9 @@
     "**/*.ts",
     "**/*.tsx",
     ".forge-console-build/types/**/*.ts",
-    ".forge-console-build/dev/types/**/*.ts"
+    ".forge-console-build/dev/types/**/*.ts",
+    ".forge-console-build-dev/types/**/*.ts",
+    ".forge-console-build-dev/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules"

@@ -14,6 +14,7 @@ export async function POST(request: Request) {
     linkedAttachmentIds?: string[];
     autonomyMode?: string;
     leadIntake?: Record<string, unknown>;
+    qualification?: Record<string, unknown>;
   };
   try {
     const payload = await runForgeBridge([
@@ -36,6 +37,8 @@ export async function POST(request: Request) {
       body.autonomyMode ?? "supervised_build",
       "--lead-intake-json",
       JSON.stringify(body.leadIntake ?? {}),
+      "--qualification-json",
+      JSON.stringify(body.qualification ?? {}),
     ]);
     return NextResponse.json(payload, {
       status: payload.status === "ok" ? 200 : 400,

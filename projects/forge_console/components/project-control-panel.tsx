@@ -28,6 +28,14 @@ function getChipClass(value: string) {
   return "chip";
 }
 
+function displayValue(value: unknown, fallback: string) {
+  const text = String(value ?? "").trim();
+  if (!text || ["unknown", "none", "n/a", "null"].includes(text.toLowerCase())) {
+    return fallback;
+  }
+  return text;
+}
+
 export function ProjectControlPanel({
   projects,
   selectedProjectKey,
@@ -135,6 +143,9 @@ export function ProjectControlPanel({
   const health = projectSnapshot?.system_health ?? {};
   const intake = projectSnapshot?.intake_workspace;
   const preview = intake?.preview;
+  const workflow = projectSnapshot?.workflow_activity;
+  const systemStatus = projectSnapshot?.system_status;
+  const backendOffline = systemStatus?.status === "offline";
   const operatorProjects = projects as ForgeProjectRow[];
   const currentPackageId =
     typeof state.execution_package_id === "string" ? state.execution_package_id : "";
@@ -146,9 +157,9 @@ export function ProjectControlPanel({
           <h3>Project Control Panel</h3>
         </div>
         <span className="chip info">Read-only default</span>
-      </div>
-      <div className="left-stack">
-        <div className="project-list">
+        </div>
+        <div className="left-stack">
+          <div className="project-list">
           {operatorProjects.map((project) => {
             const active = project.project_key === selectedProjectKey;
             return (
@@ -181,59 +192,126 @@ export function ProjectControlPanel({
               </div>
             );
           })}
-        </div>
-        <div className="control-card">
-          <div className="eyebrow">Selected Project</div>
-          <div className="detail-list" style={{ marginTop: 10 }}>
-            <div className="detail-row">
-              <span>Lifecycle</span>
-              <strong>{String(state.project_lifecycle_status ?? "unknown")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Dispatch</span>
-              <strong>{String(state.dispatch_status ?? "unknown")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Governance</span>
-              <strong>{String(state.governance_status ?? "unknown")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Enforcement</span>
-              <strong>{String(state.enforcement_status ?? "unknown")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Current Package</span>
-              <strong className="mono">{currentPackageId || "none"}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Latest Session</span>
-              <strong className="mono">
-                {String(session.run_id ?? state.run_id ?? "n/a")}
-              </strong>
-            </div>
-            <div className="detail-row">
-              <span>System Health</span>
-              <strong>{String(health.overall_status ?? "unknown")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Attachments</span>
-              <strong>{String(intake?.attachments.length ?? 0)}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Autonomy Mode</span>
-              <strong>{String(state.autonomy_mode ?? intake?.draft_seed.autonomy_mode ?? "unknown")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Intake Preview</span>
-              <strong>{String(preview?.readiness ?? "preview_required")}</strong>
-            </div>
-            <div className="detail-row">
-              <span>Requested Outputs</span>
-              <strong>{String(preview?.requested_artifacts.length ?? intake?.draft_seed.requested_artifacts.length ?? 0)}</strong>
-            </div>
+          </div>
+          <div className="control-card">
+            <div className="eyebrow">Selected Project</div>
+            {!projectSnapshot ? (
+              <div className="audit-item muted" style={{ marginTop: 10 }}>
+                Select a project to see its current lifecycle, intake readiness, and workflow activity.
+              </div>
+            ) : (
+              <div className="detail-list" style={{ marginTop: 10 }}>
+                <div className="chip-row" style={{ marginBottom: 6 }}>
+                  <span className={backendOffline ? "chip danger" : "chip success"}>
+                    {systemStatus?.label ?? "Forge Running"}
+                  </span>
+                  <span className="chip info">
+                    {displayValue(projectSnapshot.project_name, "Waiting for input")}
+                  </span>
+                </div>
+                <div className="detail-row">
+                  <span>Lifecycle</span>
+                  <strong>{displayValue(state.project_lifecycle_status, "Not started")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Dispatch</span>
+                  <strong>{displayValue(state.dispatch_status, "Waiting for input")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Governance</span>
+                  <strong>{displayValue(state.governance_status, "Waiting for input")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Enforcement</span>
+                  <strong>{displayValue(state.enforcement_status, "Waiting for input")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Current Package</span>
+                  <strong className="mono">{currentPackageId || "No active execution"}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Latest Session</span>
+                  <strong className="mono">
+                    {displayValue(session.run_id ?? state.run_id, "Waiting for input")}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>System Health</span>
+                  <strong>
+                    {displayValue(
+                      health.overall_status,
+                      backendOffline ? "Backend offline" : "Waiting for input",
+                    )}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Attachments</span>
+                  <strong>{String(intake?.attachments.length ?? 0)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Autonomy Mode</span>
+                  <strong>
+                    {displayValue(
+                      state.autonomy_mode ?? intake?.draft_seed.autonomy_mode,
+                      "Waiting for input",
+                    )}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Intake Preview</span>
+                  <strong>{displayValue(preview?.readiness, "Waiting for input")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Requested Outputs</span>
+                  <strong>
+                    {String(
+                      preview?.requested_artifacts.length ??
+                        intake?.draft_seed.requested_artifacts.length ??
+                        0,
+                    )}
+                  </strong>
+                </div>
+              </div>
+            )}
+          </div>
+          <div className="control-card">
+            <div className="eyebrow">Active Workflow</div>
+            {!workflow ? (
+              <div className="audit-item muted" style={{ marginTop: 10 }}>
+                No active workflow yet. Create or preview an intake request to let Forge start planning the next governed package.
+              </div>
+            ) : (
+              <div className="detail-list" style={{ marginTop: 10 }}>
+                <div className="detail-row">
+                  <span>Current Phase</span>
+                  <strong>{displayValue(workflow.phase_label, "Planning")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Last Action</span>
+                  <strong>{displayValue(workflow.last_action, "Waiting for input")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Current Project</span>
+                  <strong>{displayValue(workflow.current_project, "Waiting for input")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Active Package</span>
+                  <strong className="mono">
+                    {displayValue(workflow.active_package_id, "No active execution")}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Package Status</span>
+                  <strong>{displayValue(workflow.package_status, "No active execution")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Package Created</span>
+                  <strong>{displayValue(workflow.package_created_at, "Not started")}</strong>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
-    </section>
+      </section>
   );
 }

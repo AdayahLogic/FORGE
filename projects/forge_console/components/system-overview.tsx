@@ -30,6 +30,16 @@ export function SystemOverview({ overview }: Props) {
   const evaluation = data?.evaluation_counts;
   const local = data?.local_analysis_counts;
   const executorHealth = data?.executor_health ?? {};
+  const systemStatus = data?.system_status;
+  const backendOffline = systemStatus?.status === "offline";
+  const displayState = (value: unknown, fallback: string) => {
+    const text = String(value ?? "").trim();
+    if (!text || ["unknown", "none", "n/a", "null"].includes(text.toLowerCase())) {
+      return fallback;
+    }
+    return text;
+  };
+
   return (
     <section className="panel top-band">
       <div className="section-title">
@@ -48,16 +58,22 @@ export function SystemOverview({ overview }: Props) {
       </div>
       <div className="overview-grid">
         <StatCard
+          label="System Status"
+          value={systemStatus?.label ?? "Forge Not Running"}
+          subvalue={systemStatus?.reason || "Backend offline"}
+        />
+        <StatCard
           label="Studio Health"
-          value={String(data?.studio_health ?? "unknown")}
-          subvalue={`Executor ${String(
-            (executorHealth.execution_environment_status as string) ?? "unknown",
+          value={displayState(data?.studio_health, backendOffline ? "Backend offline" : "Waiting for input")}
+          subvalue={`Executor ${displayState(
+            executorHealth.execution_environment_status,
+            backendOffline ? "Backend offline" : "Waiting for input",
           )}`}
         />
         <StatCard
           label="AEGIS Posture"
-          value={String((aegis.aegis_decision as string) ?? "unknown")}
-          subvalue={`Scope ${String((aegis.aegis_scope as string) ?? "runtime_dispatch_only")}`}
+          value={displayState(aegis.aegis_decision, backendOffline ? "Backend offline" : "Waiting for input")}
+          subvalue={`Scope ${displayState(aegis.aegis_scope, "runtime_dispatch_only")}`}
         />
         <StatCard
           label="Queue Load"
@@ -86,8 +102,9 @@ export function SystemOverview({ overview }: Props) {
         />
         <StatCard
           label="Executor Health"
-          value={String(
-            (executorHealth.runtime_infrastructure_status as string) ?? "unknown",
+          value={displayState(
+            executorHealth.runtime_infrastructure_status,
+            backendOffline ? "Backend offline" : "Waiting for input",
           )}
           subvalue={`${Number(executorHealth.integrity_issues_count_total ?? 0)} integrity issues`}
         />

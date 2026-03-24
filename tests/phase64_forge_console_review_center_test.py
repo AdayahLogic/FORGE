@@ -206,6 +206,8 @@ def test_review_center_snapshot_includes_artifacts_and_attachment_statuses():
             assert review["returned_artifacts"]
             assert review["patch_context"]["patch_summary"]
             assert review["test_results"]["execution_result_status"] == "succeeded"
+            assert review["execution_feedback"]["package_created"] is True
+            assert review["execution_feedback"]["lifecycle_transitions"]
             assert review["evaluation_summary"]["execution_quality_band"] == "excellent"
             attachments = review["related_attachments"]
             assert len(attachments) >= 2

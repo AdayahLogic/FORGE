@@ -16,6 +16,7 @@ import {
 } from "../lib/forge-selectors";
 import type {
   ForgeConstraintSections,
+  ForgeLeadQualificationDraft,
   ForgeRequestedArtifactsDraft,
   ForgeUiState,
 } from "../lib/forge-types";
@@ -59,6 +60,16 @@ export function ConsoleShell() {
       value?.selected ??
       (fallback ?? []).filter(Boolean),
     custom: value?.custom ?? [],
+  });
+
+  const normalizeLeadQualification = (
+    value: ForgeLeadQualificationDraft | null | undefined,
+  ): ForgeLeadQualificationDraft => ({
+    budget_band: value?.budget_band ?? "",
+    urgency: value?.urgency ?? "",
+    problem_clarity: value?.problem_clarity ?? "",
+    decision_readiness: value?.decision_readiness ?? "",
+    fit_notes: value?.fit_notes ?? "",
   });
 
   const applyIntakeDraftPatch = (
@@ -128,6 +139,9 @@ export function ConsoleShell() {
           budget_context: "",
           urgency_context: "",
         },
+        leadQualificationDraft: normalizeLeadQualification(
+          workspace?.draft_seed.lead_qualification,
+        ),
         autonomyMode: workspace?.draft_seed.autonomy_mode ?? "supervised_build",
         linkedAttachmentIds: workspace?.draft_seed.linked_attachment_ids ?? [],
         previewing: false,
@@ -241,6 +255,7 @@ export function ConsoleShell() {
         constraints: uiState.intakeDraft.structuredConstraints,
         requestedArtifacts: uiState.intakeDraft.requestedArtifacts,
         leadIntake: uiState.intakeDraft.leadIntake,
+        qualification: uiState.intakeDraft.leadQualificationDraft,
         linkedAttachmentIds: uiState.intakeDraft.linkedAttachmentIds,
         autonomyMode: uiState.intakeDraft.autonomyMode,
       });
