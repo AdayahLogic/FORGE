@@ -172,6 +172,8 @@ def test_self_change_audit_records_persist_with_outcome_and_approval():
     assert rows[0]["sandbox_required"] is True
     assert rows[0]["sandbox_result"] == "sandbox_failed"
     assert rows[0]["promotion_status"] == "promotion_blocked"
+    assert rows[0]["comparison_status"] == "insufficient_evidence"
+    assert rows[0]["recommendation"] == "hold_experimental"
 
 
 def test_registry_dashboard_surfaces_self_evolution_governance_summary():
@@ -204,6 +206,18 @@ def test_registry_dashboard_surfaces_self_evolution_governance_summary():
         "sandbox_result": "sandbox_pending",
         "promotion_status": "promotion_pending",
         "promotion_reason": "Sandbox-required self-change remains pending until sandbox evaluation completes successfully.",
+        "baseline_reference": "",
+        "candidate_reference": "chg-phase66-dashboard",
+        "comparison_dimensions": [],
+        "observed_improvement": {},
+        "observed_regression": {},
+        "net_score": 0.0,
+        "confidence_level": 0.0,
+        "confidence_band": "weak",
+        "comparison_status": "insufficient_evidence",
+        "promotion_confidence": "insufficient_evidence",
+        "recommendation": "hold_experimental",
+        "comparison_reason": "Comparative scoring requires explicit baseline/candidate references and usable evidence across at least one shared dimension.",
         "rollback_required": False,
         "validation_reasons": ["Protected-zone self-change requires mandatory approval before advancing."],
         "stable_state_ref": "phase65-stable",
@@ -227,6 +241,8 @@ def test_registry_dashboard_surfaces_self_evolution_governance_summary():
     assert governance_summary["release_lane_count_total"]["experimental"] == 1
     assert governance_summary["sandbox_result_count_total"]["sandbox_pending"] == 1
     assert governance_summary["promotion_status_count_total"]["promotion_pending"] == 1
+    assert governance_summary["comparison_status_count_total"]["insufficient_evidence"] == 1
+    assert governance_summary["recommendation_count_total"]["hold_experimental"] == 1
     assert governance_summary["protected_zone_hits"]["governance_layer"] == 1
 
 

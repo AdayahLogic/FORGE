@@ -797,6 +797,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_sandbox_status_count_total: dict[str, int] = {}
     self_change_sandbox_result_count_total: dict[str, int] = {}
     self_change_promotion_status_count_total: dict[str, int] = {}
+    self_change_comparison_status_count_total: dict[str, int] = {}
+    self_change_confidence_band_count_total: dict[str, int] = {}
+    self_change_promotion_confidence_count_total: dict[str, int] = {}
+    self_change_recommendation_count_total: dict[str, int] = {}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -829,6 +833,22 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         promotion_status = str(entry.get("promotion_status") or "promotion_pending")
         self_change_promotion_status_count_total[promotion_status] = (
             self_change_promotion_status_count_total.get(promotion_status, 0) + 1
+        )
+        comparison_status = str(entry.get("comparison_status") or "insufficient_evidence")
+        self_change_comparison_status_count_total[comparison_status] = (
+            self_change_comparison_status_count_total.get(comparison_status, 0) + 1
+        )
+        confidence_band = str(entry.get("confidence_band") or "weak")
+        self_change_confidence_band_count_total[confidence_band] = (
+            self_change_confidence_band_count_total.get(confidence_band, 0) + 1
+        )
+        promotion_confidence = str(entry.get("promotion_confidence") or "insufficient_evidence")
+        self_change_promotion_confidence_count_total[promotion_confidence] = (
+            self_change_promotion_confidence_count_total.get(promotion_confidence, 0) + 1
+        )
+        recommendation = str(entry.get("recommendation") or "hold_experimental")
+        self_change_recommendation_count_total[recommendation] = (
+            self_change_recommendation_count_total.get(recommendation, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1706,6 +1726,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "sandbox_status_count_total": self_change_sandbox_status_count_total,
             "sandbox_result_count_total": self_change_sandbox_result_count_total,
             "promotion_status_count_total": self_change_promotion_status_count_total,
+            "comparison_status_count_total": self_change_comparison_status_count_total,
+            "confidence_band_count_total": self_change_confidence_band_count_total,
+            "promotion_confidence_count_total": self_change_promotion_confidence_count_total,
+            "recommendation_count_total": self_change_recommendation_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

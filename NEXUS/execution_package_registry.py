@@ -765,6 +765,9 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
     protected_zones = r.get("protected_zones")
     if not isinstance(protected_zones, list):
         protected_zones = []
+    comparison_dimensions = r.get("comparison_dimensions")
+    if not isinstance(comparison_dimensions, list):
+        comparison_dimensions = []
     return {
         "change_id": str(r.get("change_id") or ""),
         "recorded_at": str(r.get("recorded_at") or ""),
@@ -793,6 +796,20 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
         "sandbox_result": str(r.get("sandbox_result") or "sandbox_pending").strip().lower(),
         "promotion_status": str(r.get("promotion_status") or "promotion_pending").strip().lower(),
         "promotion_reason": str(r.get("promotion_reason") or ""),
+        "baseline_reference": str(r.get("baseline_reference") or ""),
+        "candidate_reference": str(r.get("candidate_reference") or ""),
+        "comparison_dimensions": [str(item) for item in comparison_dimensions if str(item).strip()][:20],
+        "observed_improvement": dict(r.get("observed_improvement") or {}),
+        "observed_regression": dict(r.get("observed_regression") or {}),
+        "net_score": float(r.get("net_score") or 0.0) if str(r.get("net_score") or "").strip() not in ("", "None") else 0.0,
+        "confidence_level": float(r.get("confidence_level") or 0.0)
+        if str(r.get("confidence_level") or "").strip() not in ("", "None")
+        else 0.0,
+        "confidence_band": str(r.get("confidence_band") or "weak").strip().lower(),
+        "comparison_status": str(r.get("comparison_status") or "insufficient_evidence").strip().lower(),
+        "promotion_confidence": str(r.get("promotion_confidence") or "insufficient_evidence").strip().lower(),
+        "recommendation": str(r.get("recommendation") or "hold_experimental").strip().lower(),
+        "comparison_reason": str(r.get("comparison_reason") or ""),
         "rollback_required": bool(r.get("rollback_required")),
         "validation_reasons": [str(item) for item in (r.get("validation_reasons") or []) if str(item).strip()][:20],
         "stable_state_ref": str(r.get("stable_state_ref") or ""),

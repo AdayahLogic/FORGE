@@ -210,6 +210,9 @@ def test_audit_trail_persists_gate_outcome():
     assert rows[0]["sandbox_required"] is False
     assert rows[0]["sandbox_result"] == "sandbox_not_required"
     assert rows[0]["promotion_status"] == "promoted_to_stable"
+    assert rows[0]["comparison_status"] == "insufficient_evidence"
+    assert rows[0]["promotion_confidence"] == "insufficient_evidence"
+    assert rows[0]["recommendation"] == "hold_experimental"
 
 
 def test_dashboard_summary_surfaces_release_gating():
@@ -243,6 +246,18 @@ def test_dashboard_summary_surfaces_release_gating():
         "sandbox_result": "sandbox_pending",
         "promotion_status": "promotion_pending",
         "promotion_reason": "Sandbox-required self-change remains pending until sandbox evaluation completes successfully.",
+        "baseline_reference": "",
+        "candidate_reference": "chg-phase67-dashboard",
+        "comparison_dimensions": [],
+        "observed_improvement": {},
+        "observed_regression": {},
+        "net_score": 0.0,
+        "confidence_level": 0.0,
+        "confidence_band": "weak",
+        "comparison_status": "insufficient_evidence",
+        "promotion_confidence": "insufficient_evidence",
+        "recommendation": "hold_experimental",
+        "comparison_reason": "Comparative scoring requires explicit baseline/candidate references and usable evidence across at least one shared dimension.",
         "rollback_required": False,
         "validation_reasons": ["Protected-zone self-change requires mandatory approval before advancing."],
         "stable_state_ref": "stable-phase66",
@@ -264,6 +279,8 @@ def test_dashboard_summary_surfaces_release_gating():
     assert governance_summary["validation_outcome_count_total"]["pending"] == 1
     assert governance_summary["sandbox_status_count_total"]["sandbox_pending"] == 1
     assert governance_summary["promotion_status_count_total"]["promotion_pending"] == 1
+    assert governance_summary["comparison_status_count_total"]["insufficient_evidence"] == 1
+    assert governance_summary["confidence_band_count_total"]["weak"] == 1
 
 
 def main():

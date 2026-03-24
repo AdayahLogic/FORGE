@@ -58,6 +58,24 @@ VALID_PROMOTION_STATUSES = {
     "kept_experimental",
     "promotion_rejected",
 }
+VALID_COMPARATIVE_SCORING_STATUSES = {
+    "scored",
+    "insufficient_evidence",
+    "regression_detected",
+    "promote_ready",
+    "keep_experimental",
+    "confidence_too_weak",
+}
+VALID_CONFIDENCE_BANDS = {"weak", "moderate", "strong"}
+VALID_PROMOTION_CONFIDENCE_OUTCOMES = {
+    "promote_ready",
+    "keep_experimental",
+    "confidence_too_weak",
+    "regression_detected",
+    "insufficient_evidence",
+}
+VALID_RECOMMENDATIONS = {"promote", "hold_experimental", "reject", "rollback"}
+CORE_COMPARISON_DIMENSIONS = ("tests", "build", "regressions", "governance", "authority")
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -86,6 +104,13 @@ HIGH_RISK_HINTS = (
 
 def _normalize_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_float(value: Any, *, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float(default)
 
 
 def _normalize_path(value: Any) -> str:
@@ -121,6 +146,38 @@ def _normalize_plan(value: Any) -> dict[str, Any]:
         }
     summary = _normalize_text(value)
     return {"summary": summary, "checks": []}
+
+
+def _normalize_comparison_dimensions(value: Any) -> list[str]:
+    if isinstance(value, str):
+        items = [value]
+    elif isinstance(value, (list, tuple, set)):
+        items = list(value)
+    else:
+        items = []
+    out: list[str] = []
+    for item in items:
+        normalized = _normalize_text(item).lower()
+        if normalized and normalized not in out:
+            out.append(normalized)
+    return out
+
+
+def _normalize_evidence(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for key, raw_value in value.items():
+        normalized_key = _normalize_text(key).lower()
+        if not normalized_key:
+            continue
+        if isinstance(raw_value, str):
+            out[normalized_key] = raw_value.strip().lower()
+        elif isinstance(raw_value, (int, float, bool)):
+            out[normalized_key] = raw_value
+        else:
+            out[normalized_key] = raw_value
+    return out
 
 
 def _contains_any(text: str, hints: tuple[str, ...] | list[str]) -> bool:
@@ -302,6 +359,11 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
             default="promotion_pending",
         ),
         "promotion_reason": _normalize_text(raw.get("promotion_reason")),
+        "baseline_reference": _normalize_text(raw.get("baseline_reference")),
+        "candidate_reference": _normalize_text(raw.get("candidate_reference")) or _normalize_text(raw.get("change_id")),
+        "baseline_evidence": _normalize_evidence(raw.get("baseline_evidence")),
+        "candidate_evidence": _normalize_evidence(raw.get("candidate_evidence")),
+        "comparison_dimensions": _normalize_comparison_dimensions(raw.get("comparison_dimensions")),
     }
 
 
@@ -651,6 +713,259 @@ def evaluate_self_change_sandbox_promotion(contract: dict[str, Any] | None) -> d
     }
 
 
+def _build_candidate_comparison_evidence(
+    *,
+    normalized: dict[str, Any],
+    promotion: dict[str, Any],
+) -> dict[str, Any]:
+    governance_status = "blocked" if str(promotion.get("contract_status") or "") != "valid" else "approved"
+    authority_trace = dict(promotion.get("authority_trace") or {})
+    authority_status = str(authority_trace.get("authority_status") or "authorized").strip().lower()
+    base = {
+        "tests_status": str(promotion.get("tests_status") or normalized.get("tests_status") or "pending").strip().lower(),
+        "build_status": str(promotion.get("build_status") or normalized.get("build_status") or "pending").strip().lower(),
+        "regression_status": str(promotion.get("regression_status") or normalized.get("regression_status") or "pending").strip().lower(),
+        "governance_status": governance_status,
+        "governance_compatible": governance_status != "blocked",
+        "authority_status": authority_status,
+        "authority_compatible": authority_status not in {"denied", "blocked"},
+    }
+    return {
+        **base,
+        **dict(normalized.get("candidate_evidence") or {}),
+    }
+
+
+def _extract_comparison_value(dimension: str, evidence: dict[str, Any]) -> Any:
+    if dimension == "tests":
+        return evidence.get("tests_status") or evidence.get("tests")
+    if dimension == "build":
+        return evidence.get("build_status") or evidence.get("build")
+    if dimension == "regressions":
+        return evidence.get("regression_status") or evidence.get("regressions")
+    if dimension == "governance":
+        if "governance_compatible" in evidence:
+            return evidence.get("governance_compatible")
+        return evidence.get("governance_status") or evidence.get("governance")
+    if dimension == "authority":
+        if "authority_compatible" in evidence:
+            return evidence.get("authority_compatible")
+        return evidence.get("authority_status") or evidence.get("authority")
+    return evidence.get(dimension)
+
+
+def _comparison_value_score(value: Any) -> float | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return 1.0 if value else -1.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = _normalize_text(value).lower()
+    mapping = {
+        "passed": 1.0,
+        "approved": 1.0,
+        "authorized": 1.0,
+        "compatible": 1.0,
+        "true": 1.0,
+        "not_required": 0.0,
+        "optional": 0.0,
+        "recommended": 0.0,
+        "pending": 0.0,
+        "review_required": 0.0,
+        "approval_required": 0.0,
+        "proposed": 0.0,
+        "experimental": 0.0,
+        "failed": -1.0,
+        "rejected": -1.0,
+        "denied": -1.0,
+        "blocked": -1.0,
+        "rollback_required": -1.0,
+        "incompatible": -1.0,
+        "false": -1.0,
+    }
+    return mapping.get(text)
+
+
+def _confidence_band(level: float) -> str:
+    if level >= 0.75:
+        return "strong"
+    if level >= 0.45:
+        return "moderate"
+    return "weak"
+
+
+def evaluate_self_change_comparative_scoring(contract: dict[str, Any] | None) -> dict[str, Any]:
+    promotion = evaluate_self_change_sandbox_promotion(contract)
+    normalized = promotion["normalized_contract"]
+    baseline_reference = str(normalized.get("baseline_reference") or "")
+    candidate_reference = str(normalized.get("candidate_reference") or normalized.get("change_id") or "")
+    baseline_evidence = dict(normalized.get("baseline_evidence") or {})
+    candidate_evidence = _build_candidate_comparison_evidence(normalized=normalized, promotion=promotion)
+    requested_dimensions = list(normalized.get("comparison_dimensions") or [])
+
+    dimensions: list[str] = []
+    if requested_dimensions:
+        for dimension in requested_dimensions:
+            if dimension not in dimensions:
+                dimensions.append(dimension)
+    else:
+        for dimension in CORE_COMPARISON_DIMENSIONS:
+            if _extract_comparison_value(dimension, baseline_evidence) not in (None, ""):
+                dimensions.append(dimension)
+        for dimension in candidate_evidence.keys():
+            if dimension not in dimensions and dimension not in CORE_COMPARISON_DIMENSIONS:
+                if _extract_comparison_value(dimension, baseline_evidence) not in (None, ""):
+                    dimensions.append(dimension)
+
+    observed_improvement: dict[str, Any] = {}
+    observed_regression: dict[str, Any] = {}
+    used_dimensions: list[str] = []
+    net_score = 0.0
+
+    for dimension in dimensions:
+        baseline_value = _extract_comparison_value(dimension, baseline_evidence)
+        candidate_value = _extract_comparison_value(dimension, candidate_evidence)
+        baseline_score = _comparison_value_score(baseline_value)
+        candidate_score = _comparison_value_score(candidate_value)
+        if baseline_score is None or candidate_score is None:
+            continue
+        delta = round(candidate_score - baseline_score, 3)
+        used_dimensions.append(dimension)
+        net_score += delta
+        if delta > 0:
+            observed_improvement[dimension] = {
+                "baseline": baseline_value,
+                "candidate": candidate_value,
+                "delta": delta,
+            }
+        elif delta < 0:
+            observed_regression[dimension] = {
+                "baseline": baseline_value,
+                "candidate": candidate_value,
+                "delta": delta,
+            }
+
+    evidence_count = len(used_dimensions)
+    improvement_count = len(observed_improvement)
+    regression_count = len(observed_regression)
+    missing_references = not baseline_reference or not candidate_reference
+
+    if missing_references or evidence_count == 0:
+        confidence_level = 0.0
+        confidence_band = "weak"
+        promotion_confidence = "insufficient_evidence"
+        recommendation = "hold_experimental"
+        status = "insufficient_evidence"
+        reason = "Comparative scoring requires explicit baseline/candidate references and usable evidence across at least one shared dimension."
+    else:
+        confidence_level = min(1.0, max(0.0, (evidence_count / 5.0) * 0.7))
+        if net_score > 0:
+            confidence_level += 0.2
+        elif net_score == 0:
+            confidence_level += 0.05
+        else:
+            confidence_level -= 0.25
+        if improvement_count >= 3:
+            confidence_level += 0.1
+        elif improvement_count == 0:
+            confidence_level -= 0.05
+        if str(promotion.get("promotion_status") or "") in {"promoted_to_stable", "promotion_ready"}:
+            confidence_level += 0.1
+        elif str(promotion.get("promotion_status") or "") in {"promotion_pending", "promotion_blocked", "promotion_rejected"}:
+            confidence_level -= 0.1
+        if regression_count:
+            confidence_level -= 0.25
+        confidence_level = round(min(1.0, max(0.0, confidence_level)), 3)
+        confidence_band = _confidence_band(confidence_level)
+
+        if bool(promotion.get("rollback_required")):
+            promotion_confidence = "regression_detected"
+            recommendation = "rollback"
+            status = "regression_detected"
+            reason = "Comparative scoring detected a rollback-required self-change state."
+        elif regression_count or net_score < 0:
+            promotion_confidence = "regression_detected"
+            recommendation = "reject"
+            status = "regression_detected"
+            reason = "Candidate evidence regressed relative to the baseline."
+        elif confidence_band == "weak":
+            promotion_confidence = "confidence_too_weak"
+            recommendation = "hold_experimental"
+            status = "confidence_too_weak"
+            reason = "Comparative evidence is too weak to support broader promotion."
+        elif str(promotion.get("promotion_status") or "") in {"promotion_rejected"}:
+            promotion_confidence = "keep_experimental"
+            recommendation = "reject"
+            status = "keep_experimental"
+            reason = "Comparative scoring completed, but governed promotion was rejected by earlier controls."
+        elif confidence_band == "strong" and net_score > 0 and str(promotion.get("promotion_status") or "") in {"promoted_to_stable", "promotion_ready"}:
+            promotion_confidence = "promote_ready"
+            recommendation = "promote"
+            status = "promote_ready"
+            reason = "Candidate outperformed the baseline with strong confidence and satisfies governed promotion prerequisites."
+        else:
+            promotion_confidence = "keep_experimental"
+            recommendation = "hold_experimental"
+            status = "keep_experimental"
+            reason = "Candidate evidence is positive but not strong enough for broader promotion beyond the experimental lane."
+
+    comparison_trace = {
+        "baseline_reference": baseline_reference,
+        "candidate_reference": candidate_reference,
+        "comparison_dimensions": used_dimensions,
+        "observed_improvement": observed_improvement,
+        "observed_regression": observed_regression,
+        "net_score": round(net_score, 3),
+        "confidence_level": confidence_level,
+        "confidence_band": confidence_band,
+        "promotion_confidence": promotion_confidence,
+        "recommendation": recommendation,
+    }
+    governance_trace = {
+        **dict(promotion.get("governance_trace") or {}),
+        "comparative_scoring": comparison_trace,
+    }
+
+    return {
+        "status": status if status in VALID_COMPARATIVE_SCORING_STATUSES else "scored",
+        "change_id": str(promotion.get("change_id") or ""),
+        "baseline_reference": baseline_reference,
+        "candidate_reference": candidate_reference,
+        "comparison_dimensions": used_dimensions,
+        "observed_improvement": observed_improvement,
+        "observed_regression": observed_regression,
+        "net_score": round(net_score, 3),
+        "confidence_level": confidence_level,
+        "confidence_band": confidence_band,
+        "promotion_confidence": promotion_confidence,
+        "recommendation": recommendation,
+        "reason": reason,
+        "authority_trace": dict(promotion.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "promotion_status": str(promotion.get("promotion_status") or ""),
+        "promotion_reason": str(promotion.get("promotion_reason") or ""),
+        "release_lane": str(promotion.get("release_lane") or "experimental"),
+        "sandbox_required": bool(promotion.get("sandbox_required")),
+        "sandbox_status": str(promotion.get("sandbox_status") or "sandbox_pending"),
+        "sandbox_result": str(promotion.get("sandbox_result") or "sandbox_pending"),
+        "rollback_required": bool(promotion.get("rollback_required")),
+        "risk_level": str(promotion.get("risk_level") or "medium_risk"),
+        "protected_zone_hit": bool(promotion.get("protected_zone_hit")),
+        "protected_zones": list(promotion.get("protected_zones") or []),
+        "gate_outcome": str(promotion.get("gate_outcome") or "allow_for_review"),
+        "approval_required": bool(promotion.get("approval_required")),
+        "approval_requirement": str(promotion.get("approval_requirement") or ""),
+        "approval_status": str(promotion.get("approval_status") or "optional"),
+        "validation_outcome": str(promotion.get("validation_outcome") or "pending"),
+        "tests_status": str(promotion.get("tests_status") or "pending"),
+        "build_status": str(promotion.get("build_status") or "pending"),
+        "regression_status": str(promotion.get("regression_status") or "pending"),
+        "contract_status": str(promotion.get("contract_status") or ""),
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -678,44 +993,56 @@ def build_self_change_audit_record(
     if outcome_status not in (None, ""):
         source_contract["application_state"] = "failed" if _normalize_text(outcome_status).lower() in {"failed", "rolled_back"} else "proposed"
 
-    promotion = evaluate_self_change_sandbox_promotion(source_contract)
-    normalized = promotion["normalized_contract"]
+    scored = evaluate_self_change_comparative_scoring(source_contract)
+    normalized = scored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
         "change_id": str(normalized.get("change_id") or ""),
         "recorded_at": str((normalized.get("governance_trace") or {}).get("recorded_at") or ""),
         "target_files": list(normalized.get("target_files") or []),
         "change_type": str(normalized.get("change_type") or ""),
-        "risk_level": str(promotion.get("risk_level") or "medium_risk"),
-        "protected_zones": list(promotion.get("protected_zones") or []),
-        "protected_zone_hit": bool(promotion.get("protected_zone_hit")),
+        "risk_level": str(scored.get("risk_level") or "medium_risk"),
+        "protected_zones": list(scored.get("protected_zones") or []),
+        "protected_zone_hit": bool(scored.get("protected_zone_hit")),
         "reason": str(normalized.get("reason") or ""),
         "expected_outcome": str(normalized.get("expected_outcome") or ""),
         "validation_plan": dict(normalized.get("validation_plan") or {}),
         "rollback_plan": dict(normalized.get("rollback_plan") or {}),
-        "approval_requirement": str(promotion.get("approval_requirement") or ""),
-        "approval_required": bool(promotion.get("approval_required")),
-        "approval_status": _normalize_text(approval_status) or str(promotion.get("approval_status") or ""),
+        "approval_requirement": str(scored.get("approval_requirement") or ""),
+        "approval_required": bool(scored.get("approval_required")),
+        "approval_status": _normalize_text(approval_status) or str(scored.get("approval_status") or ""),
         "approved_by": _normalize_text(approved_by),
         "outcome_status": _normalize_text(outcome_status) or "proposed",
         "outcome_summary": _normalize_text(outcome_summary),
-        "validation_status": str(promotion.get("validation_outcome") or "pending"),
-        "build_status": str(promotion.get("build_status") or "pending"),
-        "regression_status": str(promotion.get("regression_status") or "pending"),
-        "gate_outcome": str(promotion.get("gate_outcome") or "allow_for_review"),
-        "release_lane": str(promotion.get("release_lane") or "experimental"),
-        "sandbox_required": bool(promotion.get("sandbox_required")),
-        "sandbox_status": str(promotion.get("sandbox_status") or "sandbox_pending"),
-        "sandbox_result": str(promotion.get("sandbox_result") or "sandbox_pending"),
-        "promotion_status": str(promotion.get("promotion_status") or "promotion_pending"),
-        "promotion_reason": str(promotion.get("promotion_reason") or ""),
-        "rollback_required": bool(promotion.get("rollback_required")),
-        "validation_reasons": [str(promotion.get("reason") or "")] if _normalize_text(promotion.get("reason")) else [],
+        "validation_status": str(scored.get("validation_outcome") or "pending"),
+        "build_status": str(scored.get("build_status") or "pending"),
+        "regression_status": str(scored.get("regression_status") or "pending"),
+        "gate_outcome": str(scored.get("gate_outcome") or "allow_for_review"),
+        "release_lane": str(scored.get("release_lane") or "experimental"),
+        "sandbox_required": bool(scored.get("sandbox_required")),
+        "sandbox_status": str(scored.get("sandbox_status") or "sandbox_pending"),
+        "sandbox_result": str(scored.get("sandbox_result") or "sandbox_pending"),
+        "promotion_status": str(scored.get("promotion_status") or "promotion_pending"),
+        "promotion_reason": str(scored.get("promotion_reason") or ""),
+        "baseline_reference": str(scored.get("baseline_reference") or ""),
+        "candidate_reference": str(scored.get("candidate_reference") or ""),
+        "comparison_dimensions": list(scored.get("comparison_dimensions") or []),
+        "observed_improvement": dict(scored.get("observed_improvement") or {}),
+        "observed_regression": dict(scored.get("observed_regression") or {}),
+        "net_score": _normalize_float(scored.get("net_score")),
+        "confidence_level": _normalize_float(scored.get("confidence_level")),
+        "confidence_band": str(scored.get("confidence_band") or "weak"),
+        "comparison_status": str(scored.get("status") or "scored"),
+        "promotion_confidence": str(scored.get("promotion_confidence") or "insufficient_evidence"),
+        "recommendation": str(scored.get("recommendation") or "hold_experimental"),
+        "comparison_reason": str(scored.get("reason") or ""),
+        "rollback_required": bool(scored.get("rollback_required")),
+        "validation_reasons": [str(scored.get("reason") or "")] if _normalize_text(scored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(promotion.get("authority_trace") or {}),
-        "governance_trace": dict(promotion.get("governance_trace") or {}),
-        "contract_status": str(promotion.get("contract_status") or ""),
+        "authority_trace": dict(scored.get("authority_trace") or {}),
+        "governance_trace": dict(scored.get("governance_trace") or {}),
+        "contract_status": str(scored.get("contract_status") or ""),
     }
 
 
@@ -812,5 +1139,54 @@ def evaluate_self_change_sandbox_promotion_safe(contract: dict[str, Any] | None)
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "sandbox_promotion_error": str(e),
             },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_comparative_scoring_safe(contract: dict[str, Any] | None) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_comparative_scoring(contract)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        candidate_reference = str(normalized.get("candidate_reference") or normalized.get("change_id") or "")
+        return {
+            "status": "insufficient_evidence",
+            "change_id": str(normalized.get("change_id") or ""),
+            "baseline_reference": str(normalized.get("baseline_reference") or ""),
+            "candidate_reference": candidate_reference,
+            "comparison_dimensions": [],
+            "observed_improvement": {},
+            "observed_regression": {},
+            "net_score": 0.0,
+            "confidence_level": 0.0,
+            "confidence_band": "weak",
+            "promotion_confidence": "insufficient_evidence",
+            "recommendation": "hold_experimental",
+            "reason": f"Self-change comparative scoring failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "comparative_scoring_error": str(e),
+            },
+            "promotion_status": str(normalized.get("promotion_status") or "promotion_pending"),
+            "promotion_reason": str(normalized.get("promotion_reason") or ""),
+            "release_lane": str(normalized.get("release_lane") or "experimental"),
+            "sandbox_required": bool(normalized.get("protected_zones") or str(normalized.get("risk_level") or "") == "high_risk"),
+            "sandbox_status": str(normalized.get("sandbox_status") or "sandbox_pending"),
+            "sandbox_result": str(normalized.get("sandbox_result") or "sandbox_pending"),
+            "rollback_required": bool(normalized.get("application_state") in {"attempted", "failed"}),
+            "risk_level": str(normalized.get("risk_level") or "high_risk"),
+            "protected_zone_hit": bool(normalized.get("protected_zones")),
+            "protected_zones": list(normalized.get("protected_zones") or []),
+            "gate_outcome": "blocked_missing_validation",
+            "approval_required": VALID_APPROVAL_REQUIREMENTS.get(str(normalized.get("risk_level") or "medium_risk"), "recommended") == "mandatory",
+            "approval_requirement": str(normalized.get("approval_requirement") or "recommended"),
+            "approval_status": str(normalized.get("approval_status") or "pending"),
+            "validation_outcome": str(normalized.get("validation_outcome") or "pending"),
+            "tests_status": str(normalized.get("tests_status") or "pending"),
+            "build_status": str(normalized.get("build_status") or "pending"),
+            "regression_status": str(normalized.get("regression_status") or "pending"),
+            "contract_status": "invalid",
             "normalized_contract": normalized,
         }

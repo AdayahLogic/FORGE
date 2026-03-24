@@ -240,6 +240,8 @@ def test_audit_trail_persists_sandbox_and_promotion_outcomes():
     assert rows[0]["sandbox_result"] == "sandbox_passed"
     assert rows[0]["promotion_status"] == "promoted_to_stable"
     assert rows[0]["promotion_reason"]
+    assert rows[0]["comparison_status"] == "insufficient_evidence"
+    assert rows[0]["promotion_confidence"] == "insufficient_evidence"
 
 
 def test_dashboard_summary_surfaces_sandbox_and_promotion_states():
@@ -273,6 +275,18 @@ def test_dashboard_summary_surfaces_sandbox_and_promotion_states():
         "sandbox_result": "sandbox_passed",
         "promotion_status": "kept_experimental",
         "promotion_reason": "Sandbox-passed risky self-change stays experimental until explicit stable promotion approval is present.",
+        "baseline_reference": "stable-phase67",
+        "candidate_reference": "chg-phase68-dashboard",
+        "comparison_dimensions": ["tests", "build", "regressions", "governance", "authority"],
+        "observed_improvement": {"governance": {"baseline": False, "candidate": True, "delta": 2.0}},
+        "observed_regression": {},
+        "net_score": 2.0,
+        "confidence_level": 0.72,
+        "confidence_band": "moderate",
+        "comparison_status": "keep_experimental",
+        "promotion_confidence": "keep_experimental",
+        "recommendation": "hold_experimental",
+        "comparison_reason": "Candidate evidence is positive but not strong enough for broader promotion beyond the experimental lane.",
         "rollback_required": False,
         "validation_reasons": ["Self-change satisfied approval, validation, and rollback requirements."],
         "stable_state_ref": "stable-phase67",
@@ -293,6 +307,8 @@ def test_dashboard_summary_surfaces_sandbox_and_promotion_states():
     assert governance_summary["sandbox_status_count_total"]["sandbox_passed"] == 1
     assert governance_summary["sandbox_result_count_total"]["sandbox_passed"] == 1
     assert governance_summary["promotion_status_count_total"]["kept_experimental"] == 1
+    assert governance_summary["comparison_status_count_total"]["keep_experimental"] == 1
+    assert governance_summary["confidence_band_count_total"]["moderate"] == 1
 
 
 def main():
