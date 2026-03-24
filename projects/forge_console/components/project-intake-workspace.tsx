@@ -1,6 +1,7 @@
 import type {
   ForgeConstraintSections,
   ForgeIntakePreview,
+  ForgeLeadIntakeProfile,
   ForgeIntakeWorkspace,
   ForgeRequestedArtifactsDraft,
 } from "../lib/forge-types";
@@ -12,6 +13,7 @@ type IntakeDraft = {
   projectContext: string;
   structuredConstraints: ForgeConstraintSections;
   requestedArtifacts: ForgeRequestedArtifactsDraft;
+  leadIntake: ForgeLeadIntakeProfile;
   autonomyMode: string;
   linkedAttachmentIds: string[];
   previewing: boolean;
@@ -126,6 +128,10 @@ function labelForMissingField(value: string) {
     scope_boundaries: "Scope boundaries",
     output_expectations: "Output expectations",
     review_expectations: "Review expectations",
+    lead_contact_name: "Lead contact name",
+    lead_contact_email: "Lead contact email",
+    lead_company_name: "Lead company name",
+    lead_problem_summary: "Lead problem summary",
     preview_error: "Preview availability",
   };
   return labels[value] ?? value.replace(/_/g, " ");
@@ -178,6 +184,7 @@ export function ProjectIntakeWorkspace({
                 >
                   <option value="update_request">Update request</option>
                   <option value="create_request">Create request</option>
+                  <option value="lead_intake">Lead intake (revenue)</option>
                 </select>
               </label>
               <div className="field">
@@ -225,6 +232,154 @@ export function ProjectIntakeWorkspace({
                   onChange={(event) => onDraftChange({ projectContext: event.target.value })}
                 />
               </label>
+              {draft.requestKind === "lead_intake" ? (
+                <>
+                  <label className="field">
+                    <span>Contact Name</span>
+                    <input
+                      className="project-select"
+                      type="text"
+                      value={draft.leadIntake.contact_name}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            contact_name: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Contact Email</span>
+                    <input
+                      className="project-select"
+                      type="email"
+                      value={draft.leadIntake.contact_email}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            contact_email: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Company Name</span>
+                    <input
+                      className="project-select"
+                      type="text"
+                      value={draft.leadIntake.company_name}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            company_name: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Contact Channel</span>
+                    <input
+                      className="project-select"
+                      type="text"
+                      value={draft.leadIntake.contact_channel}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            contact_channel: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Lead Source</span>
+                    <input
+                      className="project-select"
+                      type="text"
+                      value={draft.leadIntake.lead_source}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            lead_source: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field field-span-2">
+                    <span>Problem Summary</span>
+                    <textarea
+                      className="text-area"
+                      rows={4}
+                      value={draft.leadIntake.problem_summary}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            problem_summary: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field field-span-2">
+                    <span>Requested Outcome</span>
+                    <textarea
+                      className="text-area"
+                      rows={3}
+                      value={draft.leadIntake.requested_outcome}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            requested_outcome: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Budget Context (raw)</span>
+                    <textarea
+                      className="text-area"
+                      rows={3}
+                      value={draft.leadIntake.budget_context}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            budget_context: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                  <label className="field">
+                    <span>Urgency Context (raw)</span>
+                    <textarea
+                      className="text-area"
+                      rows={3}
+                      value={draft.leadIntake.urgency_context}
+                      onChange={(event) =>
+                        onDraftChange({
+                          leadIntake: {
+                            ...draft.leadIntake,
+                            urgency_context: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </label>
+                </>
+              ) : null}
             </div>
             <div className="detail-card-subsection">
               <div className="package-title">
@@ -391,6 +546,9 @@ export function ProjectIntakeWorkspace({
             <>
               <div className="chip-row" style={{ marginBottom: 12 }}>
                 <span className="chip info">{effectivePreview.autonomy_mode_detail.label}</span>
+                <span className="chip">
+                  {effectivePreview.intake_mode === "revenue_lead" ? "Revenue lead intake" : "Development intake"}
+                </span>
                 <span className="chip">{effectivePreview.package_preview.creation_mode}</span>
                 <span className="chip">linked {effectivePreview.package_preview.attachment_input_count}</span>
                 <span className="chip">
@@ -416,6 +574,29 @@ export function ProjectIntakeWorkspace({
                       {effectivePreview.project_context || "Context is still required before the request can be considered ready."}
                     </div>
                   </div>
+                  {effectivePreview.intake_mode === "revenue_lead" ? (
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Lead Intake</div>
+                      <div className="detail-list" style={{ marginTop: 8 }}>
+                        <div className="detail-row">
+                          <span>Contact</span>
+                          <strong>{effectivePreview.lead_intake_profile.contact_name || "missing"}</strong>
+                        </div>
+                        <div className="detail-row">
+                          <span>Email</span>
+                          <strong>{effectivePreview.lead_intake_profile.contact_email || "missing"}</strong>
+                        </div>
+                        <div className="detail-row">
+                          <span>Company</span>
+                          <strong>{effectivePreview.lead_intake_profile.company_name || "missing"}</strong>
+                        </div>
+                        <div className="detail-row">
+                          <span>Problem</span>
+                          <strong>{effectivePreview.lead_intake_profile.problem_summary || "missing"}</strong>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
                 <div className="detail-card">
                   <h4>Constraint Coverage</h4>

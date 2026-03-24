@@ -30,6 +30,18 @@ export type ForgeAutonomyModeDetail = {
   operator_posture: string;
 };
 
+export type ForgeLeadIntakeProfile = {
+  contact_name: string;
+  contact_email: string;
+  company_name: string;
+  contact_channel: string;
+  lead_source: string;
+  problem_summary: string;
+  requested_outcome: string;
+  budget_context: string;
+  urgency_context: string;
+};
+
 export type ForgeCompositionStatus = {
   is_complete: boolean;
   missing_fields: string[];
@@ -116,10 +128,12 @@ export type ForgeReviewCenterSnapshot = {
 export type ForgeIntakePreview = {
   request_id: string;
   request_kind: string;
+  intake_mode: "development" | "revenue_lead";
   objective: string;
   project_context: string;
   constraints: string[];
   structured_constraints: ForgeConstraintSections;
+  lead_intake_profile: ForgeLeadIntakeProfile;
   requested_artifacts: string[];
   requested_artifact_details: ForgeRequestedArtifactDetail[];
   autonomy_mode: string;
@@ -160,6 +174,7 @@ export type ForgeIntakeWorkspace = {
     requested_artifacts_draft: ForgeRequestedArtifactsDraft;
     autonomy_mode: string;
     linked_attachment_ids: string[];
+    lead_intake_profile: ForgeLeadIntakeProfile;
   };
   attachments: ForgeAttachmentRecord[];
   governance_notes: {
@@ -390,6 +405,7 @@ export type ForgeUiState = {
     projectContext: string;
     structuredConstraints: ForgeConstraintSections;
     requestedArtifacts: ForgeRequestedArtifactsDraft;
+    leadIntake: ForgeLeadIntakeProfile;
     autonomyMode: string;
     linkedAttachmentIds: string[];
     previewing: boolean;

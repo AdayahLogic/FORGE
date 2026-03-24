@@ -74,6 +74,12 @@ REQUIRED_CONSTRAINT_SECTIONS = (
     "output_expectations",
     "review_expectations",
 )
+REQUIRED_LEAD_INTAKE_FIELDS = (
+    "contact_name",
+    "contact_email",
+    "company_name",
+    "problem_summary",
+)
 
 
 def _now() -> str:
@@ -301,6 +307,37 @@ def _empty_constraint_sections() -> dict[str, list[str]]:
     }
 
 
+def _empty_lead_intake_profile() -> dict[str, str]:
+    return {
+        "contact_name": "",
+        "contact_email": "",
+        "company_name": "",
+        "contact_channel": "",
+        "lead_source": "",
+        "problem_summary": "",
+        "requested_outcome": "",
+        "budget_context": "",
+        "urgency_context": "",
+    }
+
+
+def _normalize_lead_intake_profile(value: Any) -> dict[str, str]:
+    normalized = _empty_lead_intake_profile()
+    if not isinstance(value, dict):
+        return normalized
+    for key in normalized:
+        normalized[key] = str(value.get(key) or "").strip()
+    return normalized
+
+
+def _lead_intake_missing_fields(value: dict[str, str]) -> list[str]:
+    missing: list[str] = []
+    for key in REQUIRED_LEAD_INTAKE_FIELDS:
+        if not str(value.get(key) or "").strip():
+            missing.append(f"lead_{key}")
+    return missing
+
+
 def _normalize_constraint_sections(value: Any) -> dict[str, list[str]]:
     normalized = _empty_constraint_sections()
     if isinstance(value, dict):
@@ -474,6 +511,7 @@ def build_intake_workspace(
         "selected": list(DEFAULT_REQUESTED_ARTIFACTS),
         "custom": [],
     }
+    lead_intake_profile = _empty_lead_intake_profile()
     return {
         "project_key": project_key,
         "project_path": project_path,
@@ -487,6 +525,7 @@ def build_intake_workspace(
             "requested_artifacts_draft": requested_artifacts,
             "autonomy_mode": autonomy_mode,
             "linked_attachment_ids": [],
+            "lead_intake_profile": lead_intake_profile,
         },
         "attachments": attachments[:20],
         "governance_notes": {
@@ -510,6 +549,7 @@ def build_intake_workspace(
             requested_artifacts=requested_artifacts,
             linked_attachment_ids=[],
             autonomy_mode=autonomy_mode,
+            lead_intake_profile=lead_intake_profile,
         ),
     }
 
@@ -525,6 +565,7 @@ def preview_intake_request(
     requested_artifacts: Any,
     linked_attachment_ids: list[str],
     autonomy_mode: str,
+    lead_intake_profile: Any = None,
 ) -> dict[str, Any]:
     attachments = list_console_attachments_safe(project_path)
     attachments_by_id = {
@@ -537,6 +578,8 @@ def preview_intake_request(
     allowed_link_count = 0
     structured_constraints = _normalize_constraint_sections(constraints)
     requested_artifact_state = _normalize_requested_artifacts(requested_artifacts)
+    lead_profile = _normalize_lead_intake_profile(lead_intake_profile)
+    mode = "revenue_lead" if str(request_kind or "").strip().lower() == "lead_intake" else "development"
     for attachment_id in linked_attachment_ids:
         record = attachments_by_id.get(str(attachment_id or ""))
         if not record:
@@ -565,18 +608,31 @@ def preview_intake_request(
     project_context_value = str(project_context or "").strip()
     flat_constraints = _flatten_constraint_sections(structured_constraints)
     flat_requested_artifacts = _flatten_requested_artifacts(requested_artifact_state)
-    composition_status = _composition_status(
-        objective=objective_value,
-        project_context=project_context_value,
-        structured_constraints=structured_constraints,
-        requested_artifacts=requested_artifact_state,
-        warnings=warnings,
-    )
+    if mode == "revenue_lead":
+        missing_fields = _lead_intake_missing_fields(lead_profile)
+        composition_status = {
+            "is_complete": not missing_fields and not warnings,
+            "missing_fields": missing_fields,
+            "warning_count": len(warnings),
+            "stale_preview": False,
+        }
+    else:
+        composition_status = _composition_status(
+            objective=objective_value,
+            project_context=project_context_value,
+            structured_constraints=structured_constraints,
+            requested_artifacts=requested_artifact_state,
+            warnings=warnings,
+        )
     readiness = "needs_input"
     if composition_status["is_complete"]:
         readiness = "ready_for_governed_request"
-    elif objective_value and flat_requested_artifacts and warnings:
+    elif mode != "revenue_lead" and objective_value and flat_requested_artifacts and warnings:
         readiness = "ready_with_attachment_limits"
+    elif mode == "revenue_lead":
+        warnings.append(
+            "Lead intake is incomplete. Add contact name, contact email, company name, and problem summary before revenue intake can be marked ready."
+        )
     elif objective_value:
         warnings.append(
             "Request composition is incomplete. Add project context, scope/output/review constraints, and requested artifacts before launch preview can be considered ready."
@@ -593,6 +649,8 @@ def preview_intake_request(
         "requested_artifact_details": _requested_artifact_details(requested_artifact_state),
         "autonomy_mode": normalize_autonomy_mode(autonomy_mode),
         "autonomy_mode_detail": _autonomy_mode_detail(autonomy_mode),
+        "intake_mode": mode,
+        "lead_intake_profile": lead_profile,
         "composition_status": {
             **composition_status,
             "warning_count": len(warnings),
@@ -601,14 +659,18 @@ def preview_intake_request(
         "readiness": readiness,
         "warnings": warnings,
         "package_preview": {
-            "creation_mode": "preview_only",
+            "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
             "governance_required": True,
             "routing_authority": "NEXUS",
             "execution_authority": "package_governance_only",
             "attachment_input_count": len(linked),
             "attachment_preview_count": allowed_link_count,
-            "summary": "Console can preview governed request intent, but package creation, routing, and execution remain backend-governed actions.",
+            "summary": (
+                "Console can preview governed revenue lead intake intent, but package creation, routing, and execution remain backend-governed actions."
+                if mode == "revenue_lead"
+                else "Console can preview governed request intent, but package creation, routing, and execution remain backend-governed actions."
+            ),
         },
     }
 
@@ -628,6 +690,8 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
             "requested_artifact_details": [],
             "autonomy_mode": str(kwargs.get("autonomy_mode") or "supervised_build"),
             "autonomy_mode_detail": _autonomy_mode_detail(kwargs.get("autonomy_mode") or "supervised_build"),
+            "intake_mode": "revenue_lead" if str(kwargs.get("request_kind") or "").strip().lower() == "lead_intake" else "development",
+            "lead_intake_profile": _normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
             "composition_status": {
                 "is_complete": False,
                 "missing_fields": ["preview_error"],

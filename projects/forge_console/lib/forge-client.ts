@@ -4,6 +4,7 @@ import type {
   ForgeAttachmentRecord,
   ForgeConstraintSections,
   ForgeIntakePreview,
+  ForgeLeadIntakeProfile,
   ForgeOverviewSnapshot,
   ForgeRequestedArtifactsDraft,
   PackageDetailSnapshot,
@@ -72,6 +73,7 @@ export function previewIntakeRequest(input: {
   projectContext: string;
   constraints: ForgeConstraintSections;
   requestedArtifacts: ForgeRequestedArtifactsDraft;
+  leadIntake: ForgeLeadIntakeProfile;
   linkedAttachmentIds: string[];
   autonomyMode: string;
 }) {

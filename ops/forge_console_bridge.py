@@ -657,6 +657,7 @@ def build_intake_preview(
     requested_artifacts_json: str,
     linked_attachment_ids_json: str,
     autonomy_mode: str,
+    lead_intake_json: str = "{}",
 ) -> dict[str, Any]:
     key, project = _resolve_project(project_key)
     if not project:
@@ -666,6 +667,7 @@ def build_intake_preview(
         constraints = json.loads(constraints_json or "[]")
         requested_artifacts = json.loads(requested_artifacts_json or "[]")
         linked_attachment_ids = json.loads(linked_attachment_ids_json or "[]")
+        lead_intake_profile = json.loads(lead_intake_json or "{}")
     except json.JSONDecodeError as exc:
         return _result(
             "error",
@@ -682,6 +684,7 @@ def build_intake_preview(
         requested_artifacts=requested_artifacts if isinstance(requested_artifacts, (dict, list)) else {},
         linked_attachment_ids=linked_attachment_ids if isinstance(linked_attachment_ids, list) else [],
         autonomy_mode=autonomy_mode,
+        lead_intake_profile=lead_intake_profile if isinstance(lead_intake_profile, dict) else {},
     )
     return _result("ok", payload, "")
 
@@ -989,6 +992,7 @@ def main() -> int:
     parser.add_argument("--requested-artifacts-json", default="[]")
     parser.add_argument("--linked-attachment-ids-json", default="[]")
     parser.add_argument("--autonomy-mode", default="supervised_build")
+    parser.add_argument("--lead-intake-json", default="{}")
     args = parser.parse_args()
 
     if args.mode == "overview":
@@ -1007,6 +1011,7 @@ def main() -> int:
             requested_artifacts_json=args.requested_artifacts_json,
             linked_attachment_ids_json=args.linked_attachment_ids_json,
             autonomy_mode=args.autonomy_mode,
+            lead_intake_json=args.lead_intake_json,
         )
     elif args.mode == "upload_attachment":
         out = upload_attachment(
