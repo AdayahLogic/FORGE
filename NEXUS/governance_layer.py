@@ -23,6 +23,7 @@ from NEXUS.self_evolution_governance import (
     evaluate_self_change_staged_rollout_safe,
     evaluate_self_change_stability_posture_safe,
     evaluate_self_change_strategic_intent_safe,
+    evaluate_self_change_value_policy_safe,
     evaluate_self_change_trust_revalidation_safe,
     evaluate_self_change_executive_checkpoint_safe,
 )
@@ -975,6 +976,52 @@ def evaluate_self_change_strategic_intent_outcome_safe(**kwargs: Any) -> dict[st
             "reason": f"Self-change strategic intent evaluation failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_strategy"},
             "governance_trace": {"evaluation_scope": "self_evolution_strategic_intent", "error": str(e)},
+        }
+
+
+def evaluate_self_change_value_policy_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_value_policy_safe(
+        self_change_contract,
+        recent_audit_entries=recent_audit_entries,
+    )
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "govern_self_change_value")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_change_value_policy")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_value_policy_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_value_policy_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "executive_value_review_required",
+            "change_id": "",
+            "expected_value": "medium",
+            "expected_cost": "medium",
+            "expected_complexity": "medium",
+            "expected_risk_burden": "medium",
+            "expected_maintenance_burden": "low",
+            "roi_band": "low_value",
+            "value_status": "value_policy_error_fallback",
+            "priority_value": "medium",
+            "value_reason": f"Self-change value policy evaluation failed: {e}",
+            "recommended_action": "request_executive_value_review",
+            "reason": f"Self-change value policy evaluation failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_value"},
+            "governance_trace": {"evaluation_scope": "self_evolution_change_value_policy", "error": str(e)},
         }
 
 

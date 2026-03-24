@@ -840,6 +840,21 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_executive_priority_match_count_total: dict[str, int] = {"matched": 0, "not_matched": 0}
     self_change_mission_scope_count_total: dict[str, int] = {}
     self_change_strategic_outcome_count_total: dict[str, int] = {}
+    self_change_roi_band_count_total: dict[str, int] = {
+        "high_value": 0,
+        "medium_value": 0,
+        "low_value": 0,
+        "negative_value": 0,
+    }
+    self_change_value_status_count_total: dict[str, int] = {}
+    self_change_priority_value_count_total: dict[str, int] = {"low": 0, "medium": 0, "high": 0, "urgent": 0}
+    self_change_recommended_action_count_total: dict[str, int] = {}
+    self_change_value_outcome_count_total: dict[str, int] = {
+        "worth_pursuing": 0,
+        "defer_for_later": 0,
+        "not_worth_it": 0,
+        "executive_value_review_required": 0,
+    }
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -1045,6 +1060,31 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         self_change_strategic_outcome_count_total[strategic_outcome] = (
             self_change_strategic_outcome_count_total.get(strategic_outcome, 0) + 1
         )
+        roi_band = str(entry.get("roi_band") or "medium_value")
+        if roi_band in self_change_roi_band_count_total:
+            self_change_roi_band_count_total[roi_band] += 1
+        else:
+            self_change_roi_band_count_total[roi_band] = self_change_roi_band_count_total.get(roi_band, 0) + 1
+        value_status = str(entry.get("value_status") or "")
+        if value_status:
+            self_change_value_status_count_total[value_status] = (
+                self_change_value_status_count_total.get(value_status, 0) + 1
+            )
+        priority_value = str(entry.get("priority_value") or "medium")
+        if priority_value in self_change_priority_value_count_total:
+            self_change_priority_value_count_total[priority_value] += 1
+        else:
+            self_change_priority_value_count_total[priority_value] = (
+                self_change_priority_value_count_total.get(priority_value, 0) + 1
+            )
+        recommended_action = str(entry.get("recommended_action") or "")
+        if recommended_action:
+            self_change_recommended_action_count_total[recommended_action] = (
+                self_change_recommended_action_count_total.get(recommended_action, 0) + 1
+            )
+        value_outcome = str(entry.get("value_outcome") or entry.get("status") or "")
+        if value_outcome in self_change_value_outcome_count_total:
+            self_change_value_outcome_count_total[value_outcome] += 1
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
         if bool(entry.get("success")):
@@ -1967,6 +2007,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "executive_priority_match_count_total": self_change_executive_priority_match_count_total,
             "mission_scope_count_total": self_change_mission_scope_count_total,
             "strategic_outcome_count_total": self_change_strategic_outcome_count_total,
+            "roi_band_count_total": self_change_roi_band_count_total,
+            "value_status_count_total": self_change_value_status_count_total,
+            "priority_value_count_total": self_change_priority_value_count_total,
+            "recommended_action_count_total": self_change_recommended_action_count_total,
+            "value_outcome_count_total": self_change_value_outcome_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

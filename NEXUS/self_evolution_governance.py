@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.7"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.8"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -189,6 +189,13 @@ VALID_STRATEGIC_OUTCOMES = {
     "out_of_scope",
     "prohibited_direction",
     "executive_review_required",
+}
+VALID_VALUE_ROI_BANDS = {"high_value", "medium_value", "low_value", "negative_value"}
+VALID_VALUE_POLICY_OUTCOMES = {
+    "worth_pursuing",
+    "defer_for_later",
+    "not_worth_it",
+    "executive_value_review_required",
 }
 ROLLOUT_STAGE_ORDER = ["experimental_only", "limited_cohort", "broader_cohort", "platform_wide"]
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
@@ -437,6 +444,94 @@ def _normalize_alignment_status(value: Any, *, default: str) -> str:
 def _normalize_strategic_outcome(value: Any, *, default: str) -> str:
     outcome = _normalize_text(value).lower()
     return outcome if outcome in VALID_STRATEGIC_OUTCOMES else default
+
+
+def _normalize_expected_value_signal(value: Any, *, default: str = "medium") -> str:
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric <= 0:
+            return "negative"
+        if numeric < 1.5:
+            return "low"
+        if numeric < 3.5:
+            return "medium"
+        return "high"
+    normalized = _normalize_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "negative_value": "negative",
+        "none": "negative",
+        "minimal": "low",
+        "moderate": "medium",
+        "strong": "high",
+        "very_high": "high",
+        "critical": "high",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in {"negative", "low", "medium", "high"} else default
+
+
+def _normalize_burden_signal(value: Any, *, default: str = "medium") -> str:
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric <= 1:
+            return "low"
+        if numeric <= 3:
+            return "medium"
+        return "high"
+    normalized = _normalize_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "minimal": "low",
+        "moderate": "medium",
+        "very_high": "high",
+        "critical": "high",
+        "elevated": "high",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in {"low", "medium", "high"} else default
+
+
+def _normalize_priority_value(value: Any, *, default: str = "medium") -> str:
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+        if numeric <= 0:
+            return "low"
+        if numeric < 2:
+            return "medium"
+        if numeric < 3:
+            return "high"
+        return "urgent"
+    normalized = _normalize_text(value).lower().replace("-", "_").replace(" ", "_")
+    aliases = {
+        "normal": "medium",
+        "moderate": "medium",
+        "backlog": "low",
+        "deferred": "low",
+        "critical": "urgent",
+    }
+    normalized = aliases.get(normalized, normalized)
+    return normalized if normalized in {"low", "medium", "high", "urgent"} else default
+
+
+def _expected_value_score(value: str) -> int:
+    return {"negative": 0, "low": 1, "medium": 2, "high": 4}.get(_normalize_expected_value_signal(value), 2)
+
+
+def _burden_score(value: str) -> int:
+    return {"low": 1, "medium": 2, "high": 4}.get(_normalize_burden_signal(value), 2)
+
+
+def _priority_score(value: str) -> int:
+    return {"low": 0, "medium": 1, "high": 2, "urgent": 3}.get(_normalize_priority_value(value), 1)
+
+
+def _normalize_value_outcome(value: Any, *, default: str) -> str:
+    outcome = _normalize_text(value).lower()
+    return outcome if outcome in VALID_VALUE_POLICY_OUTCOMES else default
+
+
+def _normalize_roi_band(value: Any, *, default: str) -> str:
+    band = _normalize_text(value).lower()
+    return band if band in VALID_VALUE_ROI_BANDS else default
 
 
 def _requires_staged_rollout(
@@ -1060,6 +1155,37 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
     executive_priority_match = bool(raw.get("executive_priority_match"))
     mission_scope = _normalize_text(raw.get("mission_scope")) or "core_mission"
     strategic_outcome = _normalize_strategic_outcome(raw.get("strategic_outcome"), default="aligned_but_low_priority")
+    change_type = _normalize_text(raw.get("change_type")).lower()
+    expected_value = _normalize_expected_value_signal(
+        raw.get("expected_value"),
+        default="high"
+        if strategic_intent_category in {"safety_hardening", "governance_strengthening", "reliability_improvement"}
+        else "medium",
+    )
+    expected_cost = _normalize_burden_signal(
+        raw.get("expected_cost"),
+        default="high" if risk_level == "high_risk" or bool(protected_zones) else "medium",
+    )
+    expected_complexity = _normalize_burden_signal(
+        raw.get("expected_complexity"),
+        default="high" if blast_radius_level == "high" or change_type in {"governance_update", "authority_update"} else "medium",
+    )
+    expected_risk_burden = _normalize_burden_signal(
+        raw.get("expected_risk_burden"),
+        default="high" if risk_level == "high_risk" or bool(protected_zones) else ("medium" if risk_level == "medium_risk" else "low"),
+    )
+    expected_maintenance_burden = _normalize_burden_signal(
+        raw.get("expected_maintenance_burden"),
+        default="medium" if change_type in {"governance_update", "authority_update", "scaling_policy"} else "low",
+    )
+    priority_value = _normalize_priority_value(
+        raw.get("priority_value"),
+        default="high" if executive_priority_match else ("low" if strategic_outcome == "aligned_but_low_priority" else "medium"),
+    )
+    roi_band = _normalize_roi_band(raw.get("roi_band"), default="medium_value")
+    value_status = _normalize_text(raw.get("value_status"))
+    value_reason = _normalize_text(raw.get("value_reason"))
+    recommended_action = _normalize_text(raw.get("recommended_action"))
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -1196,9 +1322,21 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "alignment_reason": alignment_reason,
         "allowed_goal_class": allowed_goal_class,
         "prohibited_goal_hit": prohibited_goal_hit,
+        "executive_priorities": _normalize_string_list(raw.get("executive_priorities"), limit=20, lower=True),
         "executive_priority_match": executive_priority_match,
+        "executive_review_required": bool(raw.get("executive_review_required")),
         "mission_scope": mission_scope,
         "strategic_outcome": strategic_outcome,
+        "expected_value": expected_value,
+        "expected_cost": expected_cost,
+        "expected_complexity": expected_complexity,
+        "expected_risk_burden": expected_risk_burden,
+        "expected_maintenance_burden": expected_maintenance_burden,
+        "roi_band": roi_band,
+        "value_status": value_status,
+        "priority_value": priority_value,
+        "value_reason": value_reason,
+        "recommended_action": recommended_action,
     }
 
 
@@ -3135,6 +3273,166 @@ def evaluate_self_change_staged_rollout(
     }
 
 
+def evaluate_self_change_value_policy(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    strategic_intent = evaluate_self_change_strategic_intent(contract, recent_audit_entries=recent_audit_entries)
+    mutation_budget = evaluate_self_change_mutation_budget(contract, recent_audit_entries=recent_audit_entries)
+    executive_checkpoint = evaluate_self_change_executive_checkpoint(contract, recent_audit_entries=recent_audit_entries)
+    stability_posture = evaluate_self_change_stability_posture(contract, recent_audit_entries=recent_audit_entries)
+    normalized = strategic_intent["normalized_contract"]
+
+    expected_value = _normalize_expected_value_signal(normalized.get("expected_value"), default="medium")
+    expected_cost = _normalize_burden_signal(normalized.get("expected_cost"), default="medium")
+    expected_complexity = _normalize_burden_signal(normalized.get("expected_complexity"), default="medium")
+    expected_risk_burden = _normalize_burden_signal(normalized.get("expected_risk_burden"), default="medium")
+    expected_maintenance_burden = _normalize_burden_signal(normalized.get("expected_maintenance_burden"), default="low")
+    priority_value = _normalize_priority_value(normalized.get("priority_value"), default="medium")
+
+    value_score = _expected_value_score(expected_value)
+    cost_score = _burden_score(expected_cost)
+    complexity_score = _burden_score(expected_complexity)
+    risk_score = _burden_score(expected_risk_burden)
+    maintenance_score = _burden_score(expected_maintenance_burden)
+    priority_score = _priority_score(priority_value)
+    total_burden = cost_score + complexity_score + risk_score + maintenance_score
+    roi_score = (value_score * 2) + priority_score - total_burden
+
+    roi_band = "medium_value"
+    if value_score <= 0 or roi_score <= -2:
+        roi_band = "negative_value"
+    elif roi_score <= 1:
+        roi_band = "low_value"
+    elif roi_score >= 5:
+        roi_band = "high_value"
+
+    strategic_outcome = str(strategic_intent.get("strategic_outcome") or normalized.get("strategic_outcome") or "aligned_but_low_priority")
+    checkpoint_required = bool(executive_checkpoint.get("checkpoint_required"))
+    checkpoint_status = str(executive_checkpoint.get("checkpoint_status") or normalized.get("checkpoint_status") or "not_required")
+    executive_priority_match = bool(strategic_intent.get("executive_priority_match") or normalized.get("executive_priority_match"))
+    freeze_required = bool(stability_posture.get("freeze_required"))
+    cool_down_required = bool(mutation_budget.get("cool_down_required"))
+
+    status = "worth_pursuing"
+    value_status = "balanced_return"
+    recommended_action = "proceed_with_governed_change"
+    value_reason = "Expected value justifies the projected implementation and governance burden."
+
+    if strategic_outcome in {"prohibited_direction", "out_of_scope"}:
+        status = "not_worth_it"
+        roi_band = "negative_value"
+        value_status = "strategically_disallowed"
+        recommended_action = "reject_change"
+        value_reason = str(strategic_intent.get("reason") or "Strategic policy does not justify investment in this change.")
+    elif strategic_outcome == "executive_review_required" or (
+        checkpoint_required and roi_band == "high_value" and (risk_score >= 4 or complexity_score >= 4 or cost_score >= 4)
+    ):
+        status = "executive_value_review_required"
+        value_status = "executive_value_review_required"
+        recommended_action = "request_executive_value_review"
+        value_reason = (
+            "Change may be valuable, but its cost, complexity, or sensitivity requires explicit executive value review."
+            if strategic_outcome != "executive_review_required"
+            else str(strategic_intent.get("reason") or "Executive strategic review remains required.")
+        )
+    elif freeze_required:
+        status = "defer_for_later"
+        value_status = "temporarily_deferred_by_system_attention"
+        recommended_action = "defer_until_capacity_recovers"
+        value_reason = "Change may have value, but current stability or mutation-budget posture says system attention should be reserved."
+    elif roi_band == "negative_value" or (value_score <= 1 and total_burden >= 8):
+        status = "not_worth_it"
+        value_status = "insufficient_return"
+        recommended_action = "decline_change"
+        value_reason = "Projected value does not justify the combined cost, complexity, risk, and maintenance burden."
+    elif roi_band == "low_value":
+        if (
+            (priority_score >= 2 and executive_priority_match and total_burden <= 6)
+            or (strategic_outcome == "aligned_but_low_priority" and value_score >= 2 and total_burden <= 5)
+            or (value_score >= 2 and total_burden <= 4)
+        ):
+            status = "defer_for_later"
+            value_status = "valuable_but_deferrable"
+            recommended_action = "defer_until_higher_capacity_window"
+            value_reason = "Change has some value, but the expected return is too modest for immediate pursuit."
+        else:
+            status = "not_worth_it"
+            value_status = "weak_value_not_worth_current_attention"
+            recommended_action = "decline_change"
+            value_reason = "Aligned change is too low-value relative to present cost and governance attention."
+    elif roi_band == "medium_value":
+        if priority_score >= 2 or executive_priority_match:
+            status = "worth_pursuing"
+            value_status = "worth_pursuing"
+            recommended_action = "proceed_with_governed_change"
+            value_reason = "Balanced expected return and current priority make the change worth pursuing."
+        else:
+            status = "defer_for_later"
+            value_status = "valuable_but_deferrable"
+            recommended_action = "schedule_for_later"
+            value_reason = "Change is worthwhile in principle, but current priority does not justify immediate attention."
+    elif roi_band == "high_value":
+        if priority_score >= 2 or executive_priority_match:
+            status = "worth_pursuing"
+            value_status = "high_value_priority_fit"
+            recommended_action = "prioritize_change"
+            value_reason = "High expected value materially outweighs projected burden and matches present priorities."
+        else:
+            status = "defer_for_later"
+            value_status = "high_value_but_not_current_focus"
+            recommended_action = "queue_for_next_priority_window"
+            value_reason = "Change is high-value, but current attention remains committed to higher-priority work."
+
+    governance_trace = {
+        **dict(strategic_intent.get("governance_trace") or {}),
+        **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
+        **dict(executive_checkpoint.get("governance_trace") or {}),
+        **dict(stability_posture.get("governance_trace") or {}),
+        "change_value_policy": {
+            "expected_value": expected_value,
+            "expected_cost": expected_cost,
+            "expected_complexity": expected_complexity,
+            "expected_risk_burden": expected_risk_burden,
+            "expected_maintenance_burden": expected_maintenance_burden,
+            "priority_value": priority_value,
+            "roi_band": roi_band,
+            "value_status": value_status,
+            "recommended_action": recommended_action,
+            "value_reason": value_reason,
+            "roi_score": roi_score,
+            "value_score": value_score,
+            "total_burden": total_burden,
+            "checkpoint_status": checkpoint_status,
+            "cool_down_required": cool_down_required,
+        },
+    }
+
+    return {
+        "status": status,
+        "change_id": str(normalized.get("change_id") or ""),
+        "expected_value": expected_value,
+        "expected_cost": expected_cost,
+        "expected_complexity": expected_complexity,
+        "expected_risk_burden": expected_risk_burden,
+        "expected_maintenance_burden": expected_maintenance_burden,
+        "roi_band": roi_band,
+        "value_status": value_status,
+        "priority_value": priority_value,
+        "value_reason": value_reason,
+        "recommended_action": recommended_action,
+        "reason": value_reason,
+        "authority_trace": dict(
+            strategic_intent.get("authority_trace")
+            or executive_checkpoint.get("authority_trace")
+            or stability_posture.get("authority_trace")
+            or {}
+        ),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -3169,6 +3467,7 @@ def build_self_change_audit_record(
     stability_posture = evaluate_self_change_stability_posture(source_contract, recent_audit_entries=recent_audit_entries)
     executive_checkpoint = evaluate_self_change_executive_checkpoint(source_contract, recent_audit_entries=recent_audit_entries)
     strategic_intent = evaluate_self_change_strategic_intent(source_contract, recent_audit_entries=recent_audit_entries)
+    value_policy = evaluate_self_change_value_policy(source_contract, recent_audit_entries=recent_audit_entries)
     trust_revalidation = evaluate_self_change_trust_revalidation(source_contract, recent_audit_entries=recent_audit_entries)
     staged_rollout = evaluate_self_change_staged_rollout(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
@@ -3313,6 +3612,19 @@ def build_self_change_audit_record(
         ),
         "mission_scope": str(strategic_intent.get("mission_scope") or normalized.get("mission_scope") or "core_mission"),
         "strategic_outcome": str(strategic_intent.get("strategic_outcome") or normalized.get("strategic_outcome") or "aligned_but_low_priority"),
+        "expected_value": str(value_policy.get("expected_value") or normalized.get("expected_value") or "medium"),
+        "expected_cost": str(value_policy.get("expected_cost") or normalized.get("expected_cost") or "medium"),
+        "expected_complexity": str(value_policy.get("expected_complexity") or normalized.get("expected_complexity") or "medium"),
+        "expected_risk_burden": str(value_policy.get("expected_risk_burden") or normalized.get("expected_risk_burden") or "medium"),
+        "expected_maintenance_burden": str(
+            value_policy.get("expected_maintenance_burden") or normalized.get("expected_maintenance_burden") or "low"
+        ),
+        "roi_band": str(value_policy.get("roi_band") or normalized.get("roi_band") or "medium_value"),
+        "value_outcome": str(value_policy.get("status") or "defer_for_later"),
+        "value_status": str(value_policy.get("value_status") or normalized.get("value_status") or ""),
+        "priority_value": str(value_policy.get("priority_value") or normalized.get("priority_value") or "medium"),
+        "value_reason": str(value_policy.get("value_reason") or normalized.get("value_reason") or ""),
+        "recommended_action": str(value_policy.get("recommended_action") or normalized.get("recommended_action") or ""),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
@@ -3331,6 +3643,7 @@ def build_self_change_audit_record(
             **dict(rollback_execution.get("governance_trace") or {}),
             **dict(stability_posture.get("governance_trace") or {}),
             **dict(executive_checkpoint.get("governance_trace") or {}),
+            **dict(value_policy.get("governance_trace") or {}),
             **dict(trust_revalidation.get("governance_trace") or {}),
             **dict(strategic_intent.get("governance_trace") or {}),
             **dict(staged_rollout.get("governance_trace") or {}),
@@ -3711,6 +4024,38 @@ def evaluate_self_change_strategic_intent_safe(
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "strategic_intent_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_value_policy_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_value_policy(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        return {
+            "status": "executive_value_review_required",
+            "change_id": str(normalized.get("change_id") or ""),
+            "expected_value": str(normalized.get("expected_value") or "medium"),
+            "expected_cost": str(normalized.get("expected_cost") or "medium"),
+            "expected_complexity": str(normalized.get("expected_complexity") or "medium"),
+            "expected_risk_burden": str(normalized.get("expected_risk_burden") or "medium"),
+            "expected_maintenance_burden": str(normalized.get("expected_maintenance_burden") or "low"),
+            "roi_band": "low_value",
+            "value_status": "value_policy_error_fallback",
+            "priority_value": str(normalized.get("priority_value") or "medium"),
+            "value_reason": f"Change value evaluation failed: {e}",
+            "recommended_action": "request_executive_value_review",
+            "reason": f"Change value evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "change_value_policy_error": str(e),
             },
             "normalized_contract": normalized,
         }
