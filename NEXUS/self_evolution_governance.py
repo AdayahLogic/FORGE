@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.2"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.3"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -119,6 +119,9 @@ VALID_MUTATION_CONTROL_STATUSES = {
     "protected_zone_throttled",
     "change_attempt_blocked",
 }
+VALID_STABILITY_STATES = {"stable", "caution", "unstable", "frozen", "recovery_only"}
+VALID_TURBULENCE_LEVELS = {"low", "elevated", "high", "severe"}
+VALID_FREEZE_SCOPES = {"self_change_global", "protected_core_only", "project_scoped", "recovery_scoped"}
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -263,6 +266,21 @@ def _normalize_string_list(value: Any, *, limit: int = 50, lower: bool = False) 
         if normalized and normalized not in out:
             out.append(normalized)
     return out[:limit]
+
+
+def _normalize_stability_state(value: Any, *, default: str) -> str:
+    state = _normalize_text(value).lower()
+    return state if state in VALID_STABILITY_STATES else default
+
+
+def _normalize_turbulence_level(value: Any, *, default: str) -> str:
+    level = _normalize_text(value).lower()
+    return level if level in VALID_TURBULENCE_LEVELS else default
+
+
+def _normalize_freeze_scope(value: Any, *, default: str) -> str:
+    scope = _normalize_text(value).lower()
+    return scope if scope in VALID_FREEZE_SCOPES else default
 
 
 def _normalize_rollback_sequence(value: Any) -> list[str]:
@@ -645,6 +663,10 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
     control_outcome = _normalize_text(raw.get("control_outcome")).lower() or "budget_available"
     if control_outcome not in VALID_MUTATION_CONTROL_STATUSES:
         control_outcome = "budget_available"
+    stability_state = _normalize_stability_state(raw.get("stability_state") or raw.get("status"), default="stable")
+    turbulence_level = _normalize_turbulence_level(raw.get("turbulence_level"), default="low")
+    freeze_scope = _normalize_freeze_scope(raw.get("freeze_scope"), default="project_scoped")
+    reentry_requirements = _normalize_string_list(raw.get("reentry_requirements"), limit=20, lower=True)
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -732,6 +754,15 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "cool_down_required": bool(raw.get("cool_down_required")),
         "control_outcome": control_outcome,
         "budget_reason": _normalize_text(raw.get("budget_reason")),
+        "stability_state": stability_state,
+        "turbulence_level": turbulence_level,
+        "protected_zone_instability": bool(raw.get("protected_zone_instability")),
+        "freeze_required": bool(raw.get("freeze_required")),
+        "freeze_scope": freeze_scope,
+        "recovery_only_mode": bool(raw.get("recovery_only_mode")),
+        "escalation_required": bool(raw.get("escalation_required")),
+        "escalation_reason": _normalize_text(raw.get("escalation_reason")),
+        "reentry_requirements": reentry_requirements,
     }
 
 
@@ -1740,6 +1771,258 @@ def evaluate_self_change_mutation_budget(
     }
 
 
+def evaluate_self_change_stability_posture(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    monitored = evaluate_self_change_post_promotion_monitoring(contract)
+    rollback_execution = evaluate_self_change_rollback_execution(contract)
+    mutation_budget = evaluate_self_change_mutation_budget(contract, recent_audit_entries=recent_audit_entries)
+    normalized = mutation_budget["normalized_contract"]
+    budgeting_window = dict(mutation_budget.get("budgeting_window") or normalized.get("budgeting_window") or _derive_budget_window(normalized))
+    entries = [dict(entry) for entry in (recent_audit_entries or []) if isinstance(entry, dict)]
+    window_entries = [entry for entry in entries if _entry_within_budget_window(entry, budgeting_window)]
+
+    rollback_required_events = sum(
+        1
+        for entry in window_entries
+        if bool(entry.get("rollback_required"))
+        or str(entry.get("rollback_trigger_outcome") or "").strip().lower() == "rollback_required"
+    )
+    rollback_completed_events = sum(
+        1
+        for entry in window_entries
+        if str(entry.get("rollback_status") or "").strip().lower() in {"rollback_completed", "rollback_failed"}
+    )
+    throttled_events = sum(
+        1
+        for entry in window_entries
+        if str(entry.get("mutation_rate_status") or "").strip().lower() in {"cool_down", "blocked", "protected_zone_pressure", "high"}
+        or str(entry.get("control_outcome") or "").strip().lower()
+        in {"cool_down_required", "change_attempt_blocked", "protected_zone_throttled", "mutation_rate_too_high"}
+    )
+    protected_instability_events = sum(
+        1
+        for entry in window_entries
+        if bool(entry.get("protected_zone_instability"))
+        or (
+            bool(entry.get("protected_zone_hit"))
+            and (
+                str(entry.get("rollback_trigger_outcome") or "").strip().lower() == "rollback_required"
+                or str(entry.get("monitoring_status") or "").strip().lower() == "monitoring_failed"
+                or str(entry.get("mutation_rate_status") or "").strip().lower() == "protected_zone_pressure"
+            )
+        )
+    )
+    post_promotion_degradation_events = sum(
+        1
+        for entry in window_entries
+        if str(entry.get("monitoring_status") or "").strip().lower() == "monitoring_failed"
+        or bool(entry.get("regression_detected"))
+    )
+    failed_attempts_in_window = sum(
+        1
+        for entry in window_entries
+        if str(entry.get("outcome_status") or "").strip().lower() in {"failed", "reverted", "blocked", "error"}
+    )
+
+    monitoring_status = str(monitored.get("monitoring_status") or "pending_monitoring").strip().lower()
+    rollback_trigger_outcome = str(monitored.get("rollback_trigger_outcome") or "monitor_more").strip().lower()
+    rollback_status = str(rollback_execution.get("rollback_status") or "rollback_pending").strip().lower()
+    mutation_rate_status = str(mutation_budget.get("mutation_rate_status") or "within_budget").strip().lower()
+    control_outcome = str(mutation_budget.get("control_outcome") or "budget_available").strip().lower()
+    protected_zone_hit = bool(monitored.get("protected_zone_hit"))
+    current_outcome_failed = str(normalized.get("application_state") or "").strip().lower() == "failed"
+    health_signals = dict(monitored.get("health_signals") or normalized.get("health_signals") or {})
+    protected_zone_instability = bool(
+        protected_zone_hit
+        and (
+            bool(health_signals.get("protected_zone_degraded"))
+            or rollback_trigger_outcome == "rollback_required"
+            or rollback_status in {"rollback_failed", "rollback_completed"}
+            or mutation_rate_status == "protected_zone_pressure"
+            or control_outcome == "protected_zone_throttled"
+        )
+    )
+
+    current_throttled = mutation_rate_status in {"cool_down", "blocked", "protected_zone_pressure", "high"} or control_outcome in {
+        "cool_down_required",
+        "change_attempt_blocked",
+        "protected_zone_throttled",
+        "mutation_rate_too_high",
+    }
+    severe_protected_instability = protected_zone_instability and (
+        rollback_status == "rollback_failed"
+        or rollback_trigger_outcome == "rollback_required"
+        or monitoring_status == "monitoring_failed"
+    )
+
+    current_failed_attempts = failed_attempts_in_window + (1 if current_outcome_failed else 0)
+    current_rollback_required_events = rollback_required_events + (1 if rollback_trigger_outcome == "rollback_required" else 0)
+    current_rollback_completed_events = rollback_completed_events + (1 if rollback_status in {"rollback_completed", "rollback_failed"} else 0)
+    current_throttled_events = throttled_events + (1 if current_throttled else 0)
+    current_protected_instability_events = protected_instability_events + (1 if protected_zone_instability else 0)
+    current_post_promotion_degradation_events = post_promotion_degradation_events + (
+        1 if monitoring_status == "monitoring_failed" or bool(monitored.get("regression_detected")) else 0
+    )
+
+    turbulence_score = 0
+    if mutation_rate_status in {"elevated", "high"}:
+        turbulence_score += 1
+    if current_throttled:
+        turbulence_score += 2
+    if monitoring_status == "monitoring_failed":
+        turbulence_score += 2
+    if rollback_trigger_outcome == "rollback_required":
+        turbulence_score += 2
+    elif rollback_trigger_outcome == "rollback_recommended":
+        turbulence_score += 1
+    if rollback_status in {"rollback_completed", "rollback_failed"}:
+        turbulence_score += 2
+    if current_outcome_failed:
+        turbulence_score += 1
+    if protected_zone_instability:
+        turbulence_score += 3
+    if current_rollback_required_events >= 2:
+        turbulence_score += 1
+    if current_throttled_events >= 2:
+        turbulence_score += 1
+    if current_failed_attempts >= 3:
+        turbulence_score += 1
+    if current_post_promotion_degradation_events >= 2:
+        turbulence_score += 1
+    if current_protected_instability_events >= 2:
+        turbulence_score += 2
+
+    turbulence_level = "low"
+    if turbulence_score >= 7:
+        turbulence_level = "severe"
+    elif turbulence_score >= 4:
+        turbulence_level = "high"
+    elif turbulence_score >= 2:
+        turbulence_level = "elevated"
+
+    freeze_reasons: list[str] = []
+    if current_rollback_required_events >= 2 or current_rollback_completed_events >= 2:
+        freeze_reasons.append("repeated_rollback_required_outcomes")
+    if current_throttled_events >= 3:
+        freeze_reasons.append("repeated_mutation_throttling")
+    if current_protected_instability_events >= 2 or severe_protected_instability:
+        freeze_reasons.append("protected_core_instability")
+    if current_post_promotion_degradation_events >= 2:
+        freeze_reasons.append("repeated_post_promotion_degradation")
+    if current_failed_attempts >= 3:
+        freeze_reasons.append("repeated_failed_self_change_attempts")
+
+    freeze_required = bool(freeze_reasons)
+    recovery_only_mode = severe_protected_instability or (
+        freeze_required
+        and (
+            protected_zone_instability
+            or rollback_status == "rollback_failed"
+            or current_post_promotion_degradation_events >= 2
+            or current_throttled_events >= 3
+        )
+    )
+
+    project_roots = _extract_project_roots(list(normalized.get("target_files") or []))
+    freeze_scope = "project_scoped"
+    if recovery_only_mode:
+        freeze_scope = "recovery_scoped"
+    elif protected_zone_instability and (current_protected_instability_events >= 2 or rollback_status == "rollback_failed"):
+        freeze_scope = "self_change_global"
+    elif protected_zone_instability:
+        freeze_scope = "protected_core_only"
+    elif freeze_required and len(project_roots) <= 1:
+        freeze_scope = "project_scoped"
+    elif freeze_required:
+        freeze_scope = "self_change_global"
+
+    stability_state = "stable"
+    if recovery_only_mode:
+        stability_state = "recovery_only"
+    elif freeze_required:
+        stability_state = "frozen"
+    elif turbulence_level == "high" or current_throttled or monitoring_status == "monitoring_failed":
+        stability_state = "unstable"
+    elif turbulence_level == "elevated" or mutation_rate_status in {"elevated", "high"}:
+        stability_state = "caution"
+
+    escalation_required = freeze_required or recovery_only_mode or protected_zone_instability or stability_state == "unstable"
+    escalation_reason = ""
+    if recovery_only_mode:
+        escalation_reason = "Recovery-only posture is required before ordinary self-improvement can resume."
+    elif freeze_required:
+        escalation_reason = f"Stability freeze required due to {', '.join(freeze_reasons)}."
+    elif protected_zone_instability:
+        escalation_reason = "Protected-core instability requires stronger governance escalation."
+    elif stability_state == "unstable":
+        escalation_reason = "Accumulated self-change turbulence requires stronger governance posture."
+
+    reentry_requirements: list[str] = []
+    if stability_state != "stable":
+        if bool(mutation_budget.get("cool_down_required")) or freeze_required:
+            reentry_requirements.append("cooldown_satisfied")
+        if recovery_only_mode or monitoring_status == "monitoring_failed" or rollback_trigger_outcome in {"rollback_recommended", "rollback_required"}:
+            reentry_requirements.append("recovery_validation_passed")
+        if protected_zone_instability:
+            reentry_requirements.append("protected_zone_posture_cleared")
+        if freeze_required or recovery_only_mode or protected_zone_instability:
+            reentry_requirements.append("explicit_approval_present")
+        if turbulence_level in {"high", "severe"} or freeze_required:
+            reentry_requirements.append("turbulence_below_threshold")
+
+    reason = "Self-change stability posture remains governed and stable."
+    if stability_state == "caution":
+        reason = "Self-change turbulence is elevated and should be watched closely."
+    elif stability_state == "unstable":
+        reason = "Accumulated self-change turbulence requires an unstable posture."
+    elif stability_state == "frozen":
+        reason = "Self-change turbulence exceeded governed stability thresholds and requires a freeze."
+    elif stability_state == "recovery_only":
+        reason = "Protected or repeated instability requires recovery-only posture before normal self-improvement resumes."
+
+    governance_trace = {
+        **dict(mutation_budget.get("governance_trace") or monitored.get("governance_trace") or {}),
+        "stability_posture": {
+            "budgeting_window": budgeting_window,
+            "rollback_required_events": current_rollback_required_events,
+            "rollback_completed_events": current_rollback_completed_events,
+            "throttled_events": current_throttled_events,
+            "protected_instability_events": current_protected_instability_events,
+            "post_promotion_degradation_events": current_post_promotion_degradation_events,
+            "failed_attempts_in_window": current_failed_attempts,
+            "turbulence_score": turbulence_score,
+            "turbulence_level": turbulence_level,
+            "stability_state": stability_state,
+            "freeze_required": freeze_required,
+            "freeze_scope": freeze_scope,
+            "recovery_only_mode": recovery_only_mode,
+            "escalation_required": escalation_required,
+            "freeze_reasons": freeze_reasons,
+            "reentry_requirements": reentry_requirements,
+        },
+    }
+
+    return {
+        "status": stability_state,
+        "change_id": str(normalized.get("change_id") or ""),
+        "stability_state": stability_state,
+        "turbulence_level": turbulence_level,
+        "protected_zone_instability": protected_zone_instability,
+        "freeze_required": freeze_required,
+        "freeze_scope": freeze_scope,
+        "recovery_only_mode": recovery_only_mode,
+        "escalation_required": escalation_required,
+        "escalation_reason": escalation_reason,
+        "reentry_requirements": reentry_requirements,
+        "reason": reason,
+        "authority_trace": dict(rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -1771,6 +2054,7 @@ def build_self_change_audit_record(
     monitored = evaluate_self_change_post_promotion_monitoring(source_contract)
     rollback_execution = evaluate_self_change_rollback_execution(source_contract)
     mutation_budget = evaluate_self_change_mutation_budget(source_contract, recent_audit_entries=recent_audit_entries)
+    stability_posture = evaluate_self_change_stability_posture(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
@@ -1854,12 +2138,21 @@ def build_self_change_audit_record(
         "cool_down_required": bool(mutation_budget.get("cool_down_required")),
         "control_outcome": str(mutation_budget.get("control_outcome") or normalized.get("control_outcome") or "budget_available"),
         "budget_reason": str(mutation_budget.get("reason") or normalized.get("budget_reason") or ""),
+        "stability_state": str(stability_posture.get("stability_state") or "stable"),
+        "turbulence_level": str(stability_posture.get("turbulence_level") or "low"),
+        "protected_zone_instability": bool(stability_posture.get("protected_zone_instability")),
+        "freeze_required": bool(stability_posture.get("freeze_required")),
+        "freeze_scope": str(stability_posture.get("freeze_scope") or "project_scoped"),
+        "recovery_only_mode": bool(stability_posture.get("recovery_only_mode")),
+        "escalation_required": bool(stability_posture.get("escalation_required")),
+        "escalation_reason": str(stability_posture.get("escalation_reason") or ""),
+        "reentry_requirements": list(stability_posture.get("reentry_requirements") or []),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "authority_trace": dict(stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
         "governance_trace": {
-            **dict(rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+            **dict(stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
             **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
         },
         "contract_status": str(monitored.get("contract_status") or ""),
@@ -2138,6 +2431,42 @@ def evaluate_self_change_mutation_budget_safe(
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "change_budgeting_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_stability_posture_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_stability_posture(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        return {
+            "status": "recovery_only",
+            "change_id": str(normalized.get("change_id") or ""),
+            "stability_state": "recovery_only",
+            "turbulence_level": "severe",
+            "protected_zone_instability": bool(normalized.get("protected_zones")),
+            "freeze_required": True,
+            "freeze_scope": "recovery_scoped",
+            "recovery_only_mode": True,
+            "escalation_required": True,
+            "escalation_reason": f"Self-change stability posture evaluation failed: {e}",
+            "reentry_requirements": [
+                "cooldown_satisfied",
+                "recovery_validation_passed",
+                "explicit_approval_present",
+                "turbulence_below_threshold",
+            ],
+            "reason": f"Self-change stability posture evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "stability_posture_error": str(e),
             },
             "normalized_contract": normalized,
         }

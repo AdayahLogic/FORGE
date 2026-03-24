@@ -811,11 +811,17 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_mutation_rate_status_count_total: dict[str, int] = {}
     self_change_control_outcome_count_total: dict[str, int] = {}
     self_change_cool_down_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_stability_state_count_total: dict[str, int] = {}
+    self_change_turbulence_level_count_total: dict[str, int] = {}
+    self_change_freeze_scope_count_total: dict[str, int] = {}
+    self_change_recovery_only_mode_count_total: dict[str, int] = {"enabled": 0, "disabled": 0}
+    self_change_escalation_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
     self_change_failure_count_total = 0
     self_change_rollback_required_count_total = 0
+    self_change_freeze_required_count_total = 0
     for entry in self_change_entries:
         risk_level = str(entry.get("risk_level") or "medium_risk")
         if risk_level in self_change_risk_count_total:
@@ -899,6 +905,26 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         self_change_cool_down_required_count_total[cool_down_key] = (
             self_change_cool_down_required_count_total.get(cool_down_key, 0) + 1
         )
+        stability_state = str(entry.get("stability_state") or "stable")
+        self_change_stability_state_count_total[stability_state] = (
+            self_change_stability_state_count_total.get(stability_state, 0) + 1
+        )
+        turbulence_level = str(entry.get("turbulence_level") or "low")
+        self_change_turbulence_level_count_total[turbulence_level] = (
+            self_change_turbulence_level_count_total.get(turbulence_level, 0) + 1
+        )
+        freeze_scope = str(entry.get("freeze_scope") or "project_scoped")
+        self_change_freeze_scope_count_total[freeze_scope] = (
+            self_change_freeze_scope_count_total.get(freeze_scope, 0) + 1
+        )
+        recovery_only_key = "enabled" if bool(entry.get("recovery_only_mode")) else "disabled"
+        self_change_recovery_only_mode_count_total[recovery_only_key] = (
+            self_change_recovery_only_mode_count_total.get(recovery_only_key, 0) + 1
+        )
+        escalation_key = "required" if bool(entry.get("escalation_required")) else "not_required"
+        self_change_escalation_required_count_total[escalation_key] = (
+            self_change_escalation_required_count_total.get(escalation_key, 0) + 1
+        )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
         if bool(entry.get("success")):
@@ -907,6 +933,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             self_change_failure_count_total += 1
         if bool(entry.get("rollback_required")):
             self_change_rollback_required_count_total += 1
+        if bool(entry.get("freeze_required")):
+            self_change_freeze_required_count_total += 1
         for zone in entry.get("protected_zones") or []:
             zone_name = str(zone or "").strip()
             if zone_name:
@@ -1789,6 +1817,12 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "mutation_rate_status_count_total": self_change_mutation_rate_status_count_total,
             "control_outcome_count_total": self_change_control_outcome_count_total,
             "cool_down_required_count_total": self_change_cool_down_required_count_total,
+            "stability_state_count_total": self_change_stability_state_count_total,
+            "turbulence_level_count_total": self_change_turbulence_level_count_total,
+            "freeze_required_count_total": self_change_freeze_required_count_total,
+            "freeze_scope_count_total": self_change_freeze_scope_count_total,
+            "recovery_only_mode_count_total": self_change_recovery_only_mode_count_total,
+            "escalation_required_count_total": self_change_escalation_required_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,
