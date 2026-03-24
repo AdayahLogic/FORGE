@@ -207,6 +207,9 @@ def test_audit_trail_persists_gate_outcome():
     assert rows
     assert rows[0]["gate_outcome"] == "release_ready"
     assert rows[0]["release_lane"] == "stable"
+    assert rows[0]["sandbox_required"] is False
+    assert rows[0]["sandbox_result"] == "sandbox_not_required"
+    assert rows[0]["promotion_status"] == "promoted_to_stable"
 
 
 def test_dashboard_summary_surfaces_release_gating():
@@ -235,6 +238,11 @@ def test_dashboard_summary_surfaces_release_gating():
         "regression_status": "pending",
         "gate_outcome": "blocked_missing_approval",
         "release_lane": "experimental",
+        "sandbox_required": True,
+        "sandbox_status": "sandbox_pending",
+        "sandbox_result": "sandbox_pending",
+        "promotion_status": "promotion_pending",
+        "promotion_reason": "Sandbox-required self-change remains pending until sandbox evaluation completes successfully.",
         "rollback_required": False,
         "validation_reasons": ["Protected-zone self-change requires mandatory approval before advancing."],
         "stable_state_ref": "stable-phase66",
@@ -254,6 +262,8 @@ def test_dashboard_summary_surfaces_release_gating():
     assert governance_summary["gate_outcome_count_total"]["blocked_missing_approval"] == 1
     assert governance_summary["release_lane_count_total"]["experimental"] == 1
     assert governance_summary["validation_outcome_count_total"]["pending"] == 1
+    assert governance_summary["sandbox_status_count_total"]["sandbox_pending"] == 1
+    assert governance_summary["promotion_status_count_total"]["promotion_pending"] == 1
 
 
 def main():

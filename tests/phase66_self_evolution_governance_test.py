@@ -169,6 +169,9 @@ def test_self_change_audit_records_persist_with_outcome_and_approval():
     assert rows[0]["risk_level"] == "high_risk"
     assert rows[0]["gate_outcome"] == "rollback_required"
     assert rows[0]["rollback_required"] is True
+    assert rows[0]["sandbox_required"] is True
+    assert rows[0]["sandbox_result"] == "sandbox_failed"
+    assert rows[0]["promotion_status"] == "promotion_blocked"
 
 
 def test_registry_dashboard_surfaces_self_evolution_governance_summary():
@@ -196,6 +199,11 @@ def test_registry_dashboard_surfaces_self_evolution_governance_summary():
         "regression_status": "pending",
         "gate_outcome": "blocked_missing_approval",
         "release_lane": "experimental",
+        "sandbox_required": True,
+        "sandbox_status": "sandbox_pending",
+        "sandbox_result": "sandbox_pending",
+        "promotion_status": "promotion_pending",
+        "promotion_reason": "Sandbox-required self-change remains pending until sandbox evaluation completes successfully.",
         "rollback_required": False,
         "validation_reasons": ["Protected-zone self-change requires mandatory approval before advancing."],
         "stable_state_ref": "phase65-stable",
@@ -217,6 +225,8 @@ def test_registry_dashboard_surfaces_self_evolution_governance_summary():
     assert governance_summary["approval_requirement_count_total"]["mandatory"] == 1
     assert governance_summary["gate_outcome_count_total"]["blocked_missing_approval"] == 1
     assert governance_summary["release_lane_count_total"]["experimental"] == 1
+    assert governance_summary["sandbox_result_count_total"]["sandbox_pending"] == 1
+    assert governance_summary["promotion_status_count_total"]["promotion_pending"] == 1
     assert governance_summary["protected_zone_hits"]["governance_layer"] == 1
 
 

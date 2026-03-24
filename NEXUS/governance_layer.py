@@ -12,7 +12,11 @@ from typing import Any
 
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
-from NEXUS.self_evolution_governance import evaluate_self_change_governance_safe, evaluate_self_change_release_gate_safe
+from NEXUS.self_evolution_governance import (
+    evaluate_self_change_governance_safe,
+    evaluate_self_change_release_gate_safe,
+    evaluate_self_change_sandbox_promotion_safe,
+)
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 from NEXUS.studio_driver import build_studio_driver_result_safe
 
@@ -599,4 +603,55 @@ def evaluate_self_change_release_gate_outcome_safe(**kwargs: Any) -> dict[str, A
             "reason": f"Self-change release gating failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
             "governance_trace": {"evaluation_scope": "self_evolution_release_gate", "error": str(e)},
+        }
+
+
+def evaluate_self_change_sandbox_promotion_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_sandbox_promotion_safe(self_change_contract)
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "propose_self_change")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_sandbox_promotion")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_sandbox_promotion_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_sandbox_promotion_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "promotion_blocked",
+            "change_id": "",
+            "risk_level": "high_risk",
+            "protected_zone_hit": False,
+            "protected_zones": [],
+            "release_lane": "experimental",
+            "sandbox_required": True,
+            "sandbox_status": "sandbox_pending",
+            "sandbox_result": "sandbox_pending",
+            "promotion_status": "promotion_blocked",
+            "promotion_reason": f"Self-change sandbox/promotion evaluation failed: {e}",
+            "rollback_required": False,
+            "approval_required": True,
+            "approval_requirement": "mandatory",
+            "approval_status": "pending",
+            "validation_outcome": "pending",
+            "gate_outcome": "blocked_missing_validation",
+            "contract_status": "invalid",
+            "tests_status": "pending",
+            "build_status": "pending",
+            "regression_status": "pending",
+            "reason": f"Self-change sandbox/promotion evaluation failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
+            "governance_trace": {"evaluation_scope": "self_evolution_sandbox_promotion", "error": str(e)},
         }

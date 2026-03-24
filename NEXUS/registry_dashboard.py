@@ -793,6 +793,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_gate_outcome_count_total: dict[str, int] = {}
     self_change_release_lane_count_total: dict[str, int] = {"stable": 0, "experimental": 0}
     self_change_validation_outcome_count_total: dict[str, int] = {}
+    self_change_sandbox_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_sandbox_status_count_total: dict[str, int] = {}
+    self_change_sandbox_result_count_total: dict[str, int] = {}
+    self_change_promotion_status_count_total: dict[str, int] = {}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -814,6 +818,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             self_change_release_lane_count_total[release_lane] += 1
         validation_outcome = str(entry.get("validation_status") or "pending")
         self_change_validation_outcome_count_total[validation_outcome] = self_change_validation_outcome_count_total.get(validation_outcome, 0) + 1
+        sandbox_requirement_key = "required" if bool(entry.get("sandbox_required")) else "not_required"
+        self_change_sandbox_required_count_total[sandbox_requirement_key] = (
+            self_change_sandbox_required_count_total.get(sandbox_requirement_key, 0) + 1
+        )
+        sandbox_status = str(entry.get("sandbox_status") or "sandbox_pending")
+        self_change_sandbox_status_count_total[sandbox_status] = self_change_sandbox_status_count_total.get(sandbox_status, 0) + 1
+        sandbox_result = str(entry.get("sandbox_result") or sandbox_status)
+        self_change_sandbox_result_count_total[sandbox_result] = self_change_sandbox_result_count_total.get(sandbox_result, 0) + 1
+        promotion_status = str(entry.get("promotion_status") or "promotion_pending")
+        self_change_promotion_status_count_total[promotion_status] = (
+            self_change_promotion_status_count_total.get(promotion_status, 0) + 1
+        )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
         if bool(entry.get("success")):
@@ -1686,6 +1702,10 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "gate_outcome_count_total": self_change_gate_outcome_count_total,
             "release_lane_count_total": self_change_release_lane_count_total,
             "validation_outcome_count_total": self_change_validation_outcome_count_total,
+            "sandbox_required_count_total": self_change_sandbox_required_count_total,
+            "sandbox_status_count_total": self_change_sandbox_status_count_total,
+            "sandbox_result_count_total": self_change_sandbox_result_count_total,
+            "promotion_status_count_total": self_change_promotion_status_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

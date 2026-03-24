@@ -12,7 +12,7 @@ import uuid
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.1"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.2"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -42,6 +42,22 @@ VALID_GATE_OUTCOMES = {
     "rollback_required",
 }
 VALID_RELEASE_LANES = {"stable", "experimental"}
+VALID_SANDBOX_STATUSES = {
+    "sandbox_pending",
+    "sandbox_running",
+    "sandbox_passed",
+    "sandbox_failed",
+    "sandbox_rejected",
+    "sandbox_not_required",
+}
+VALID_PROMOTION_STATUSES = {
+    "promotion_pending",
+    "promotion_blocked",
+    "promotion_ready",
+    "promoted_to_stable",
+    "kept_experimental",
+    "promotion_rejected",
+}
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -136,6 +152,32 @@ def _normalize_validation_outcome(value: Any) -> str:
 def _normalize_release_lane(value: Any, *, default: str) -> str:
     lane = _normalize_text(value).lower()
     return lane if lane in VALID_RELEASE_LANES else default
+
+
+def _normalize_sandbox_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    aliases = {
+        "pending": "sandbox_pending",
+        "running": "sandbox_running",
+        "passed": "sandbox_passed",
+        "failed": "sandbox_failed",
+        "rejected": "sandbox_rejected",
+        "not_required": "sandbox_not_required",
+    }
+    status = aliases.get(status, status)
+    return status if status in VALID_SANDBOX_STATUSES else default
+
+
+def _normalize_promotion_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    aliases = {
+        "pending": "promotion_pending",
+        "blocked": "promotion_blocked",
+        "ready": "promotion_ready",
+        "rejected": "promotion_rejected",
+    }
+    status = aliases.get(status, status)
+    return status if status in VALID_PROMOTION_STATUSES else default
 
 
 def _normalize_application_state(value: Any) -> str:
@@ -247,6 +289,19 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "release_lane": requested_release_lane,
         "stable_release_approved": bool(raw.get("stable_release_approved", False)),
         "application_state": _normalize_application_state(raw.get("application_state")),
+        "sandbox_status": _normalize_sandbox_status(
+            raw.get("sandbox_status"),
+            default="sandbox_pending",
+        ),
+        "sandbox_result": _normalize_sandbox_status(
+            raw.get("sandbox_result") or raw.get("sandbox_status"),
+            default="sandbox_pending",
+        ),
+        "promotion_status": _normalize_promotion_status(
+            raw.get("promotion_status"),
+            default="promotion_pending",
+        ),
+        "promotion_reason": _normalize_text(raw.get("promotion_reason")),
     }
 
 
@@ -459,6 +514,143 @@ def evaluate_self_change_release_gate(contract: dict[str, Any] | None) -> dict[s
     }
 
 
+def evaluate_self_change_sandbox_promotion(contract: dict[str, Any] | None) -> dict[str, Any]:
+    gate = evaluate_self_change_release_gate(contract)
+    normalized = gate["normalized_contract"]
+    risk_level = str(gate.get("risk_level") or "medium_risk")
+    protected_zone_hit = bool(gate.get("protected_zone_hit"))
+    sandbox_required = protected_zone_hit or risk_level == "high_risk"
+    approval_required = bool(gate.get("approval_required"))
+    approval_status = str(gate.get("approval_status") or "optional")
+    requested_release_lane = _normalize_release_lane(
+        normalized.get("release_lane"),
+        default="experimental" if sandbox_required else "stable",
+    )
+    release_lane = _normalize_release_lane(
+        gate.get("release_lane"),
+        default="experimental" if sandbox_required else "stable",
+    )
+    raw_sandbox_status = _normalize_sandbox_status(
+        normalized.get("sandbox_status"),
+        default="sandbox_pending" if sandbox_required else "sandbox_not_required",
+    )
+    raw_sandbox_result = _normalize_sandbox_status(
+        normalized.get("sandbox_result"),
+        default=raw_sandbox_status,
+    )
+
+    if not sandbox_required:
+        sandbox_status = "sandbox_not_required"
+        sandbox_result = "sandbox_not_required"
+    elif approval_status in {"rejected", "denied"}:
+        sandbox_status = "sandbox_rejected"
+        sandbox_result = "sandbox_rejected"
+    elif bool(gate.get("rollback_required")) or raw_sandbox_status == "sandbox_failed" or raw_sandbox_result == "sandbox_failed":
+        sandbox_status = "sandbox_failed"
+        sandbox_result = "sandbox_failed"
+    elif raw_sandbox_status == "sandbox_running" or raw_sandbox_result == "sandbox_running":
+        sandbox_status = "sandbox_running"
+        sandbox_result = "sandbox_running"
+    elif raw_sandbox_status == "sandbox_passed" or raw_sandbox_result == "sandbox_passed":
+        sandbox_status = "sandbox_passed"
+        sandbox_result = "sandbox_passed"
+    elif raw_sandbox_status == "sandbox_rejected" or raw_sandbox_result == "sandbox_rejected":
+        sandbox_status = "sandbox_rejected"
+        sandbox_result = "sandbox_rejected"
+    else:
+        sandbox_status = "sandbox_pending"
+        sandbox_result = "sandbox_pending"
+
+    promotion_status = "promotion_pending"
+    promotion_reason = ""
+    effective_release_lane = release_lane
+
+    if approval_status in {"rejected", "denied"} or gate.get("gate_outcome") == "release_rejected":
+        promotion_status = "promotion_rejected"
+        promotion_reason = "Self-change cannot be promoted because approval or validation was rejected."
+    elif bool(gate.get("rollback_required")) or sandbox_result == "sandbox_failed":
+        promotion_status = "promotion_blocked"
+        promotion_reason = "Self-change cannot be promoted because rollback or sandbox failure was triggered."
+    elif gate.get("gate_outcome") != "release_ready":
+        promotion_status = "promotion_pending"
+        promotion_reason = "Self-change remains pending until release-gate requirements are satisfied."
+    elif sandbox_required and sandbox_result in {"sandbox_pending", "sandbox_running"}:
+        promotion_status = "promotion_pending"
+        promotion_reason = "Sandbox-required self-change remains pending until sandbox evaluation completes successfully."
+        effective_release_lane = "experimental"
+    elif sandbox_required and sandbox_result == "sandbox_rejected":
+        promotion_status = "promotion_rejected"
+        promotion_reason = "Sandbox-required self-change was rejected before promotion."
+        effective_release_lane = "experimental"
+    elif sandbox_required and sandbox_result == "sandbox_passed":
+        if release_lane == "stable":
+            promotion_status = "promoted_to_stable"
+            promotion_reason = "Sandbox-passed self-change satisfied promotion criteria and was promoted to stable."
+            effective_release_lane = "stable"
+        elif requested_release_lane == "stable":
+            promotion_status = "promotion_ready"
+            promotion_reason = "Sandbox-passed risky self-change is promotion-ready but remains experimental until explicit stable promotion approval is present."
+            effective_release_lane = "experimental"
+        else:
+            promotion_status = "kept_experimental"
+            promotion_reason = "Sandbox-passed self-change satisfied release gating but remains in the experimental lane."
+            effective_release_lane = "experimental"
+    elif release_lane == "stable":
+        promotion_status = "promoted_to_stable"
+        promotion_reason = "Validated self-change satisfied promotion criteria and was promoted to stable."
+        effective_release_lane = "stable"
+    else:
+        promotion_status = "kept_experimental"
+        promotion_reason = "Validated self-change satisfied release gating and remains in the experimental lane."
+        effective_release_lane = "experimental"
+
+    if approval_required and not _is_approval_present(approval_status) and promotion_status not in {"promotion_rejected", "promotion_blocked"}:
+        promotion_status = "promotion_pending"
+        promotion_reason = "Promotion remains pending until required approval is present."
+
+    sandbox_trace = {
+        "sandbox_required": sandbox_required,
+        "sandbox_status": sandbox_status,
+        "sandbox_result": sandbox_result,
+        "promotion_status": promotion_status,
+        "promotion_reason": promotion_reason,
+        "effective_release_lane": effective_release_lane,
+    }
+    governance_trace = {
+        **dict(gate.get("governance_trace") or {}),
+        "sandbox_promotion": sandbox_trace,
+    }
+    status = sandbox_status if sandbox_required and sandbox_result in {"sandbox_pending", "sandbox_running"} else promotion_status
+
+    return {
+        "status": status,
+        "change_id": str(gate.get("change_id") or ""),
+        "risk_level": risk_level,
+        "protected_zone_hit": protected_zone_hit,
+        "protected_zones": list(gate.get("protected_zones") or []),
+        "release_lane": effective_release_lane,
+        "sandbox_required": sandbox_required,
+        "sandbox_status": sandbox_status,
+        "sandbox_result": sandbox_result,
+        "promotion_status": promotion_status,
+        "promotion_reason": promotion_reason,
+        "rollback_required": bool(gate.get("rollback_required")),
+        "approval_required": approval_required,
+        "approval_requirement": str(gate.get("approval_requirement") or ""),
+        "approval_status": approval_status,
+        "validation_outcome": str(gate.get("validation_outcome") or "pending"),
+        "gate_outcome": str(gate.get("gate_outcome") or "allow_for_review"),
+        "contract_status": str(gate.get("contract_status") or ""),
+        "tests_status": str(gate.get("tests_status") or "pending"),
+        "build_status": str(gate.get("build_status") or "pending"),
+        "regression_status": str(gate.get("regression_status") or "pending"),
+        "reason": str(gate.get("reason") or ""),
+        "authority_trace": dict(gate.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -486,39 +678,44 @@ def build_self_change_audit_record(
     if outcome_status not in (None, ""):
         source_contract["application_state"] = "failed" if _normalize_text(outcome_status).lower() in {"failed", "rolled_back"} else "proposed"
 
-    gate = evaluate_self_change_release_gate(source_contract)
-    normalized = gate["normalized_contract"]
+    promotion = evaluate_self_change_sandbox_promotion(source_contract)
+    normalized = promotion["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
         "change_id": str(normalized.get("change_id") or ""),
         "recorded_at": str((normalized.get("governance_trace") or {}).get("recorded_at") or ""),
         "target_files": list(normalized.get("target_files") or []),
         "change_type": str(normalized.get("change_type") or ""),
-        "risk_level": str(gate.get("risk_level") or "medium_risk"),
-        "protected_zones": list(gate.get("protected_zones") or []),
-        "protected_zone_hit": bool(gate.get("protected_zone_hit")),
+        "risk_level": str(promotion.get("risk_level") or "medium_risk"),
+        "protected_zones": list(promotion.get("protected_zones") or []),
+        "protected_zone_hit": bool(promotion.get("protected_zone_hit")),
         "reason": str(normalized.get("reason") or ""),
         "expected_outcome": str(normalized.get("expected_outcome") or ""),
         "validation_plan": dict(normalized.get("validation_plan") or {}),
         "rollback_plan": dict(normalized.get("rollback_plan") or {}),
-        "approval_requirement": str(gate.get("approval_requirement") or ""),
-        "approval_required": bool(gate.get("approval_required")),
-        "approval_status": _normalize_text(approval_status) or str(gate.get("approval_status") or ""),
+        "approval_requirement": str(promotion.get("approval_requirement") or ""),
+        "approval_required": bool(promotion.get("approval_required")),
+        "approval_status": _normalize_text(approval_status) or str(promotion.get("approval_status") or ""),
         "approved_by": _normalize_text(approved_by),
         "outcome_status": _normalize_text(outcome_status) or "proposed",
         "outcome_summary": _normalize_text(outcome_summary),
-        "validation_status": str(gate.get("validation_outcome") or "pending"),
-        "build_status": str(gate.get("build_status") or "pending"),
-        "regression_status": str(gate.get("regression_status") or "pending"),
-        "gate_outcome": str(gate.get("gate_outcome") or "allow_for_review"),
-        "release_lane": str(gate.get("release_lane") or "experimental"),
-        "rollback_required": bool(gate.get("rollback_required")),
-        "validation_reasons": [str(gate.get("reason") or "")] if _normalize_text(gate.get("reason")) else [],
+        "validation_status": str(promotion.get("validation_outcome") or "pending"),
+        "build_status": str(promotion.get("build_status") or "pending"),
+        "regression_status": str(promotion.get("regression_status") or "pending"),
+        "gate_outcome": str(promotion.get("gate_outcome") or "allow_for_review"),
+        "release_lane": str(promotion.get("release_lane") or "experimental"),
+        "sandbox_required": bool(promotion.get("sandbox_required")),
+        "sandbox_status": str(promotion.get("sandbox_status") or "sandbox_pending"),
+        "sandbox_result": str(promotion.get("sandbox_result") or "sandbox_pending"),
+        "promotion_status": str(promotion.get("promotion_status") or "promotion_pending"),
+        "promotion_reason": str(promotion.get("promotion_reason") or ""),
+        "rollback_required": bool(promotion.get("rollback_required")),
+        "validation_reasons": [str(promotion.get("reason") or "")] if _normalize_text(promotion.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(gate.get("authority_trace") or {}),
-        "governance_trace": dict(gate.get("governance_trace") or {}),
-        "contract_status": str(gate.get("contract_status") or ""),
+        "authority_trace": dict(promotion.get("authority_trace") or {}),
+        "governance_trace": dict(promotion.get("governance_trace") or {}),
+        "contract_status": str(promotion.get("contract_status") or ""),
     }
 
 
@@ -571,6 +768,49 @@ def evaluate_self_change_release_gate_safe(contract: dict[str, Any] | None) -> d
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "release_gate_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_sandbox_promotion_safe(contract: dict[str, Any] | None) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_sandbox_promotion(contract)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        risk_level = str(normalized.get("risk_level") or "high_risk")
+        protected_zone_hit = bool(normalized.get("protected_zones"))
+        sandbox_required = protected_zone_hit or risk_level == "high_risk"
+        sandbox_status = "sandbox_pending" if sandbox_required else "sandbox_not_required"
+        sandbox_result = sandbox_status
+        return {
+            "status": sandbox_status if sandbox_required else "promotion_blocked",
+            "change_id": str(normalized.get("change_id") or ""),
+            "risk_level": risk_level,
+            "protected_zone_hit": protected_zone_hit,
+            "protected_zones": list(normalized.get("protected_zones") or []),
+            "release_lane": "experimental" if sandbox_required else str(normalized.get("release_lane") or "stable"),
+            "sandbox_required": sandbox_required,
+            "sandbox_status": sandbox_status,
+            "sandbox_result": sandbox_result,
+            "promotion_status": "promotion_blocked",
+            "promotion_reason": f"Self-change sandbox/promotion evaluation failed: {e}",
+            "rollback_required": bool(normalized.get("application_state") in {"attempted", "failed"}),
+            "approval_required": VALID_APPROVAL_REQUIREMENTS.get(risk_level, "recommended") == "mandatory",
+            "approval_requirement": VALID_APPROVAL_REQUIREMENTS.get(risk_level, "recommended"),
+            "approval_status": str(normalized.get("approval_status") or "pending"),
+            "validation_outcome": str(normalized.get("validation_outcome") or "pending"),
+            "gate_outcome": "blocked_missing_validation",
+            "contract_status": "invalid",
+            "tests_status": str(normalized.get("tests_status") or "pending"),
+            "build_status": str(normalized.get("build_status") or "pending"),
+            "regression_status": str(normalized.get("regression_status") or "pending"),
+            "reason": f"Self-change sandbox/promotion evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "sandbox_promotion_error": str(e),
             },
             "normalized_contract": normalized,
         }
