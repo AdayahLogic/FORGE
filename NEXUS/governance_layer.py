@@ -15,6 +15,7 @@ from NEXUS.registry import PROJECTS
 from NEXUS.self_evolution_governance import (
     evaluate_self_change_comparative_scoring_safe,
     evaluate_self_change_governance_safe,
+    evaluate_self_change_post_promotion_monitoring_safe,
     evaluate_self_change_release_gate_safe,
     evaluate_self_change_sandbox_promotion_safe,
 )
@@ -697,4 +698,45 @@ def evaluate_self_change_comparative_scoring_outcome_safe(**kwargs: Any) -> dict
             "reason": f"Self-change comparative scoring failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
             "governance_trace": {"evaluation_scope": "self_evolution_comparative_scoring", "error": str(e)},
+        }
+
+
+def evaluate_self_change_post_promotion_monitoring_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_post_promotion_monitoring_safe(self_change_contract)
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "propose_self_change")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_post_promotion_monitoring")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_post_promotion_monitoring_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_post_promotion_monitoring_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "pending_monitoring",
+            "change_id": "",
+            "promoted_at": "",
+            "monitoring_window": "observation_window",
+            "monitoring_status": "pending_monitoring",
+            "observation_count": 0,
+            "health_signals": {},
+            "regression_detected": False,
+            "rollback_triggered": False,
+            "rollback_trigger_outcome": "monitor_more",
+            "rollback_reason": f"Self-change post-promotion monitoring failed: {e}",
+            "stable_status": "provisionally_stable",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "propose_self_change"},
+            "governance_trace": {"evaluation_scope": "self_evolution_post_promotion_monitoring", "error": str(e)},
         }

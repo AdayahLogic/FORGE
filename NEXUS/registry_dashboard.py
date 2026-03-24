@@ -801,6 +801,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_confidence_band_count_total: dict[str, int] = {}
     self_change_promotion_confidence_count_total: dict[str, int] = {}
     self_change_recommendation_count_total: dict[str, int] = {}
+    self_change_monitoring_status_count_total: dict[str, int] = {}
+    self_change_rollback_trigger_outcome_count_total: dict[str, int] = {}
+    self_change_stable_status_count_total: dict[str, int] = {}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -849,6 +852,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         recommendation = str(entry.get("recommendation") or "hold_experimental")
         self_change_recommendation_count_total[recommendation] = (
             self_change_recommendation_count_total.get(recommendation, 0) + 1
+        )
+        monitoring_status = str(entry.get("monitoring_status") or "pending_monitoring")
+        self_change_monitoring_status_count_total[monitoring_status] = (
+            self_change_monitoring_status_count_total.get(monitoring_status, 0) + 1
+        )
+        rollback_trigger_outcome = str(entry.get("rollback_trigger_outcome") or "monitor_more")
+        self_change_rollback_trigger_outcome_count_total[rollback_trigger_outcome] = (
+            self_change_rollback_trigger_outcome_count_total.get(rollback_trigger_outcome, 0) + 1
+        )
+        stable_status = str(entry.get("stable_status") or "provisionally_stable")
+        self_change_stable_status_count_total[stable_status] = (
+            self_change_stable_status_count_total.get(stable_status, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1730,6 +1745,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "confidence_band_count_total": self_change_confidence_band_count_total,
             "promotion_confidence_count_total": self_change_promotion_confidence_count_total,
             "recommendation_count_total": self_change_recommendation_count_total,
+            "monitoring_status_count_total": self_change_monitoring_status_count_total,
+            "rollback_trigger_outcome_count_total": self_change_rollback_trigger_outcome_count_total,
+            "stable_status_count_total": self_change_stable_status_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

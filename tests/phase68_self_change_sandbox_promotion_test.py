@@ -242,6 +242,8 @@ def test_audit_trail_persists_sandbox_and_promotion_outcomes():
     assert rows[0]["promotion_reason"]
     assert rows[0]["comparison_status"] == "insufficient_evidence"
     assert rows[0]["promotion_confidence"] == "insufficient_evidence"
+    assert rows[0]["monitoring_status"] == "pending_monitoring"
+    assert rows[0]["rollback_trigger_outcome"] == "monitor_more"
 
 
 def test_dashboard_summary_surfaces_sandbox_and_promotion_states():
@@ -287,6 +289,16 @@ def test_dashboard_summary_surfaces_sandbox_and_promotion_states():
         "promotion_confidence": "keep_experimental",
         "recommendation": "hold_experimental",
         "comparison_reason": "Candidate evidence is positive but not strong enough for broader promotion beyond the experimental lane.",
+        "promoted_at": "2026-03-23T00:00:00+00:00",
+        "monitoring_window": "observation_window",
+        "monitoring_status": "actively_monitored",
+        "observation_count": 2,
+        "health_signals": {"tests_healthy": True, "build_healthy": True, "regressions_healthy": True, "protected_zone_healthy": True},
+        "regression_detected": False,
+        "rollback_triggered": False,
+        "rollback_trigger_outcome": "monitor_more",
+        "rollback_reason": "Promoted self-change remains under post-promotion monitoring.",
+        "stable_status": "provisionally_stable",
         "rollback_required": False,
         "validation_reasons": ["Self-change satisfied approval, validation, and rollback requirements."],
         "stable_state_ref": "stable-phase67",
@@ -309,6 +321,8 @@ def test_dashboard_summary_surfaces_sandbox_and_promotion_states():
     assert governance_summary["promotion_status_count_total"]["kept_experimental"] == 1
     assert governance_summary["comparison_status_count_total"]["keep_experimental"] == 1
     assert governance_summary["confidence_band_count_total"]["moderate"] == 1
+    assert governance_summary["monitoring_status_count_total"]["actively_monitored"] == 1
+    assert governance_summary["rollback_trigger_outcome_count_total"]["monitor_more"] == 1
 
 
 def main():

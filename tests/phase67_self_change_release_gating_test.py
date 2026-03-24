@@ -213,6 +213,8 @@ def test_audit_trail_persists_gate_outcome():
     assert rows[0]["comparison_status"] == "insufficient_evidence"
     assert rows[0]["promotion_confidence"] == "insufficient_evidence"
     assert rows[0]["recommendation"] == "hold_experimental"
+    assert rows[0]["monitoring_status"] == "pending_monitoring"
+    assert rows[0]["stable_status"] == "provisionally_stable"
 
 
 def test_dashboard_summary_surfaces_release_gating():
@@ -258,6 +260,16 @@ def test_dashboard_summary_surfaces_release_gating():
         "promotion_confidence": "insufficient_evidence",
         "recommendation": "hold_experimental",
         "comparison_reason": "Comparative scoring requires explicit baseline/candidate references and usable evidence across at least one shared dimension.",
+        "promoted_at": "",
+        "monitoring_window": "observation_window",
+        "monitoring_status": "pending_monitoring",
+        "observation_count": 0,
+        "health_signals": {},
+        "regression_detected": False,
+        "rollback_triggered": False,
+        "rollback_trigger_outcome": "monitor_more",
+        "rollback_reason": "Post-promotion monitoring is pending until the self-change reaches a promoted state.",
+        "stable_status": "provisionally_stable",
         "rollback_required": False,
         "validation_reasons": ["Protected-zone self-change requires mandatory approval before advancing."],
         "stable_state_ref": "stable-phase66",
@@ -281,6 +293,8 @@ def test_dashboard_summary_surfaces_release_gating():
     assert governance_summary["promotion_status_count_total"]["promotion_pending"] == 1
     assert governance_summary["comparison_status_count_total"]["insufficient_evidence"] == 1
     assert governance_summary["confidence_band_count_total"]["weak"] == 1
+    assert governance_summary["monitoring_status_count_total"]["pending_monitoring"] == 1
+    assert governance_summary["stable_status_count_total"]["provisionally_stable"] == 1
 
 
 def main():
