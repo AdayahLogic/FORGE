@@ -816,6 +816,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_freeze_scope_count_total: dict[str, int] = {}
     self_change_recovery_only_mode_count_total: dict[str, int] = {"enabled": 0, "disabled": 0}
     self_change_escalation_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_checkpoint_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_checkpoint_scope_count_total: dict[str, int] = {}
+    self_change_checkpoint_status_count_total: dict[str, int] = {}
+    self_change_executive_approval_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_manual_hold_active_count_total: dict[str, int] = {"active": 0, "inactive": 0}
+    self_change_manual_hold_scope_count_total: dict[str, int] = {}
+    self_change_override_status_count_total: dict[str, int] = {}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -924,6 +931,34 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         escalation_key = "required" if bool(entry.get("escalation_required")) else "not_required"
         self_change_escalation_required_count_total[escalation_key] = (
             self_change_escalation_required_count_total.get(escalation_key, 0) + 1
+        )
+        checkpoint_required_key = "required" if bool(entry.get("checkpoint_required")) else "not_required"
+        self_change_checkpoint_required_count_total[checkpoint_required_key] = (
+            self_change_checkpoint_required_count_total.get(checkpoint_required_key, 0) + 1
+        )
+        checkpoint_scope = str(entry.get("checkpoint_scope") or "project_scoped")
+        self_change_checkpoint_scope_count_total[checkpoint_scope] = (
+            self_change_checkpoint_scope_count_total.get(checkpoint_scope, 0) + 1
+        )
+        checkpoint_status = str(entry.get("checkpoint_status") or "not_required")
+        self_change_checkpoint_status_count_total[checkpoint_status] = (
+            self_change_checkpoint_status_count_total.get(checkpoint_status, 0) + 1
+        )
+        executive_key = "required" if bool(entry.get("executive_approval_required")) else "not_required"
+        self_change_executive_approval_required_count_total[executive_key] = (
+            self_change_executive_approval_required_count_total.get(executive_key, 0) + 1
+        )
+        hold_active_key = "active" if bool(entry.get("manual_hold_active")) else "inactive"
+        self_change_manual_hold_active_count_total[hold_active_key] = (
+            self_change_manual_hold_active_count_total.get(hold_active_key, 0) + 1
+        )
+        hold_scope = str(entry.get("manual_hold_scope") or "project_scoped")
+        self_change_manual_hold_scope_count_total[hold_scope] = (
+            self_change_manual_hold_scope_count_total.get(hold_scope, 0) + 1
+        )
+        override_status = str(entry.get("override_status") or "no_override")
+        self_change_override_status_count_total[override_status] = (
+            self_change_override_status_count_total.get(override_status, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1823,6 +1858,13 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "freeze_scope_count_total": self_change_freeze_scope_count_total,
             "recovery_only_mode_count_total": self_change_recovery_only_mode_count_total,
             "escalation_required_count_total": self_change_escalation_required_count_total,
+            "checkpoint_required_count_total": self_change_checkpoint_required_count_total,
+            "checkpoint_scope_count_total": self_change_checkpoint_scope_count_total,
+            "checkpoint_status_count_total": self_change_checkpoint_status_count_total,
+            "executive_approval_required_count_total": self_change_executive_approval_required_count_total,
+            "manual_hold_active_count_total": self_change_manual_hold_active_count_total,
+            "manual_hold_scope_count_total": self_change_manual_hold_scope_count_total,
+            "override_status_count_total": self_change_override_status_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,

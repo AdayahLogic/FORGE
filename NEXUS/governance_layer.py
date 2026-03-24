@@ -21,6 +21,7 @@ from NEXUS.self_evolution_governance import (
     evaluate_self_change_release_gate_safe,
     evaluate_self_change_sandbox_promotion_safe,
     evaluate_self_change_stability_posture_safe,
+    evaluate_self_change_executive_checkpoint_safe,
 )
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 from NEXUS.studio_driver import build_studio_driver_result_safe
@@ -880,4 +881,50 @@ def evaluate_self_change_stability_posture_outcome_safe(**kwargs: Any) -> dict[s
             "reason": f"Self-change stability posture failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_stability"},
             "governance_trace": {"evaluation_scope": "self_evolution_stability_posture", "error": str(e)},
+        }
+
+
+def evaluate_self_change_executive_checkpoint_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_executive_checkpoint_safe(
+        self_change_contract,
+        recent_audit_entries=recent_audit_entries,
+    )
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "govern_self_change_checkpoint")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_executive_checkpoint")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_executive_checkpoint_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_executive_checkpoint_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "checkpoint_blocked",
+            "change_id": "",
+            "checkpoint_required": True,
+            "checkpoint_reason": f"Self-change executive checkpoint failed: {e}",
+            "checkpoint_scope": "self_change_global",
+            "checkpoint_status": "checkpoint_blocked",
+            "executive_approval_required": True,
+            "manual_hold_active": True,
+            "manual_hold_scope": "self_change_global",
+            "hold_reason": f"Self-change executive checkpoint failed: {e}",
+            "hold_release_requirements": ["executive_approval_present", "stability_posture_acceptable"],
+            "override_status": "checkpoint_error_fallback",
+            "reason": f"Self-change executive checkpoint failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_checkpoint"},
+            "governance_trace": {"evaluation_scope": "self_evolution_executive_checkpoint", "error": str(e)},
         }

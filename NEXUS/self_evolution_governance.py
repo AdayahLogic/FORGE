@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.3"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.4"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -122,6 +122,15 @@ VALID_MUTATION_CONTROL_STATUSES = {
 VALID_STABILITY_STATES = {"stable", "caution", "unstable", "frozen", "recovery_only"}
 VALID_TURBULENCE_LEVELS = {"low", "elevated", "high", "severe"}
 VALID_FREEZE_SCOPES = {"self_change_global", "protected_core_only", "project_scoped", "recovery_scoped"}
+VALID_EXECUTIVE_CHECKPOINT_SCOPES = {"self_change_global", "protected_core_only", "project_scoped", "rollback_scoped"}
+VALID_EXECUTIVE_CHECKPOINT_STATUSES = {
+    "not_required",
+    "checkpoint_required",
+    "checkpoint_satisfied",
+    "checkpoint_blocked",
+    "blocked_by_hold",
+}
+VALID_MANUAL_HOLD_STATUSES = {"no_hold", "hold_requested", "hold_active", "hold_release_pending", "hold_released"}
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -281,6 +290,29 @@ def _normalize_turbulence_level(value: Any, *, default: str) -> str:
 def _normalize_freeze_scope(value: Any, *, default: str) -> str:
     scope = _normalize_text(value).lower()
     return scope if scope in VALID_FREEZE_SCOPES else default
+
+
+def _normalize_checkpoint_scope(value: Any, *, default: str) -> str:
+    scope = _normalize_text(value).lower()
+    return scope if scope in VALID_EXECUTIVE_CHECKPOINT_SCOPES else default
+
+
+def _normalize_checkpoint_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    return status if status in VALID_EXECUTIVE_CHECKPOINT_STATUSES else default
+
+
+def _normalize_manual_hold_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    aliases = {
+        "requested": "hold_requested",
+        "active": "hold_active",
+        "release_pending": "hold_release_pending",
+        "released": "hold_released",
+        "none": "no_hold",
+    }
+    status = aliases.get(status, status)
+    return status if status in VALID_MANUAL_HOLD_STATUSES else default
 
 
 def _normalize_rollback_sequence(value: Any) -> list[str]:
@@ -667,6 +699,11 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
     turbulence_level = _normalize_turbulence_level(raw.get("turbulence_level"), default="low")
     freeze_scope = _normalize_freeze_scope(raw.get("freeze_scope"), default="project_scoped")
     reentry_requirements = _normalize_string_list(raw.get("reentry_requirements"), limit=20, lower=True)
+    checkpoint_scope = _normalize_checkpoint_scope(raw.get("checkpoint_scope"), default="project_scoped")
+    checkpoint_status = _normalize_checkpoint_status(raw.get("checkpoint_status"), default="not_required")
+    manual_hold_status = _normalize_manual_hold_status(raw.get("manual_hold_status") or raw.get("status"), default="no_hold")
+    manual_hold_scope = _normalize_checkpoint_scope(raw.get("manual_hold_scope"), default="project_scoped")
+    hold_release_requirements = _normalize_string_list(raw.get("hold_release_requirements"), limit=20, lower=True)
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -763,6 +800,21 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "escalation_required": bool(raw.get("escalation_required")),
         "escalation_reason": _normalize_text(raw.get("escalation_reason")),
         "reentry_requirements": reentry_requirements,
+        "checkpoint_required": bool(raw.get("checkpoint_required")),
+        "checkpoint_reason": _normalize_text(raw.get("checkpoint_reason")),
+        "checkpoint_scope": checkpoint_scope,
+        "checkpoint_status": checkpoint_status,
+        "executive_approval_required": bool(raw.get("executive_approval_required")),
+        "executive_approval_status": _normalize_approval_status(
+            raw.get("executive_approval_status"),
+            approval_required=bool(raw.get("executive_approval_required") or raw.get("checkpoint_required")),
+        ),
+        "manual_hold_status": manual_hold_status,
+        "manual_hold_active": bool(raw.get("manual_hold_active")) or manual_hold_status in {"hold_requested", "hold_active", "hold_release_pending"},
+        "manual_hold_scope": manual_hold_scope,
+        "hold_reason": _normalize_text(raw.get("hold_reason")),
+        "hold_release_requirements": hold_release_requirements,
+        "override_status": _normalize_text(raw.get("override_status")).lower() or "no_override",
     }
 
 
@@ -2023,6 +2075,174 @@ def evaluate_self_change_stability_posture(
     }
 
 
+def evaluate_self_change_executive_checkpoint(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    stability_posture = evaluate_self_change_stability_posture(contract, recent_audit_entries=recent_audit_entries)
+    rollback_execution = evaluate_self_change_rollback_execution(contract)
+    monitored = evaluate_self_change_post_promotion_monitoring(contract)
+    normalized = stability_posture["normalized_contract"]
+
+    protected_zone_hit = bool(monitored.get("protected_zone_hit"))
+    risk_level = str(normalized.get("risk_level") or "medium_risk")
+    blast_radius_level = str(rollback_execution.get("blast_radius_level") or normalized.get("blast_radius_level") or "low")
+    rollback_required = bool(monitored.get("rollback_required"))
+    rollback_status = str(rollback_execution.get("rollback_status") or "rollback_pending").strip().lower()
+    stability_state = str(stability_posture.get("stability_state") or "stable")
+    freeze_required = bool(stability_posture.get("freeze_required"))
+    recovery_only_mode = bool(stability_posture.get("recovery_only_mode"))
+
+    manual_hold_status = str(normalized.get("manual_hold_status") or "no_hold")
+    manual_hold_scope = str(normalized.get("manual_hold_scope") or "project_scoped")
+    hold_reason = str(normalized.get("hold_reason") or "")
+    executive_approval_status = str(normalized.get("executive_approval_status") or "not_required")
+    requested_checkpoint_scope = str(normalized.get("checkpoint_scope") or "project_scoped")
+
+    checkpoint_reasons: list[str] = []
+    if protected_zone_hit and risk_level == "high_risk":
+        checkpoint_reasons.append("protected_core_high_risk_change")
+    if freeze_required or recovery_only_mode or stability_state in {"frozen", "recovery_only"}:
+        checkpoint_reasons.append("stability_posture_requires_executive_resumption")
+    if blast_radius_level == "high" and (rollback_required or rollback_status in {"rollback_blocked", "rollback_failed", "rollback_completed"}):
+        checkpoint_reasons.append("high_blast_radius_rollback")
+
+    checkpoint_required = bool(checkpoint_reasons)
+    executive_approval_required = checkpoint_required
+
+    checkpoint_scope = requested_checkpoint_scope
+    if protected_zone_hit:
+        checkpoint_scope = "protected_core_only"
+    elif blast_radius_level == "high" and (rollback_required or rollback_status in {"rollback_blocked", "rollback_failed", "rollback_completed"}):
+        checkpoint_scope = "rollback_scoped"
+    elif freeze_required or recovery_only_mode:
+        checkpoint_scope = "self_change_global"
+
+    hold_release_requirements: list[str] = []
+    if executive_approval_required or manual_hold_status in {"hold_release_pending", "hold_released"}:
+        hold_release_requirements.append("executive_approval_present")
+    if stability_state in {"unstable", "frozen", "recovery_only"} or freeze_required:
+        hold_release_requirements.append("stability_posture_acceptable")
+    if recovery_only_mode:
+        hold_release_requirements.append("recovery_conditions_satisfied")
+    if bool(normalized.get("cool_down_required")) or "cooldown_satisfied" in list(stability_posture.get("reentry_requirements") or []):
+        hold_release_requirements.append("cooldown_satisfied")
+    if protected_zone_hit:
+        hold_release_requirements.append("protected_zone_clearance")
+
+    checkpoint_status = "not_required"
+    if checkpoint_required and executive_approval_status == "approved":
+        checkpoint_status = "checkpoint_satisfied"
+    elif checkpoint_required:
+        checkpoint_status = "checkpoint_required"
+
+    manual_hold_active = manual_hold_status in {"hold_requested", "hold_active", "hold_release_pending"}
+    override_status = "no_override"
+    if checkpoint_required:
+        override_status = "checkpoint_enforced"
+
+    release_conditions_satisfied = True
+    if hold_release_requirements:
+        req_set = set(hold_release_requirements)
+        satisfied = set()
+        if executive_approval_status == "approved":
+            satisfied.add("executive_approval_present")
+        if stability_state in {"stable", "caution"} and not freeze_required:
+            satisfied.add("stability_posture_acceptable")
+        if not recovery_only_mode:
+            satisfied.add("recovery_conditions_satisfied")
+        if not bool(normalized.get("cool_down_required")):
+            satisfied.add("cooldown_satisfied")
+        if not protected_zone_hit or (
+            not bool(stability_posture.get("protected_zone_instability")) and stability_state in {"stable", "caution"}
+        ):
+            satisfied.add("protected_zone_clearance")
+        release_conditions_satisfied = req_set.issubset(satisfied)
+
+    if manual_hold_status == "hold_requested":
+        manual_hold_active = True
+        checkpoint_status = "blocked_by_hold"
+        override_status = "manual_hold_enforced"
+        status = "hold_requested"
+        reason = hold_reason or "Manual hold has been requested and blocks sensitive self-change advancement."
+    elif manual_hold_status == "hold_active":
+        manual_hold_active = True
+        checkpoint_status = "blocked_by_hold"
+        override_status = "manual_hold_enforced"
+        status = "hold_active"
+        reason = hold_reason or "Manual hold is active and blocks sensitive self-change advancement."
+    elif manual_hold_status == "hold_release_pending":
+        manual_hold_active = True
+        checkpoint_status = "blocked_by_hold"
+        override_status = "hold_release_pending"
+        status = "hold_release_pending"
+        reason = hold_reason or "Manual hold release is pending explicit release conditions."
+    elif manual_hold_status == "hold_released":
+        manual_hold_active = False
+        override_status = "hold_release_approved" if release_conditions_satisfied else "hold_release_blocked"
+        if release_conditions_satisfied:
+            status = "hold_released"
+            reason = "Manual hold has been released; control returns to the governed evaluation path."
+        else:
+            manual_hold_active = True
+            checkpoint_status = "blocked_by_hold"
+            status = "hold_release_pending"
+            reason = "Manual hold release conditions are not yet satisfied."
+    elif checkpoint_required and executive_approval_status == "approved":
+        status = "checkpoint_satisfied"
+        reason = "Executive checkpoint requirements have been satisfied."
+    elif checkpoint_required:
+        status = "checkpoint_required" if executive_approval_status != "rejected" else "checkpoint_blocked"
+        if executive_approval_status == "rejected":
+            override_status = "checkpoint_denied"
+            reason = "Executive checkpoint was denied."
+        else:
+            reason = "Executive checkpoint is required before sensitive self-change advancement can continue."
+    else:
+        status = "no_hold"
+        reason = "No executive checkpoint or manual hold is required."
+
+    checkpoint_reason = ", ".join(checkpoint_reasons)
+    governance_trace = {
+        **dict(stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+        "executive_checkpoint": {
+            "checkpoint_reasons": checkpoint_reasons,
+            "checkpoint_required": checkpoint_required,
+            "checkpoint_scope": checkpoint_scope,
+            "checkpoint_status": checkpoint_status,
+            "executive_approval_required": executive_approval_required,
+            "executive_approval_status": executive_approval_status,
+            "manual_hold_status": manual_hold_status,
+            "manual_hold_active": manual_hold_active,
+            "manual_hold_scope": manual_hold_scope,
+            "hold_reason": hold_reason,
+            "hold_release_requirements": hold_release_requirements,
+            "override_status": override_status,
+            "required_by_actor": str((normalized.get("authority_trace") or {}).get("actor") or "nexus"),
+            "release_conditions_satisfied": release_conditions_satisfied,
+        },
+    }
+
+    return {
+        "status": status,
+        "change_id": str(normalized.get("change_id") or ""),
+        "checkpoint_required": checkpoint_required,
+        "checkpoint_reason": checkpoint_reason,
+        "checkpoint_scope": checkpoint_scope,
+        "checkpoint_status": checkpoint_status,
+        "executive_approval_required": executive_approval_required,
+        "manual_hold_active": manual_hold_active,
+        "manual_hold_scope": manual_hold_scope,
+        "hold_reason": hold_reason,
+        "hold_release_requirements": hold_release_requirements,
+        "override_status": override_status,
+        "reason": reason,
+        "authority_trace": dict(stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
@@ -2055,6 +2275,7 @@ def build_self_change_audit_record(
     rollback_execution = evaluate_self_change_rollback_execution(source_contract)
     mutation_budget = evaluate_self_change_mutation_budget(source_contract, recent_audit_entries=recent_audit_entries)
     stability_posture = evaluate_self_change_stability_posture(source_contract, recent_audit_entries=recent_audit_entries)
+    executive_checkpoint = evaluate_self_change_executive_checkpoint(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
@@ -2147,12 +2368,22 @@ def build_self_change_audit_record(
         "escalation_required": bool(stability_posture.get("escalation_required")),
         "escalation_reason": str(stability_posture.get("escalation_reason") or ""),
         "reentry_requirements": list(stability_posture.get("reentry_requirements") or []),
+        "checkpoint_required": bool(executive_checkpoint.get("checkpoint_required")),
+        "checkpoint_reason": str(executive_checkpoint.get("checkpoint_reason") or ""),
+        "checkpoint_scope": str(executive_checkpoint.get("checkpoint_scope") or "project_scoped"),
+        "checkpoint_status": str(executive_checkpoint.get("checkpoint_status") or "not_required"),
+        "executive_approval_required": bool(executive_checkpoint.get("executive_approval_required")),
+        "manual_hold_active": bool(executive_checkpoint.get("manual_hold_active")),
+        "manual_hold_scope": str(executive_checkpoint.get("manual_hold_scope") or "project_scoped"),
+        "hold_reason": str(executive_checkpoint.get("hold_reason") or ""),
+        "hold_release_requirements": list(executive_checkpoint.get("hold_release_requirements") or []),
+        "override_status": str(executive_checkpoint.get("override_status") or "no_override"),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "authority_trace": dict(executive_checkpoint.get("authority_trace") or stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
         "governance_trace": {
-            **dict(stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+            **dict(executive_checkpoint.get("governance_trace") or stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
             **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
         },
         "contract_status": str(monitored.get("contract_status") or ""),
@@ -2467,6 +2698,38 @@ def evaluate_self_change_stability_posture_safe(
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "stability_posture_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_executive_checkpoint_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_executive_checkpoint(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        return {
+            "status": "checkpoint_blocked",
+            "change_id": str(normalized.get("change_id") or ""),
+            "checkpoint_required": True,
+            "checkpoint_reason": f"Executive checkpoint evaluation failed: {e}",
+            "checkpoint_scope": "self_change_global",
+            "checkpoint_status": "checkpoint_blocked",
+            "executive_approval_required": True,
+            "manual_hold_active": True,
+            "manual_hold_scope": "self_change_global",
+            "hold_reason": f"Executive checkpoint evaluation failed: {e}",
+            "hold_release_requirements": ["executive_approval_present", "stability_posture_acceptable"],
+            "override_status": "checkpoint_error_fallback",
+            "reason": f"Executive checkpoint evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "executive_checkpoint_error": str(e),
             },
             "normalized_contract": normalized,
         }
