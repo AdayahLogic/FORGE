@@ -3,7 +3,12 @@ import nextTypeScript from "eslint-config-next/typescript";
 
 const config = [
   {
-    ignores: [".forge-console-build/**", "node_modules/**"],
+    ignores: [
+      ".forge-console-build/**",
+      ".forge-console-build-dev/**",
+      ".next/**",
+      "node_modules/**",
+    ],
   },
   ...nextCoreWebVitals,
   ...nextTypeScript,
