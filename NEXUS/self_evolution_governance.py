@@ -9,6 +9,7 @@ contract-only and does not execute modifications.
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
@@ -110,6 +111,14 @@ VALID_ROLLBACK_SCOPES = {
 }
 VALID_BLAST_RADIUS_LEVELS = {"low", "medium", "high"}
 DEFAULT_ROLLBACK_SEQUENCE = ["validate", "approve", "execute", "verify"]
+VALID_MUTATION_CONTROL_STATUSES = {
+    "budget_available",
+    "budget_exhausted",
+    "mutation_rate_too_high",
+    "cool_down_required",
+    "protected_zone_throttled",
+    "change_attempt_blocked",
+}
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
     "nexus_orchestration_core": ("nexus/main.py", "nexus/router.py", "nexus/agent_router.py"),
     "governance_layer": ("nexus/governance_layer.py",),
@@ -382,6 +391,88 @@ def _normalize_follow_up_validation_required(value: Any, *, blast_radius_level: 
     return bool(value)
 
 
+def _parse_datetime(value: Any) -> datetime | None:
+    text = _normalize_text(value)
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        parsed = datetime.fromisoformat(text)
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def _iso_utc(value: datetime) -> str:
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def _resolve_budget_window(value: Any) -> dict[str, str]:
+    now = datetime.now(timezone.utc)
+    if isinstance(value, dict):
+        start = _parse_datetime(value.get("window_start"))
+        end = _parse_datetime(value.get("window_end"))
+        current_window_id = _normalize_text(value.get("current_window_id"))
+        if start and end and end >= start:
+            return {
+                "current_window_id": current_window_id or start.strftime("window-%Y%m%d"),
+                "window_start": _iso_utc(start),
+                "window_end": _iso_utc(end),
+            }
+    anchor = now
+    start = anchor.replace(hour=0, minute=0, second=0, microsecond=0)
+    end = start + timedelta(days=1)
+    return {
+        "current_window_id": start.strftime("window-%Y%m%d"),
+        "window_start": _iso_utc(start),
+        "window_end": _iso_utc(end),
+    }
+
+
+def _derive_budget_window(raw: dict[str, Any]) -> dict[str, str]:
+    explicit = _resolve_budget_window(raw.get("budgeting_window"))
+    if explicit:
+        return explicit
+    return _resolve_budget_window(None)
+
+
+def _budget_limit_for_change(*, risk_level: str, protected_zone_hit: bool) -> int:
+    base = {"low_risk": 5, "medium_risk": 3, "high_risk": 2}.get(risk_level, 3)
+    if protected_zone_hit:
+        return min(base, 1 if risk_level == "high_risk" else 2)
+    return base
+
+
+def _failure_limit_for_change(*, risk_level: str, protected_zone_hit: bool) -> int:
+    if protected_zone_hit or risk_level == "high_risk":
+        return 1
+    return 2 if risk_level == "medium_risk" else 3
+
+
+def _rollback_limit_for_change(*, risk_level: str, protected_zone_hit: bool) -> int:
+    if protected_zone_hit:
+        return 1
+    return 1 if risk_level in {"medium_risk", "high_risk"} else 2
+
+
+def _protected_zone_attempt_limit(*, risk_level: str) -> int:
+    return 1 if risk_level == "high_risk" else 2
+
+
+def _entry_within_budget_window(entry: dict[str, Any], budgeting_window: dict[str, str]) -> bool:
+    recorded_at = _parse_datetime(entry.get("recorded_at"))
+    if recorded_at is None:
+        recorded_at = _parse_datetime((entry.get("governance_trace") or {}).get("recorded_at"))
+    start = _parse_datetime(budgeting_window.get("window_start"))
+    end = _parse_datetime(budgeting_window.get("window_end"))
+    if recorded_at is None or start is None or end is None:
+        return False
+    return start <= recorded_at < end
+
+
 def _contains_any(text: str, hints: tuple[str, ...] | list[str]) -> bool:
     lowered = _normalize_path(text)
     return any(hint in lowered for hint in hints)
@@ -549,6 +640,11 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
     if rollback_status not in VALID_ROLLBACK_EXECUTION_STATUSES:
         rollback_status = "rollback_pending"
     rollback_sequence = _normalize_rollback_sequence(raw.get("rollback_sequence"))
+    budgeting_window = _derive_budget_window(raw)
+    mutation_rate_status = _normalize_text(raw.get("mutation_rate_status")).lower() or "within_budget"
+    control_outcome = _normalize_text(raw.get("control_outcome")).lower() or "budget_available"
+    if control_outcome not in VALID_MUTATION_CONTROL_STATUSES:
+        control_outcome = "budget_available"
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -625,6 +721,17 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
             approval_required=rollback_approval_required,
         ),
         "rollback_validation_status": _normalize_text(raw.get("rollback_validation_status")).lower() or "pending",
+        "budgeting_window": budgeting_window,
+        "attempted_changes_in_window": max(0, int(raw.get("attempted_changes_in_window") or 0)),
+        "successful_changes_in_window": max(0, int(raw.get("successful_changes_in_window") or 0)),
+        "failed_changes_in_window": max(0, int(raw.get("failed_changes_in_window") or 0)),
+        "rollbacks_in_window": max(0, int(raw.get("rollbacks_in_window") or 0)),
+        "protected_zone_changes_in_window": max(0, int(raw.get("protected_zone_changes_in_window") or 0)),
+        "mutation_rate_status": mutation_rate_status,
+        "budget_remaining": int(raw.get("budget_remaining") or 0),
+        "cool_down_required": bool(raw.get("cool_down_required")),
+        "control_outcome": control_outcome,
+        "budget_reason": _normalize_text(raw.get("budget_reason")),
     }
 
 
@@ -1513,9 +1620,130 @@ def evaluate_self_change_rollback_execution(contract: dict[str, Any] | None) -> 
     }
 
 
+def evaluate_self_change_mutation_budget(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    governed = evaluate_self_change_governance(contract)
+    normalized = governed["normalized_contract"]
+    budgeting_window = dict(normalized.get("budgeting_window") or _derive_budget_window(normalized))
+    risk_level = str(normalized.get("risk_level") or "medium_risk")
+    protected_zone_hit = bool(normalized.get("protected_zones"))
+    entries = [dict(entry) for entry in (recent_audit_entries or []) if isinstance(entry, dict)]
+    window_entries = [entry for entry in entries if _entry_within_budget_window(entry, budgeting_window)]
+
+    attempted_changes_in_window = len(window_entries) + 1
+    successful_changes_in_window = sum(1 for entry in window_entries if bool(entry.get("success")))
+    failed_changes_in_window = sum(
+        1
+        for entry in window_entries
+        if str(entry.get("outcome_status") or "").strip().lower() in {"failed", "reverted", "blocked", "error"}
+    )
+    rollbacks_in_window = sum(
+        1
+        for entry in window_entries
+        if bool(entry.get("rollback_required"))
+        or str(entry.get("rollback_status") or "").strip().lower() in {"rollback_completed", "rollback_failed"}
+        or str(entry.get("rollback_trigger_outcome") or "").strip().lower() in {"rollback_recommended", "rollback_required"}
+    )
+    protected_zone_changes_in_window = sum(1 for entry in window_entries if bool(entry.get("protected_zone_hit")))
+    if protected_zone_hit:
+        protected_zone_changes_in_window += 1
+
+    budget_limit = _budget_limit_for_change(risk_level=risk_level, protected_zone_hit=protected_zone_hit)
+    failure_limit = _failure_limit_for_change(risk_level=risk_level, protected_zone_hit=protected_zone_hit)
+    rollback_limit = _rollback_limit_for_change(risk_level=risk_level, protected_zone_hit=protected_zone_hit)
+    protected_limit = _protected_zone_attempt_limit(risk_level=risk_level)
+    observed_failures = failed_changes_in_window + (
+        1 if str(normalized.get("application_state") or "").lower() == "failed" else 0
+    )
+    observed_rollbacks = rollbacks_in_window + (
+        1 if str(normalized.get("rollback_status") or "").lower() in {"rollback_completed", "rollback_failed"} else 0
+    )
+
+    status = "budget_available"
+    mutation_rate_status = "within_budget"
+    cool_down_required = False
+    reason = "Self-change mutation budget is available for the current window."
+
+    if protected_zone_hit and protected_zone_changes_in_window > protected_limit:
+        status = "protected_zone_throttled"
+        mutation_rate_status = "protected_zone_pressure"
+        cool_down_required = True
+        reason = "Protected-core mutation frequency exceeded the governed window limit."
+    elif observed_failures >= failure_limit or observed_rollbacks >= rollback_limit:
+        status = "cool_down_required"
+        mutation_rate_status = "cool_down"
+        cool_down_required = True
+        reason = "Recent failures or rollbacks require a cool-down before more self-change attempts."
+    elif attempted_changes_in_window > budget_limit + 1:
+        status = "change_attempt_blocked"
+        mutation_rate_status = "blocked"
+        cool_down_required = True
+        reason = "Mutation pressure is too high for another self-change attempt in the current window."
+    elif attempted_changes_in_window > budget_limit:
+        status = "budget_exhausted"
+        mutation_rate_status = "budget_exhausted"
+        reason = "The self-change budget for the current window has been exhausted."
+    elif attempted_changes_in_window == budget_limit and (
+        protected_zone_hit or failed_changes_in_window > 0 or rollbacks_in_window > 0 or risk_level == "high_risk"
+    ):
+        status = "mutation_rate_too_high"
+        mutation_rate_status = "high"
+        cool_down_required = protected_zone_hit or risk_level == "high_risk"
+        reason = "Mutation pressure reached a governed high-water mark for this window."
+    elif attempted_changes_in_window >= max(1, budget_limit - 1):
+        mutation_rate_status = "elevated"
+        reason = "Self-change remains within budget but is approaching the governed mutation limit."
+
+    budget_remaining = max(0, budget_limit - attempted_changes_in_window)
+    control_outcome = status
+    governance_trace = {
+        **dict(governed.get("governance_trace") or {}),
+        "change_budgeting": {
+            "budgeting_window": budgeting_window,
+            "budget_limit": budget_limit,
+            "failure_limit": failure_limit,
+            "rollback_limit": rollback_limit,
+            "protected_zone_limit": protected_limit,
+            "attempted_changes_in_window": attempted_changes_in_window,
+            "successful_changes_in_window": successful_changes_in_window,
+            "failed_changes_in_window": failed_changes_in_window,
+            "rollbacks_in_window": rollbacks_in_window,
+            "protected_zone_changes_in_window": protected_zone_changes_in_window,
+            "mutation_rate_status": mutation_rate_status,
+            "budget_remaining": budget_remaining,
+            "cool_down_required": cool_down_required,
+            "control_outcome": control_outcome,
+        },
+    }
+
+    return {
+        "status": status,
+        "change_id": str(normalized.get("change_id") or ""),
+        "risk_level": risk_level,
+        "protected_zone_hit": protected_zone_hit,
+        "budgeting_window": budgeting_window,
+        "attempted_changes_in_window": attempted_changes_in_window,
+        "successful_changes_in_window": successful_changes_in_window,
+        "failed_changes_in_window": failed_changes_in_window,
+        "rollbacks_in_window": rollbacks_in_window,
+        "protected_zone_changes_in_window": protected_zone_changes_in_window,
+        "mutation_rate_status": mutation_rate_status,
+        "budget_remaining": budget_remaining,
+        "cool_down_required": cool_down_required,
+        "control_outcome": control_outcome,
+        "reason": reason,
+        "authority_trace": dict(governed.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def build_self_change_audit_record(
     *,
     contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
     outcome_status: Any = None,
     approved_by: Any = None,
     approval_status: Any = None,
@@ -1542,6 +1770,7 @@ def build_self_change_audit_record(
 
     monitored = evaluate_self_change_post_promotion_monitoring(source_contract)
     rollback_execution = evaluate_self_change_rollback_execution(source_contract)
+    mutation_budget = evaluate_self_change_mutation_budget(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
     return {
@@ -1614,11 +1843,25 @@ def build_self_change_audit_record(
         "rollback_validation_status": str(
             rollback_execution.get("rollback_validation_status") or normalized.get("rollback_validation_status") or "pending"
         ),
+        "budgeting_window": dict(mutation_budget.get("budgeting_window") or normalized.get("budgeting_window") or {}),
+        "attempted_changes_in_window": int(mutation_budget.get("attempted_changes_in_window") or 0),
+        "successful_changes_in_window": int(mutation_budget.get("successful_changes_in_window") or 0),
+        "failed_changes_in_window": int(mutation_budget.get("failed_changes_in_window") or 0),
+        "rollbacks_in_window": int(mutation_budget.get("rollbacks_in_window") or 0),
+        "protected_zone_changes_in_window": int(mutation_budget.get("protected_zone_changes_in_window") or 0),
+        "mutation_rate_status": str(mutation_budget.get("mutation_rate_status") or normalized.get("mutation_rate_status") or "within_budget"),
+        "budget_remaining": int(mutation_budget.get("budget_remaining") or 0),
+        "cool_down_required": bool(mutation_budget.get("cool_down_required")),
+        "control_outcome": str(mutation_budget.get("control_outcome") or normalized.get("control_outcome") or "budget_available"),
+        "budget_reason": str(mutation_budget.get("reason") or normalized.get("budget_reason") or ""),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
         "authority_trace": dict(rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
-        "governance_trace": dict(rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+        "governance_trace": {
+            **dict(rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+            **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
+        },
         "contract_status": str(monitored.get("contract_status") or ""),
     }
 
@@ -1860,6 +2103,41 @@ def evaluate_self_change_rollback_execution_safe(contract: dict[str, Any] | None
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "rollback_execution_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_mutation_budget_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_mutation_budget(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        budgeting_window = dict(normalized.get("budgeting_window") or _derive_budget_window(normalized))
+        return {
+            "status": "change_attempt_blocked",
+            "change_id": str(normalized.get("change_id") or ""),
+            "risk_level": str(normalized.get("risk_level") or "high_risk"),
+            "protected_zone_hit": bool(normalized.get("protected_zones")),
+            "budgeting_window": budgeting_window,
+            "attempted_changes_in_window": 0,
+            "successful_changes_in_window": 0,
+            "failed_changes_in_window": 0,
+            "rollbacks_in_window": 0,
+            "protected_zone_changes_in_window": 0,
+            "mutation_rate_status": "blocked",
+            "budget_remaining": 0,
+            "cool_down_required": True,
+            "control_outcome": "change_attempt_blocked",
+            "reason": f"Self-change mutation budgeting failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "change_budgeting_error": str(e),
             },
             "normalized_contract": normalized,
         }

@@ -13,6 +13,7 @@ from typing import Any
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
 from NEXUS.self_evolution_governance import (
+    evaluate_self_change_mutation_budget_safe,
     evaluate_self_change_comparative_scoring_safe,
     evaluate_self_change_governance_safe,
     evaluate_self_change_post_promotion_monitoring_safe,
@@ -784,4 +785,48 @@ def evaluate_self_change_rollback_execution_outcome_safe(**kwargs: Any) -> dict[
             "rollback_validation_status": "pending",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "execute_self_change_rollback"},
             "governance_trace": {"evaluation_scope": "self_evolution_rollback_execution", "error": str(e)},
+        }
+
+
+def evaluate_self_change_mutation_budget_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_mutation_budget_safe(self_change_contract, recent_audit_entries=recent_audit_entries)
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "budget_self_change_attempt")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_change_budgeting")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_mutation_budget_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_mutation_budget_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "change_attempt_blocked",
+            "change_id": "",
+            "risk_level": "high_risk",
+            "protected_zone_hit": False,
+            "budgeting_window": {"current_window_id": "", "window_start": "", "window_end": ""},
+            "attempted_changes_in_window": 0,
+            "successful_changes_in_window": 0,
+            "failed_changes_in_window": 0,
+            "rollbacks_in_window": 0,
+            "mutation_rate_status": "blocked",
+            "budget_remaining": 0,
+            "cool_down_required": True,
+            "control_outcome": "change_attempt_blocked",
+            "reason": f"Self-change mutation budgeting failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "budget_self_change_attempt"},
+            "governance_trace": {"evaluation_scope": "self_evolution_change_budgeting", "error": str(e)},
         }

@@ -777,6 +777,9 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
     rollback_sequence = r.get("rollback_sequence")
     if not isinstance(rollback_sequence, list):
         rollback_sequence = []
+    budgeting_window = r.get("budgeting_window")
+    if not isinstance(budgeting_window, dict):
+        budgeting_window = {}
     return {
         "change_id": str(r.get("change_id") or ""),
         "recorded_at": str(r.get("recorded_at") or ""),
@@ -842,6 +845,33 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
         "rollback_sequence": [str(item).strip().lower() for item in rollback_sequence if str(item).strip()][:10],
         "rollback_follow_up_validation_required": bool(r.get("rollback_follow_up_validation_required")),
         "rollback_validation_status": str(r.get("rollback_validation_status") or "pending").strip().lower(),
+        "budgeting_window": {
+            "current_window_id": str(budgeting_window.get("current_window_id") or ""),
+            "window_start": str(budgeting_window.get("window_start") or ""),
+            "window_end": str(budgeting_window.get("window_end") or ""),
+        },
+        "attempted_changes_in_window": int(r.get("attempted_changes_in_window") or 0)
+        if str(r.get("attempted_changes_in_window") or "").strip() not in ("", "None")
+        else 0,
+        "successful_changes_in_window": int(r.get("successful_changes_in_window") or 0)
+        if str(r.get("successful_changes_in_window") or "").strip() not in ("", "None")
+        else 0,
+        "failed_changes_in_window": int(r.get("failed_changes_in_window") or 0)
+        if str(r.get("failed_changes_in_window") or "").strip() not in ("", "None")
+        else 0,
+        "rollbacks_in_window": int(r.get("rollbacks_in_window") or 0)
+        if str(r.get("rollbacks_in_window") or "").strip() not in ("", "None")
+        else 0,
+        "protected_zone_changes_in_window": int(r.get("protected_zone_changes_in_window") or 0)
+        if str(r.get("protected_zone_changes_in_window") or "").strip() not in ("", "None")
+        else 0,
+        "mutation_rate_status": str(r.get("mutation_rate_status") or "within_budget").strip().lower(),
+        "budget_remaining": int(r.get("budget_remaining") or 0)
+        if str(r.get("budget_remaining") or "").strip() not in ("", "None")
+        else 0,
+        "cool_down_required": bool(r.get("cool_down_required")),
+        "control_outcome": str(r.get("control_outcome") or "budget_available").strip().lower(),
+        "budget_reason": str(r.get("budget_reason") or ""),
         "validation_reasons": [str(item) for item in (r.get("validation_reasons") or []) if str(item).strip()][:20],
         "stable_state_ref": str(r.get("stable_state_ref") or ""),
         "success": bool(r.get("success")),
@@ -868,8 +898,10 @@ def append_self_change_audit_record(
     audit_path = get_self_change_audit_path(project_path)
     if not audit_path:
         return {"status": "error", "reason": "Self-change audit storage unavailable.", "record": None}
+    recent_audit_entries = list_self_change_audit_entries(project_path, n=200)
     record = build_self_change_audit_record(
         contract=contract,
+        recent_audit_entries=recent_audit_entries,
         outcome_status=outcome_status,
         approved_by=approved_by,
         approval_status=approval_status,

@@ -808,6 +808,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_blast_radius_count_total: dict[str, int] = {"low": 0, "medium": 0, "high": 0}
     self_change_rollback_status_count_total: dict[str, int] = {}
     self_change_rollback_follow_up_validation_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_mutation_rate_status_count_total: dict[str, int] = {}
+    self_change_control_outcome_count_total: dict[str, int] = {}
+    self_change_cool_down_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -883,6 +886,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         rollback_follow_up_key = "required" if bool(entry.get("rollback_follow_up_validation_required")) else "not_required"
         self_change_rollback_follow_up_validation_required_count_total[rollback_follow_up_key] = (
             self_change_rollback_follow_up_validation_required_count_total.get(rollback_follow_up_key, 0) + 1
+        )
+        mutation_rate_status = str(entry.get("mutation_rate_status") or "within_budget")
+        self_change_mutation_rate_status_count_total[mutation_rate_status] = (
+            self_change_mutation_rate_status_count_total.get(mutation_rate_status, 0) + 1
+        )
+        control_outcome = str(entry.get("control_outcome") or "budget_available")
+        self_change_control_outcome_count_total[control_outcome] = (
+            self_change_control_outcome_count_total.get(control_outcome, 0) + 1
+        )
+        cool_down_key = "required" if bool(entry.get("cool_down_required")) else "not_required"
+        self_change_cool_down_required_count_total[cool_down_key] = (
+            self_change_cool_down_required_count_total.get(cool_down_key, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1771,6 +1786,9 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "blast_radius_count_total": self_change_blast_radius_count_total,
             "rollback_status_count_total": self_change_rollback_status_count_total,
             "rollback_follow_up_validation_required_count_total": self_change_rollback_follow_up_validation_required_count_total,
+            "mutation_rate_status_count_total": self_change_mutation_rate_status_count_total,
+            "control_outcome_count_total": self_change_control_outcome_count_total,
+            "cool_down_required_count_total": self_change_cool_down_required_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,
