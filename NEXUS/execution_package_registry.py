@@ -780,6 +780,9 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
     budgeting_window = r.get("budgeting_window")
     if not isinstance(budgeting_window, dict):
         budgeting_window = {}
+    trust_window = r.get("trust_window")
+    if not isinstance(trust_window, dict):
+        trust_window = {}
     return {
         "change_id": str(r.get("change_id") or ""),
         "recorded_at": str(r.get("recorded_at") or ""),
@@ -900,6 +903,20 @@ def normalize_self_change_audit_record(record: dict[str, Any] | None) -> dict[st
         "stage_promotion_required": bool(r.get("stage_promotion_required")),
         "broader_rollout_blocked": bool(r.get("broader_rollout_blocked")),
         "rollout_reason": str(r.get("rollout_reason") or ""),
+        "trust_status": str(r.get("trust_status") or "trusted_current").strip().lower(),
+        "confidence_age": str(r.get("confidence_age") or ""),
+        "decay_state": str(r.get("decay_state") or "fresh").strip().lower(),
+        "revalidation_required": bool(r.get("revalidation_required")),
+        "revalidation_reason": str(r.get("revalidation_reason") or ""),
+        "trust_window": {
+            "window_start": str(trust_window.get("window_start") or ""),
+            "window_end": str(trust_window.get("window_end") or ""),
+            "policy": str(trust_window.get("policy") or ""),
+        },
+        "last_validated_at": str(r.get("last_validated_at") or ""),
+        "last_revalidated_at": str(r.get("last_revalidated_at") or ""),
+        "drift_detected": bool(r.get("drift_detected")),
+        "trust_outcome": str(r.get("trust_outcome") or "trust_retained").strip().lower(),
         "validation_reasons": [str(item) for item in (r.get("validation_reasons") or []) if str(item).strip()][:20],
         "stable_state_ref": str(r.get("stable_state_ref") or ""),
         "success": bool(r.get("success")),

@@ -13,7 +13,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 
-SELF_EVOLUTION_GOVERNANCE_VERSION = "1.5"
+SELF_EVOLUTION_GOVERNANCE_VERSION = "1.6"
 SELF_CHANGE_REQUIRED_FIELDS = (
     "change_id",
     "target_files",
@@ -144,6 +144,28 @@ VALID_COHORT_TYPES = {
     "low_risk_subset",
     "project_scoped_subset",
     "broader_general_subset",
+}
+VALID_TRUST_STATUSES = {
+    "trusted_current",
+    "trust_aging",
+    "revalidation_required",
+    "trust_degraded",
+    "trust_expired",
+}
+VALID_TRUST_DECAY_STATES = {
+    "fresh",
+    "aging",
+    "stale",
+    "degraded",
+    "expired",
+    "restored",
+}
+VALID_TRUST_OUTCOMES = {
+    "trust_retained",
+    "trust_degraded",
+    "revalidation_required",
+    "trust_expired",
+    "trust_restored",
 }
 ROLLOUT_STAGE_ORDER = ["experimental_only", "limited_cohort", "broader_cohort", "platform_wide"]
 PROTECTED_CORE_ZONES: dict[str, tuple[str, ...]] = {
@@ -343,6 +365,21 @@ def _normalize_rollout_status(value: Any, *, default: str) -> str:
 def _normalize_cohort_type(value: Any, *, default: str) -> str:
     cohort_type = _normalize_text(value).lower()
     return cohort_type if cohort_type in VALID_COHORT_TYPES else default
+
+
+def _normalize_trust_status(value: Any, *, default: str) -> str:
+    status = _normalize_text(value).lower()
+    return status if status in VALID_TRUST_STATUSES else default
+
+
+def _normalize_decay_state(value: Any, *, default: str) -> str:
+    state = _normalize_text(value).lower()
+    return state if state in VALID_TRUST_DECAY_STATES else default
+
+
+def _normalize_trust_outcome(value: Any, *, default: str) -> str:
+    outcome = _normalize_text(value).lower()
+    return outcome if outcome in VALID_TRUST_OUTCOMES else default
 
 
 def _requires_staged_rollout(
@@ -603,6 +640,64 @@ def _derive_budget_window(raw: dict[str, Any]) -> dict[str, str]:
     return _resolve_budget_window(None)
 
 
+def _resolve_last_validation_timestamp(raw: dict[str, Any]) -> str:
+    for candidate in (
+        raw.get("last_validated_at"),
+        raw.get("last_revalidated_at"),
+        raw.get("promoted_at"),
+        (raw.get("governance_trace") or {}).get("recorded_at"),
+    ):
+        parsed = _parse_datetime(candidate)
+        if parsed is not None:
+            return _iso_utc(parsed)
+    return ""
+
+
+def _resolve_trust_window(raw: dict[str, Any], *, protected_zone_hit: bool) -> dict[str, str]:
+    supplied = raw.get("trust_window")
+    policy = "protected_core_revalidation" if protected_zone_hit else "standard_revalidation"
+    if isinstance(supplied, dict):
+        start = _parse_datetime(supplied.get("window_start"))
+        end = _parse_datetime(supplied.get("window_end"))
+        supplied_policy = _normalize_text(supplied.get("policy"))
+        if start is not None and end is not None and end >= start:
+            return {
+                "window_start": _iso_utc(start),
+                "window_end": _iso_utc(end),
+                "policy": supplied_policy or policy,
+            }
+
+    start = _parse_datetime(
+        raw.get("last_revalidated_at")
+        or raw.get("last_validated_at")
+        or raw.get("promoted_at")
+        or (raw.get("governance_trace") or {}).get("recorded_at")
+    )
+    if start is None:
+        start = datetime.now(timezone.utc)
+    window_days = 7 if protected_zone_hit else 14
+    end = start + timedelta(days=window_days)
+    return {
+        "window_start": _iso_utc(start),
+        "window_end": _iso_utc(end),
+        "policy": policy,
+    }
+
+
+def _format_confidence_age(reference_time: datetime | None, *, now: datetime | None = None) -> str:
+    if reference_time is None:
+        return ""
+    current = now or datetime.now(timezone.utc)
+    elapsed = current - reference_time
+    if elapsed.total_seconds() <= 0:
+        return "0d"
+    days = int(elapsed.total_seconds() // 86400)
+    hours = int((elapsed.total_seconds() % 86400) // 3600)
+    if days > 0:
+        return f"{days}d"
+    return f"{hours}h"
+
+
 def _budget_limit_for_change(*, risk_level: str, protected_zone_hit: bool) -> int:
     base = {"low_risk": 5, "medium_risk": 3, "high_risk": 2}.get(risk_level, 3)
     if protected_zone_hit:
@@ -861,6 +956,29 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         project_roots=project_roots,
     )
     cohort_size = max(0, int(raw.get("cohort_size") or _default_cohort_size(rollout_stage=rollout_stage, cohort_type=cohort_type)))
+    trust_status = _normalize_trust_status(raw.get("trust_status"), default="trusted_current")
+    decay_state = _normalize_decay_state(raw.get("decay_state"), default="fresh")
+    trust_window = _resolve_trust_window(raw, protected_zone_hit=bool(protected_zones))
+    last_validated_at = _resolve_last_validation_timestamp(raw)
+    last_revalidated_at = _normalize_text(raw.get("last_revalidated_at"))
+    if _parse_datetime(last_revalidated_at) is not None:
+        last_revalidated_at = _iso_utc(_parse_datetime(last_revalidated_at))
+    else:
+        last_revalidated_at = ""
+    confidence_age = _normalize_text(raw.get("confidence_age"))
+    if not confidence_age:
+        reference_time = _parse_datetime(last_revalidated_at or last_validated_at)
+        confidence_age = _format_confidence_age(reference_time)
+    drift_detected = bool(
+        raw.get("drift_detected")
+        or ((raw.get("health_signals") or {}).get("drift_detected"))
+        or ((raw.get("health_signals") or {}).get("environment_drift"))
+        or ((raw.get("health_signals") or {}).get("dependency_drift"))
+        or ((raw.get("health_signals") or {}).get("config_drift"))
+    )
+    revalidation_required = bool(raw.get("revalidation_required"))
+    revalidation_reason = _normalize_text(raw.get("revalidation_reason"))
+    trust_outcome = _normalize_trust_outcome(raw.get("trust_outcome"), default="trust_retained")
 
     return {
         "governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
@@ -981,6 +1099,16 @@ def normalize_self_change_contract(contract: dict[str, Any] | None) -> dict[str,
         "stage_promotion_required": stage_promotion_required,
         "broader_rollout_blocked": broader_rollout_blocked,
         "rollout_reason": rollout_reason,
+        "trust_status": trust_status,
+        "confidence_age": confidence_age,
+        "decay_state": decay_state,
+        "revalidation_required": revalidation_required,
+        "revalidation_reason": revalidation_reason,
+        "trust_window": trust_window,
+        "last_validated_at": last_validated_at,
+        "last_revalidated_at": last_revalidated_at,
+        "drift_detected": drift_detected,
+        "trust_outcome": trust_outcome,
     }
 
 
@@ -2409,10 +2537,184 @@ def evaluate_self_change_executive_checkpoint(
     }
 
 
+def evaluate_self_change_trust_revalidation(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    monitored = evaluate_self_change_post_promotion_monitoring(contract)
+    normalized = monitored["normalized_contract"]
+    history = list(recent_audit_entries or [])
+    now = datetime.now(timezone.utc)
+    protected_zone_hit = bool(monitored.get("protected_zone_hit") or normalized.get("protected_zones"))
+    trust_window = _resolve_trust_window(normalized, protected_zone_hit=protected_zone_hit)
+    window_end = _parse_datetime(trust_window.get("window_end"))
+    last_validated_at = _resolve_last_validation_timestamp(normalized)
+    previous_validation_dt = _parse_datetime(last_validated_at)
+    last_revalidated_dt = _parse_datetime(normalized.get("last_revalidated_at"))
+    last_revalidated_at = _iso_utc(last_revalidated_dt) if last_revalidated_dt is not None else ""
+    evidence_reference = last_revalidated_dt or previous_validation_dt
+    confidence_age = _format_confidence_age(evidence_reference, now=now)
+    health_signals = dict(monitored.get("health_signals") or normalized.get("health_signals") or {})
+    promotion_confidence = str(monitored.get("promotion_confidence") or normalized.get("promotion_confidence") or "insufficient_evidence")
+    monitoring_status = str(monitored.get("monitoring_status") or normalized.get("monitoring_status") or "pending_monitoring")
+    stability_state = str(normalized.get("stability_state") or "stable")
+    rollout_stage = str(normalized.get("rollout_stage") or "limited_cohort")
+    promoted = bool(normalized.get("promoted_at")) or str(monitored.get("promotion_status") or normalized.get("promotion_status") or "") == "promoted_to_stable"
+    drift_detected = bool(
+        normalized.get("drift_detected")
+        or health_signals.get("drift_detected")
+        or health_signals.get("environment_drift")
+        or health_signals.get("dependency_drift")
+        or health_signals.get("config_drift")
+        or health_signals.get("protected_zone_degraded")
+    )
+    conflicting_evidence = bool(
+        health_signals.get("conflicting_evidence")
+        or health_signals.get("comparison_degraded")
+        or monitored.get("regression_detected")
+        or promotion_confidence in {"regression_detected", "confidence_too_weak"}
+        or bool(monitored.get("observed_regression"))
+    )
+    caution_events = 0
+    for entry in history:
+        entry_monitoring = str(entry.get("monitoring_status") or "").strip().lower()
+        entry_stability = str(entry.get("stability_state") or "").strip().lower()
+        entry_trust = str(entry.get("trust_status") or "").strip().lower()
+        if entry_monitoring in {"actively_monitored", "pending_monitoring"} or entry_stability in {"caution", "unstable"} or entry_trust in {"trust_aging", "revalidation_required", "trust_degraded"}:
+            caution_events += 1
+    if monitoring_status in {"actively_monitored", "pending_monitoring"} or stability_state in {"caution", "unstable"}:
+        caution_events += 1
+
+    trust_window_exceeded = bool(window_end is not None and now > window_end)
+    age_ratio = 0.0
+    if evidence_reference is not None and window_end is not None:
+        duration_seconds = max((window_end - evidence_reference).total_seconds(), 1.0)
+        age_ratio = max(0.0, (now - evidence_reference).total_seconds() / duration_seconds)
+
+    aging_threshold = 0.5 if protected_zone_hit else 0.7
+    expired_threshold = 1.5 if protected_zone_hit else 2.0
+    rollout_expansion_requires_fresh_trust = rollout_stage in {"broader_cohort", "platform_wide"} and age_ratio >= aging_threshold
+
+    revalidation_reasons: list[str] = []
+    if trust_window_exceeded:
+        revalidation_reasons.append("trust_window_exceeded")
+    if drift_detected:
+        revalidation_reasons.append("drift_detected")
+    if protected_zone_hit and age_ratio >= aging_threshold:
+        revalidation_reasons.append("protected_core_trust_aging")
+    if caution_events >= 2:
+        revalidation_reasons.append("repeated_caution_signals")
+    if rollout_expansion_requires_fresh_trust:
+        revalidation_reasons.append("rollout_expansion_requires_fresher_trust")
+
+    explicit_revalidation_success = bool(
+        normalized.get("revalidation_successful")
+        or (
+            last_revalidated_dt is not None
+            and previous_validation_dt is not None
+            and last_revalidated_dt >= previous_validation_dt
+            and not drift_detected
+            and not conflicting_evidence
+            and not trust_window_exceeded
+        )
+    )
+
+    decay_state = "fresh"
+    trust_status = "trusted_current"
+    trust_outcome = "trust_retained"
+    status = "trusted_current"
+    reason = "Trust remains current within the governed validation window."
+    revalidation_required = False
+
+    if not promoted:
+        reason = "Trust revalidation policy is idle until the self-change reaches a promoted state."
+    elif drift_detected or conflicting_evidence:
+        decay_state = "degraded"
+        trust_status = "trust_degraded"
+        trust_outcome = "trust_degraded"
+        status = "trust_degraded"
+        revalidation_required = True
+        reason = "Trust degraded because environmental drift or stronger conflicting evidence weakened prior validation."
+        if trust_window_exceeded or age_ratio >= expired_threshold or (protected_zone_hit and caution_events >= 2 and drift_detected):
+            decay_state = "expired"
+            trust_status = "trust_expired"
+            trust_outcome = "trust_expired"
+            status = "trust_expired"
+            reason = "Trust expired because stale evidence and degraded signals no longer justify continued reliance."
+    elif explicit_revalidation_success and last_revalidated_dt is not None:
+        decay_state = "restored"
+        trust_status = "trusted_current"
+        trust_outcome = "trust_restored"
+        status = "trust_restored"
+        reason = "Trust was restored by successful governed revalidation."
+    elif revalidation_reasons:
+        revalidation_required = True
+        if trust_window_exceeded or age_ratio >= expired_threshold:
+            decay_state = "stale" if not protected_zone_hit else "expired"
+            trust_status = "revalidation_required" if decay_state == "stale" else "trust_expired"
+            trust_outcome = "revalidation_required" if decay_state == "stale" else "trust_expired"
+            status = trust_status
+            reason = "Trust window limits require explicit revalidation before this change can keep its current trust posture."
+        else:
+            decay_state = "aging"
+            trust_status = "revalidation_required" if protected_zone_hit or rollout_expansion_requires_fresh_trust or caution_events >= 2 else "trust_aging"
+            trust_outcome = "revalidation_required" if trust_status == "revalidation_required" else "trust_retained"
+            status = trust_status
+            revalidation_required = trust_status == "revalidation_required"
+            reason = "Trust evidence is aging and requires fresher validation before broader reliance continues." if revalidation_required else "Trust is aging but still within its governed window."
+    elif age_ratio >= aging_threshold:
+        decay_state = "aging"
+        trust_status = "trust_aging"
+        trust_outcome = "trust_retained"
+        status = "trust_aging"
+        reason = "Trust remains valid but its supporting evidence is aging."
+
+    revalidation_reason = ", ".join(revalidation_reasons)
+    governance_trace = {
+        **dict(monitored.get("governance_trace") or {}),
+        "trust_revalidation": {
+            "trust_status": trust_status,
+            "confidence_age": confidence_age,
+            "decay_state": decay_state,
+            "revalidation_required": revalidation_required,
+            "revalidation_reason": revalidation_reason,
+            "trust_window": trust_window,
+            "last_validated_at": last_validated_at,
+            "last_revalidated_at": last_revalidated_at,
+            "drift_detected": drift_detected,
+            "trust_outcome": trust_outcome,
+            "caution_events": caution_events,
+            "age_ratio": round(age_ratio, 4),
+            "protected_zone_sensitive_policy": protected_zone_hit,
+            "rollout_expansion_requires_fresh_trust": rollout_expansion_requires_fresh_trust,
+        },
+    }
+
+    return {
+        "status": status,
+        "change_id": str(monitored.get("change_id") or normalized.get("change_id") or ""),
+        "trust_status": trust_status,
+        "confidence_age": confidence_age,
+        "decay_state": decay_state,
+        "revalidation_required": revalidation_required,
+        "revalidation_reason": revalidation_reason,
+        "trust_window": trust_window,
+        "last_validated_at": last_validated_at,
+        "last_revalidated_at": last_revalidated_at,
+        "drift_detected": drift_detected,
+        "trust_outcome": trust_outcome,
+        "reason": reason,
+        "authority_trace": dict(monitored.get("authority_trace") or {}),
+        "governance_trace": governance_trace,
+        "normalized_contract": normalized,
+    }
+
+
 def evaluate_self_change_staged_rollout(
     contract: dict[str, Any] | None,
     recent_audit_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    trust_revalidation = evaluate_self_change_trust_revalidation(contract, recent_audit_entries=recent_audit_entries)
     executive_checkpoint = evaluate_self_change_executive_checkpoint(contract, recent_audit_entries=recent_audit_entries)
     stability_posture = evaluate_self_change_stability_posture(contract, recent_audit_entries=recent_audit_entries)
     monitored = evaluate_self_change_post_promotion_monitoring(contract)
@@ -2469,6 +2771,9 @@ def evaluate_self_change_staged_rollout(
     recovery_only_mode = bool(stability_posture.get("recovery_only_mode"))
     manual_hold_active = bool(executive_checkpoint.get("manual_hold_active"))
     checkpoint_status = str(executive_checkpoint.get("checkpoint_status") or "not_required")
+    trust_status = str(trust_revalidation.get("trust_status") or normalized.get("trust_status") or "trusted_current")
+    trust_outcome = str(trust_revalidation.get("trust_outcome") or normalized.get("trust_outcome") or "trust_retained")
+    revalidation_required = bool(trust_revalidation.get("revalidation_required"))
     monitoring_healthy = monitoring_status in {"actively_monitored", "monitoring_passed"} and not regression_detected
     no_rollback_conflict = (
         rollback_trigger_outcome not in {"rollback_recommended", "rollback_required"}
@@ -2501,6 +2806,10 @@ def evaluate_self_change_staged_rollout(
         status = "rollout_pending"
         broader_rollout_blocked = True
         rollout_reason = "Rollout remains pending until initial governed monitoring observations are available."
+    elif revalidation_required or trust_status in {"trust_degraded", "trust_expired"} or trust_outcome in {"revalidation_required", "trust_degraded", "trust_expired"}:
+        status = "rollout_blocked"
+        broader_rollout_blocked = True
+        rollout_reason = str(trust_revalidation.get("reason") or "Trust freshness requires revalidation before broader rollout can continue.")
     elif not executive_ok or not no_hold_freeze_conflict:
         status = "rollout_blocked"
         broader_rollout_blocked = True
@@ -2552,7 +2861,13 @@ def evaluate_self_change_staged_rollout(
         cohort_size = _default_cohort_size(rollout_stage=rollout_stage, cohort_type=cohort_type)
 
     governance_trace = {
-        **dict(executive_checkpoint.get("governance_trace") or stability_posture.get("governance_trace") or monitored.get("governance_trace") or {}),
+        **dict(
+            trust_revalidation.get("governance_trace")
+            or executive_checkpoint.get("governance_trace")
+            or stability_posture.get("governance_trace")
+            or monitored.get("governance_trace")
+            or {}
+        ),
         "staged_rollout": {
             "rollout_required": rollout_required,
             "rollout_stage": rollout_stage,
@@ -2569,6 +2884,9 @@ def evaluate_self_change_staged_rollout(
             "confidence_acceptable": confidence_acceptable,
             "executive_ok": executive_ok,
             "hold_freeze_clear": no_hold_freeze_conflict,
+            "trust_status": trust_status,
+            "trust_outcome": trust_outcome,
+            "revalidation_required": revalidation_required,
             "observation_count": observation_count,
             "next_stage": next_stage,
         },
@@ -2588,7 +2906,13 @@ def evaluate_self_change_staged_rollout(
         "rollout_reason": rollout_reason,
         "blast_radius_level": blast_radius_level,
         "reason": rollout_reason,
-        "authority_trace": dict(executive_checkpoint.get("authority_trace") or stability_posture.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "authority_trace": dict(
+            trust_revalidation.get("authority_trace")
+            or executive_checkpoint.get("authority_trace")
+            or stability_posture.get("authority_trace")
+            or monitored.get("authority_trace")
+            or {}
+        ),
         "governance_trace": governance_trace,
         "normalized_contract": normalized,
     }
@@ -2627,6 +2951,7 @@ def build_self_change_audit_record(
     mutation_budget = evaluate_self_change_mutation_budget(source_contract, recent_audit_entries=recent_audit_entries)
     stability_posture = evaluate_self_change_stability_posture(source_contract, recent_audit_entries=recent_audit_entries)
     executive_checkpoint = evaluate_self_change_executive_checkpoint(source_contract, recent_audit_entries=recent_audit_entries)
+    trust_revalidation = evaluate_self_change_trust_revalidation(source_contract, recent_audit_entries=recent_audit_entries)
     staged_rollout = evaluate_self_change_staged_rollout(source_contract, recent_audit_entries=recent_audit_entries)
     normalized = monitored["normalized_contract"]
     success = str(outcome_status or "").strip().lower() in ("succeeded", "success", "completed", "approved")
@@ -2747,12 +3072,38 @@ def build_self_change_audit_record(
             else normalized.get("broader_rollout_blocked")
         ),
         "rollout_reason": str(staged_rollout.get("rollout_reason") or normalized.get("rollout_reason") or ""),
+        "trust_status": str(trust_revalidation.get("trust_status") or normalized.get("trust_status") or "trusted_current"),
+        "confidence_age": str(trust_revalidation.get("confidence_age") or normalized.get("confidence_age") or ""),
+        "decay_state": str(trust_revalidation.get("decay_state") or normalized.get("decay_state") or "fresh"),
+        "revalidation_required": bool(trust_revalidation.get("revalidation_required") or normalized.get("revalidation_required")),
+        "revalidation_reason": str(trust_revalidation.get("revalidation_reason") or normalized.get("revalidation_reason") or ""),
+        "trust_window": dict(trust_revalidation.get("trust_window") or normalized.get("trust_window") or {}),
+        "last_validated_at": str(trust_revalidation.get("last_validated_at") or normalized.get("last_validated_at") or ""),
+        "last_revalidated_at": str(trust_revalidation.get("last_revalidated_at") or normalized.get("last_revalidated_at") or ""),
+        "drift_detected": bool(trust_revalidation.get("drift_detected") or normalized.get("drift_detected")),
+        "trust_outcome": str(trust_revalidation.get("trust_outcome") or normalized.get("trust_outcome") or "trust_retained"),
         "validation_reasons": [str(monitored.get("reason") or "")] if _normalize_text(monitored.get("reason")) else [],
         "stable_state_ref": _normalize_text(stable_state_ref),
         "success": bool(success),
-        "authority_trace": dict(staged_rollout.get("authority_trace") or executive_checkpoint.get("authority_trace") or stability_posture.get("authority_trace") or rollback_execution.get("authority_trace") or monitored.get("authority_trace") or {}),
+        "authority_trace": dict(
+            staged_rollout.get("authority_trace")
+            or trust_revalidation.get("authority_trace")
+            or executive_checkpoint.get("authority_trace")
+            or stability_posture.get("authority_trace")
+            or rollback_execution.get("authority_trace")
+            or monitored.get("authority_trace")
+            or {}
+        ),
         "governance_trace": {
-            **dict(staged_rollout.get("governance_trace") or executive_checkpoint.get("governance_trace") or stability_posture.get("governance_trace") or rollback_execution.get("governance_trace") or monitored.get("governance_trace") or {}),
+            **dict(
+                staged_rollout.get("governance_trace")
+                or trust_revalidation.get("governance_trace")
+                or executive_checkpoint.get("governance_trace")
+                or stability_posture.get("governance_trace")
+                or rollback_execution.get("governance_trace")
+                or monitored.get("governance_trace")
+                or {}
+            ),
             **({"change_budgeting": dict((mutation_budget.get("governance_trace") or {}).get("change_budgeting") or {})} if mutation_budget.get("governance_trace") else {}),
         },
         "contract_status": str(monitored.get("contract_status") or ""),
@@ -3099,6 +3450,38 @@ def evaluate_self_change_executive_checkpoint_safe(
                 **dict(normalized.get("governance_trace") or {}),
                 "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
                 "executive_checkpoint_error": str(e),
+            },
+            "normalized_contract": normalized,
+        }
+
+
+def evaluate_self_change_trust_revalidation_safe(
+    contract: dict[str, Any] | None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_trust_revalidation(contract, recent_audit_entries=recent_audit_entries)
+    except Exception as e:
+        normalized = normalize_self_change_contract(contract)
+        return {
+            "status": "revalidation_required",
+            "change_id": str(normalized.get("change_id") or ""),
+            "trust_status": "revalidation_required",
+            "confidence_age": str(normalized.get("confidence_age") or ""),
+            "decay_state": "stale",
+            "revalidation_required": True,
+            "revalidation_reason": f"Trust revalidation evaluation failed: {e}",
+            "trust_window": dict(normalized.get("trust_window") or _resolve_trust_window(normalized, protected_zone_hit=bool(normalized.get("protected_zones")))),
+            "last_validated_at": str(normalized.get("last_validated_at") or ""),
+            "last_revalidated_at": str(normalized.get("last_revalidated_at") or ""),
+            "drift_detected": bool(normalized.get("drift_detected")),
+            "trust_outcome": "revalidation_required",
+            "reason": f"Trust revalidation evaluation failed: {e}",
+            "authority_trace": dict(normalized.get("authority_trace") or {}),
+            "governance_trace": {
+                **dict(normalized.get("governance_trace") or {}),
+                "self_evolution_governance_version": SELF_EVOLUTION_GOVERNANCE_VERSION,
+                "trust_revalidation_error": str(e),
             },
             "normalized_contract": normalized,
         }

@@ -22,6 +22,7 @@ from NEXUS.self_evolution_governance import (
     evaluate_self_change_sandbox_promotion_safe,
     evaluate_self_change_staged_rollout_safe,
     evaluate_self_change_stability_posture_safe,
+    evaluate_self_change_trust_revalidation_safe,
     evaluate_self_change_executive_checkpoint_safe,
 )
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
@@ -928,6 +929,52 @@ def evaluate_self_change_executive_checkpoint_outcome_safe(**kwargs: Any) -> dic
             "reason": f"Self-change executive checkpoint failed: {e}",
             "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_checkpoint"},
             "governance_trace": {"evaluation_scope": "self_evolution_executive_checkpoint", "error": str(e)},
+        }
+
+
+def evaluate_self_change_trust_revalidation_outcome(
+    *,
+    self_change_contract: dict[str, Any] | None = None,
+    recent_audit_entries: list[dict[str, Any]] | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    result = evaluate_self_change_trust_revalidation_safe(
+        self_change_contract,
+        recent_audit_entries=recent_audit_entries,
+    )
+    authority_trace = dict(result.get("authority_trace") or {})
+    authority_trace.setdefault("actor", str(actor or authority_trace.get("actor") or "nexus"))
+    authority_trace.setdefault("requested_action", "govern_self_change_trust")
+    governance_trace = dict(result.get("governance_trace") or {})
+    governance_trace.setdefault("evaluation_scope", "self_evolution_trust_revalidation")
+    governance_trace.setdefault("actor", authority_trace.get("actor"))
+    return {
+        **result,
+        "authority_trace": authority_trace,
+        "governance_trace": governance_trace,
+    }
+
+
+def evaluate_self_change_trust_revalidation_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_self_change_trust_revalidation_outcome(**kwargs)
+    except Exception as e:
+        return {
+            "status": "revalidation_required",
+            "change_id": "",
+            "trust_status": "revalidation_required",
+            "confidence_age": "",
+            "decay_state": "stale",
+            "revalidation_required": True,
+            "revalidation_reason": f"Self-change trust revalidation failed: {e}",
+            "trust_window": {"window_start": "", "window_end": "", "policy": "error_fallback"},
+            "last_validated_at": "",
+            "last_revalidated_at": "",
+            "drift_detected": False,
+            "trust_outcome": "revalidation_required",
+            "reason": f"Self-change trust revalidation failed: {e}",
+            "authority_trace": {"actor": str(kwargs.get("actor") or "nexus"), "requested_action": "govern_self_change_trust"},
+            "governance_trace": {"evaluation_scope": "self_evolution_trust_revalidation", "error": str(e)},
         }
 
 

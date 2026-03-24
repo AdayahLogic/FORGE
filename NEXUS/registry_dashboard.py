@@ -829,6 +829,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     self_change_cohort_type_count_total: dict[str, int] = {}
     self_change_stage_promotion_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
     self_change_broader_rollout_blocked_count_total: dict[str, int] = {"blocked": 0, "not_blocked": 0}
+    self_change_trust_status_count_total: dict[str, int] = {}
+    self_change_decay_state_count_total: dict[str, int] = {}
+    self_change_revalidation_required_count_total: dict[str, int] = {"required": 0, "not_required": 0}
+    self_change_trust_outcome_count_total: dict[str, int] = {}
+    self_change_drift_detected_count_total: dict[str, int] = {"detected": 0, "not_detected": 0}
     self_change_protected_zone_hits: dict[str, int] = {}
     self_change_pending_approval_count_total = 0
     self_change_success_count_total = 0
@@ -989,6 +994,26 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         broader_rollout_key = "blocked" if bool(entry.get("broader_rollout_blocked")) else "not_blocked"
         self_change_broader_rollout_blocked_count_total[broader_rollout_key] = (
             self_change_broader_rollout_blocked_count_total.get(broader_rollout_key, 0) + 1
+        )
+        trust_status = str(entry.get("trust_status") or "trusted_current")
+        self_change_trust_status_count_total[trust_status] = (
+            self_change_trust_status_count_total.get(trust_status, 0) + 1
+        )
+        decay_state = str(entry.get("decay_state") or "fresh")
+        self_change_decay_state_count_total[decay_state] = (
+            self_change_decay_state_count_total.get(decay_state, 0) + 1
+        )
+        revalidation_key = "required" if bool(entry.get("revalidation_required")) else "not_required"
+        self_change_revalidation_required_count_total[revalidation_key] = (
+            self_change_revalidation_required_count_total.get(revalidation_key, 0) + 1
+        )
+        trust_outcome = str(entry.get("trust_outcome") or "trust_retained")
+        self_change_trust_outcome_count_total[trust_outcome] = (
+            self_change_trust_outcome_count_total.get(trust_outcome, 0) + 1
+        )
+        drift_key = "detected" if bool(entry.get("drift_detected")) else "not_detected"
+        self_change_drift_detected_count_total[drift_key] = (
+            self_change_drift_detected_count_total.get(drift_key, 0) + 1
         )
         if str(entry.get("approval_status") or "") in ("required", "pending", "awaiting_approval"):
             self_change_pending_approval_count_total += 1
@@ -1901,6 +1926,11 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "cohort_type_count_total": self_change_cohort_type_count_total,
             "stage_promotion_required_count_total": self_change_stage_promotion_required_count_total,
             "broader_rollout_blocked_count_total": self_change_broader_rollout_blocked_count_total,
+            "trust_status_count_total": self_change_trust_status_count_total,
+            "decay_state_count_total": self_change_decay_state_count_total,
+            "revalidation_required_count_total": self_change_revalidation_required_count_total,
+            "trust_outcome_count_total": self_change_trust_outcome_count_total,
+            "drift_detected_count_total": self_change_drift_detected_count_total,
             "protected_zone_hits": self_change_protected_zone_hits,
             "pending_approval_count_total": self_change_pending_approval_count_total,
             "success_count_total": self_change_success_count_total,
