@@ -76,6 +76,22 @@ export type ForgeLeadQualificationSummary = {
   qualification_reasoning_summary: string;
 };
 
+export type ForgeRevenueOfferStatus =
+  | "no_offer_yet"
+  | "offer_needs_more_info"
+  | "offer_ready"
+  | "high_touch_review_recommended";
+
+export type ForgeRevenueOfferSummary = {
+  offer_status: ForgeRevenueOfferStatus;
+  recommended_service_type: string;
+  recommended_package_tier: string;
+  estimated_complexity_band: string;
+  pricing_direction: string;
+  offer_reasoning_summary: string;
+  offer_constraints_or_notes: string[];
+};
+
 export type ForgeRequestedArtifactDetail = {
   artifact_id: string;
   label: string;
@@ -210,6 +226,7 @@ export type ForgeIntakePreview = {
   readiness: string;
   warnings: string[];
   qualification_summary: ForgeLeadQualificationSummary | null;
+  offer_summary: ForgeRevenueOfferSummary | null;
   package_preview: {
     creation_mode: string;
     package_creation_allowed: boolean;

@@ -93,6 +93,18 @@ DEFAULT_LEAD_QUALIFICATION = {
     "decision_readiness": "",
     "fit_notes": "",
 }
+HIGH_TOUCH_COMPLEXITY_TERMS = (
+    "multi-team",
+    "multi team",
+    "compliance",
+    "regulated",
+    "legacy",
+    "migration",
+    "critical",
+    "security",
+    "integration",
+    "enterprise",
+)
 
 
 def _now() -> str:
@@ -558,6 +570,157 @@ def _build_lead_qualification_summary(value: Any) -> dict[str, Any]:
     }
 
 
+def _contains_any_term(*, text: str, terms: tuple[str, ...]) -> bool:
+    haystack = str(text or "").strip().lower()
+    if not haystack:
+        return False
+    return any(term in haystack for term in terms)
+
+
+def _estimate_offer_complexity_band(
+    *,
+    lead_profile: dict[str, str],
+    qualification_signals: dict[str, str],
+) -> str:
+    budget = str(qualification_signals.get("budget_band") or "").strip().lower()
+    urgency = str(qualification_signals.get("urgency") or "").strip().lower()
+    clarity = str(qualification_signals.get("problem_clarity") or "").strip().lower()
+    decision = str(qualification_signals.get("decision_readiness") or "").strip().lower()
+    profile_text = " ".join(
+        [
+            str(lead_profile.get("problem_summary") or ""),
+            str(lead_profile.get("requested_outcome") or ""),
+            str(lead_profile.get("budget_context") or ""),
+            str(lead_profile.get("urgency_context") or ""),
+        ]
+    )
+    if budget == "enterprise" or urgency == "critical":
+        return "high"
+    if _contains_any_term(text=profile_text, terms=HIGH_TOUCH_COMPLEXITY_TERMS):
+        return "high"
+    if budget == "high" and urgency in {"high", "critical"}:
+        return "medium_high"
+    if clarity in {"clear", "very_clear"} and decision in {"ready", "committed"}:
+        return "medium"
+    return "low_to_medium"
+
+
+def _pricing_direction_from_budget(budget_band: str) -> str:
+    budget = str(budget_band or "").strip().lower()
+    mapping = {
+        "enterprise": "enterprise_retainer_direction",
+        "high": "premium_project_direction",
+        "medium": "standard_project_direction",
+        "low": "discovery_first_direction",
+        "very_low": "discovery_first_direction",
+        "none": "discovery_first_direction",
+        "unknown": "qualification_required",
+    }
+    return mapping.get(budget, "qualification_required")
+
+
+def _build_revenue_offer_summary(
+    *,
+    lead_profile: dict[str, str],
+    qualification: dict[str, str],
+    qualification_summary: dict[str, Any],
+) -> dict[str, Any]:
+    qualification_status = str(qualification_summary.get("qualification_status") or "").strip().lower()
+    qualification_signals = dict(qualification_summary.get("qualification_signals") or {})
+    missing_qualification_fields = [
+        str(item) for item in list(qualification_summary.get("missing_qualification_fields") or []) if str(item).strip()
+    ]
+    intake_missing = _lead_intake_missing_fields(lead_profile)
+    complexity_band = _estimate_offer_complexity_band(
+        lead_profile=lead_profile,
+        qualification_signals={
+            "budget_band": str(qualification_signals.get("budget_band") or ""),
+            "urgency": str(qualification_signals.get("urgency") or ""),
+            "problem_clarity": str(qualification_signals.get("problem_clarity") or ""),
+            "decision_readiness": str(qualification_signals.get("decision_readiness") or ""),
+        },
+    )
+    pricing_direction = _pricing_direction_from_budget(str(qualification_signals.get("budget_band") or ""))
+    notes: list[str] = [
+        "Preview-only revenue framing. This does not create packages, route work, or trigger execution.",
+    ]
+    if intake_missing:
+        notes.append("Lead profile still has required missing fields before a governed offer can be trusted.")
+    if missing_qualification_fields:
+        notes.append("Qualification inputs are incomplete; fill required qualification fields for stronger offer confidence.")
+
+    if missing_qualification_fields:
+        return {
+            "offer_status": "no_offer_yet",
+            "recommended_service_type": "intake_qualification",
+            "recommended_package_tier": "undetermined",
+            "estimated_complexity_band": "undetermined",
+            "pricing_direction": "qualification_required",
+            "offer_reasoning_summary": (
+                "Offer generation is deferred because qualification is not yet usable. "
+                "Complete required qualification fields first."
+            ),
+            "offer_constraints_or_notes": notes,
+        }
+
+    fit_notes = str(qualification.get("fit_notes") or "")
+    complexity_text = " ".join(
+        [
+            str(lead_profile.get("problem_summary") or ""),
+            str(lead_profile.get("requested_outcome") or ""),
+            fit_notes,
+        ]
+    )
+    high_touch = (
+        qualification_status == "high_priority"
+        and complexity_band in {"high", "medium_high"}
+    ) or _contains_any_term(text=complexity_text, terms=HIGH_TOUCH_COMPLEXITY_TERMS)
+    if high_touch:
+        notes.append("Recommend human-led scope review before pricing commitments due to complexity or risk.")
+        return {
+            "offer_status": "high_touch_review_recommended",
+            "recommended_service_type": "advisory_plus_delivery",
+            "recommended_package_tier": "enterprise",
+            "estimated_complexity_band": complexity_band,
+            "pricing_direction": pricing_direction,
+            "offer_reasoning_summary": (
+                "Signals suggest elevated complexity or risk. Route this lead through high-touch review to "
+                "shape final scope and pricing direction."
+            ),
+            "offer_constraints_or_notes": notes,
+        }
+
+    if qualification_status == "underqualified":
+        notes.append("Use a scoped discovery conversation before proposing a larger implementation package.")
+        return {
+            "offer_status": "offer_needs_more_info",
+            "recommended_service_type": "discovery_workshop",
+            "recommended_package_tier": "starter",
+            "estimated_complexity_band": complexity_band,
+            "pricing_direction": pricing_direction,
+            "offer_reasoning_summary": (
+                "Lead signals are present but underqualified for a confident implementation offer. "
+                "Recommend discovery-first framing and collect additional fit details."
+            ),
+            "offer_constraints_or_notes": notes,
+        }
+
+    tier = "growth" if complexity_band in {"low_to_medium", "medium"} else "scale"
+    service_type = "rapid_delivery_sprint" if qualification_status == "high_priority" else "governed_implementation"
+    return {
+        "offer_status": "offer_ready",
+        "recommended_service_type": service_type,
+        "recommended_package_tier": tier,
+        "estimated_complexity_band": complexity_band,
+        "pricing_direction": pricing_direction,
+        "offer_reasoning_summary": (
+            "Lead intake and qualification are sufficient for preview-safe offer framing. "
+            "Recommended service and tier reflect current readiness and complexity signals."
+        ),
+        "offer_constraints_or_notes": notes,
+    }
+
+
 def _resolve_default_request_kind(project_state: dict[str, Any]) -> str:
     intake_mode = str(project_state.get("intake_mode") or "").strip().lower()
     if intake_mode == "lead_intake":
@@ -781,6 +944,15 @@ def preview_intake_request(
     request_id = f"preview-{uuid.uuid4().hex[:8]}"
     normalized_request_kind = _normalize_request_kind(request_kind)
     qualification_summary = _build_lead_qualification_summary(qualification)
+    offer_summary = (
+        _build_revenue_offer_summary(
+            lead_profile=lead_profile,
+            qualification=_normalize_lead_qualification(qualification),
+            qualification_summary=qualification_summary,
+        )
+        if normalized_request_kind == "lead_intake"
+        else None
+    )
     return {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
@@ -806,6 +978,7 @@ def preview_intake_request(
             if normalized_request_kind == "lead_intake"
             else None
         ),
+        "offer_summary": offer_summary,
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
@@ -851,6 +1024,15 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
             "warnings": [f"Preview failed: {exc}"],
             "qualification_summary": (
                 _build_lead_qualification_summary(kwargs.get("qualification"))
+                if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                else None
+            ),
+            "offer_summary": (
+                _build_revenue_offer_summary(
+                    lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                    qualification=_normalize_lead_qualification(kwargs.get("qualification")),
+                    qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                )
                 if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
                 else None
             ),

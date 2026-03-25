@@ -108,11 +108,22 @@ function getChipClass(value: string) {
       "stale_preview",
       "underqualified",
       "needs_more_info",
+      "no_offer_yet",
+      "offer_needs_more_info",
+      "high_touch_review_recommended",
     ].includes(value)
   ) {
     return "chip warn";
   }
-  if (["classified", "ready_for_governed_request", "qualified", "high_priority"].includes(value)) {
+  if (
+    [
+      "classified",
+      "ready_for_governed_request",
+      "qualified",
+      "high_priority",
+      "offer_ready",
+    ].includes(value)
+  ) {
     return "chip success";
   }
   return "chip";
@@ -855,6 +866,52 @@ export function ProjectIntakeWorkspace({
                         ))
                       ) : (
                         <div className="audit-item muted">No required qualification fields are missing.</div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+                {effectivePreview.offer_summary ? (
+                  <div className="detail-card">
+                    <h4>Revenue Offer Framing (Preview Only)</h4>
+                    <div className="chip-row" style={{ marginBottom: 10 }}>
+                      <span className={getChipClass(effectivePreview.offer_summary.offer_status)}>
+                        {effectivePreview.offer_summary.offer_status}
+                      </span>
+                      <span className="chip">non-executing</span>
+                    </div>
+                    <div className="detail-list">
+                      <div className="detail-row">
+                        <span>Service Type</span>
+                        <strong>{effectivePreview.offer_summary.recommended_service_type || "undetermined"}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Package Tier</span>
+                        <strong>{effectivePreview.offer_summary.recommended_package_tier || "undetermined"}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Complexity Band</span>
+                        <strong>{effectivePreview.offer_summary.estimated_complexity_band || "undetermined"}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Pricing Direction</span>
+                        <strong>{effectivePreview.offer_summary.pricing_direction || "undetermined"}</strong>
+                      </div>
+                    </div>
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Reasoning</div>
+                      <div style={{ marginTop: 8 }}>
+                        {effectivePreview.offer_summary.offer_reasoning_summary || "Offer framing not available yet."}
+                      </div>
+                    </div>
+                    <div className="detail-list">
+                      {effectivePreview.offer_summary.offer_constraints_or_notes.length > 0 ? (
+                        effectivePreview.offer_summary.offer_constraints_or_notes.map((note) => (
+                          <div className="audit-item" key={note}>
+                            {note}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="audit-item muted">No additional offer constraints noted.</div>
                       )}
                     </div>
                   </div>
