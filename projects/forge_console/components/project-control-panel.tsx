@@ -163,6 +163,7 @@ export function ProjectControlPanel({
   const workflow = projectSnapshot?.workflow_activity;
   const operatorGuidance =
     projectSnapshot?.operator_guidance ?? intake?.operator_guidance;
+  const liveOperation = projectSnapshot?.live_operation_status;
   const systemStatus = projectSnapshot?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const operatorProjects = projects as ForgeProjectRow[];
@@ -419,6 +420,49 @@ export function ProjectControlPanel({
                 <div className="detail-row">
                   <span>Package Created</span>
                   <strong>{displayValue(workflow.package_created_at, "Not started")}</strong>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Live Operation Status</div>
+                  <div className="detail-list" style={{ marginTop: 8 }}>
+                    <div className="detail-row">
+                      <span>Status</span>
+                      <strong>{displayValue(liveOperation?.operation_status, "idle")}</strong>
+                    </div>
+                    <div className="detail-row">
+                      <span>Current Phase</span>
+                      <strong>{displayValue(liveOperation?.current_phase, "idle")}</strong>
+                    </div>
+                    <div className="detail-row">
+                      <span>Current Step</span>
+                      <strong>{displayValue(liveOperation?.current_step, "Waiting for input")}</strong>
+                    </div>
+                    <div className="detail-row">
+                      <span>Last Action</span>
+                      <strong>{displayValue(liveOperation?.last_action, "Waiting for input")}</strong>
+                    </div>
+                    <div className="detail-row">
+                      <span>Idle Reason</span>
+                      <strong>{displayValue(liveOperation?.idle_reason, "No idle reason while operation is active")}</strong>
+                    </div>
+                  </div>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Recent Activity</div>
+                  <div className="detail-list" style={{ marginTop: 8 }}>
+                    {(liveOperation?.recent_activity ?? []).length > 0 ? (
+                      (liveOperation?.recent_activity ?? []).map((event, index) => (
+                        <div className="audit-item" key={`${event.activity_type}-${event.timestamp}-${index}`}>
+                          <div className="chip-row" style={{ marginBottom: 8 }}>
+                            <span className="chip info">{event.activity_type}</span>
+                            <span className="chip mono">{event.timestamp}</span>
+                          </div>
+                          <div>{event.activity_summary}</div>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="audit-item muted">No recent governed activity.</div>
+                    )}
+                  </div>
                 </div>
               </div>
             )}

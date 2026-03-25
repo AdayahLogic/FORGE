@@ -40,6 +40,23 @@ export type ForgeOperatorGuidance = {
   delivery_context_note: string;
 };
 
+export type ForgeLiveOperationActivity = {
+  timestamp: string;
+  activity_type: string;
+  activity_summary: string;
+};
+
+export type ForgeLiveOperationStatus = {
+  operation_status: "idle" | "running" | "awaiting_review" | "blocked" | "completed";
+  current_phase: string;
+  current_step: string;
+  last_action: string;
+  idle_reason: string;
+  active_project: string;
+  active_package_id: string;
+  recent_activity: ForgeLiveOperationActivity[];
+};
+
 export type ForgeLifecycleTransition = {
   stage_id: string;
   stage_label: string;
@@ -336,6 +353,7 @@ export type ForgeReviewCenterSnapshot = {
   related_attachments: ForgeReviewAttachmentRecord[];
   delivery_summary?: ForgeDeliverySummary;
   client_safe_delivery_summary?: ForgeDeliverySummary;
+  live_operation_status?: ForgeLiveOperationStatus;
 };
 
 export type ForgeIntakePreview = {
@@ -565,6 +583,7 @@ export type ForgeOverviewSnapshot = {
       budget_note: string;
     };
     operator_guidance?: ForgeOperatorGuidance;
+    live_operation_status?: ForgeLiveOperationStatus;
   };
   projects: ForgeProjectRow[];
   approval_center: {
@@ -635,6 +654,7 @@ export type PackageDetailSnapshot = {
     kill_switch_active: boolean;
     budget_reason: string;
   };
+  live_operation_status?: ForgeLiveOperationStatus;
   review_center: ForgeReviewCenterSnapshot;
 };
 
@@ -658,6 +678,7 @@ export type ProjectSnapshot = {
   system_status: ForgeSystemStatus;
   workflow_activity: ForgeWorkflowActivity;
   operator_guidance?: ForgeOperatorGuidance;
+  live_operation_status?: ForgeLiveOperationStatus;
   approval_summary: Record<string, unknown>;
   delivery_summary?: ForgeDeliverySummary;
   intake_workspace: ForgeIntakeWorkspace | null;

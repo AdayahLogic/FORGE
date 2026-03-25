@@ -40,6 +40,10 @@ from NEXUS.execution_package_registry import (
     list_self_change_audit_entries,
     read_execution_package,
 )
+from NEXUS.live_operation_status import (
+    build_live_operation_status,
+    build_overview_live_operation_status,
+)
 from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
 from NEXUS.operator_guidance import (
     build_operator_guidance_safe,
@@ -928,6 +932,9 @@ def build_studio_snapshot() -> dict[str, Any]:
     system_operator_guidance = build_system_operator_guidance_safe(
         project_rows=project_rows,
         self_evolution_governance_summary=self_evolution_summary,
+    live_operation_status = build_overview_live_operation_status(
+        project_rows=project_rows,
+        dashboard=dashboard,
     )
     return {
         "generated_at": dashboard.get("summary_generated_at") or "",
@@ -988,6 +995,7 @@ def build_studio_snapshot() -> dict[str, Any]:
             },
             "model_routing_visibility": _build_model_routing_visibility(project_rows),
             "operator_guidance": system_operator_guidance,
+            "live_operation_status": live_operation_status,
         },
         "projects": project_rows,
         "approval_center": {
@@ -1051,6 +1059,13 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
         has_active_package=bool(current_package_id),
         package=current_package_data,
         latest_self_change_entry=latest_self_change_entry,
+    live_operation_status = build_live_operation_status(
+        project_key=key or "",
+        project_name=str(project.get("name") or key or ""),
+        project_state=project_state,
+        package=current_package_data,
+        cost_summary=cost_summary,
+        delivery_summary=delivery_summary,
     )
     current_package = None
     if current_package_id:
@@ -1086,6 +1101,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
                 package=current_package_data,
                 execution_feedback=execution_feedback,
             ),
+            "live_operation_status": live_operation_status,
             "approval_summary": approvals,
             "delivery_summary": delivery_summary,
             "operator_guidance": operator_guidance,
@@ -1283,6 +1299,13 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         has_active_package=True,
         package=package,
         latest_self_change_entry=latest_self_change_entry,
+    live_operation_status = build_live_operation_status(
+        project_key=key,
+        project_name=str((PROJECTS.get(key) or {}).get("name") or key),
+        project_state=project_state,
+        package=package,
+        cost_summary=cost_summary,
+        delivery_summary=delivery_summary,
     )
     return _result(
         "ok",
@@ -1299,6 +1322,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "timeline": timeline,
             "execution_feedback": execution_feedback,
             "cost_summary": cost_summary,
+            "live_operation_status": live_operation_status,
             "model_routing_policy": model_routing_policy,
             "operator_guidance": operator_guidance,
             "review_center": _build_review_center_snapshot(
@@ -1311,6 +1335,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 model_routing_policy=model_routing_policy,
                 delivery_summary=delivery_summary,
                 operator_guidance=operator_guidance,
+                live_operation_status=live_operation_status,
             ),
         },
         "",
@@ -1459,6 +1484,8 @@ def _build_review_center_snapshot(
     model_routing_policy: dict[str, Any],
     delivery_summary: dict[str, Any],
     operator_guidance: dict[str, Any],
+    operator_guidance: dict[str, Any],
+    live_operation_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
@@ -1486,6 +1513,7 @@ def _build_review_center_snapshot(
         "related_attachments": related_attachments,
         "delivery_summary": dict(delivery_summary or {}),
         "client_safe_delivery_summary": _client_ready_delivery_summary(delivery_summary),
+        "live_operation_status": dict(live_operation_status or {}),
     }
 
 
