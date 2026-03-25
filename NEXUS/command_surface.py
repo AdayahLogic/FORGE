@@ -287,6 +287,19 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "execution_priority": p.get("execution_priority"),
+        "execution_score": p.get("execution_score"),
+        "roi_estimate": p.get("roi_estimate"),
+        "execution_probability": p.get("execution_probability"),
+        "time_sensitivity": p.get("time_sensitivity"),
+        "dynamic_execution_priority": p.get("dynamic_execution_priority"),
+        "last_score_update_timestamp": p.get("last_score_update_timestamp"),
+        "priority_decay_factor": p.get("priority_decay_factor"),
+        "execution_result": p.get("execution_result"),
+        "conversion_result": p.get("conversion_result"),
+        "revenue_realized": p.get("revenue_realized"),
+        "expected_vs_actual_delta": p.get("expected_vs_actual_delta") or {},
+        "performance_accuracy_score": p.get("performance_accuracy_score"),
     }
 
 
@@ -424,6 +437,18 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "execution_priority": p.get("execution_priority"),
+        "execution_score": p.get("execution_score"),
+        "roi_estimate": p.get("roi_estimate"),
+        "execution_probability": p.get("execution_probability"),
+        "time_sensitivity": p.get("time_sensitivity"),
+        "dynamic_execution_priority": p.get("dynamic_execution_priority"),
+        "last_score_update_timestamp": p.get("last_score_update_timestamp"),
+        "priority_decay_factor": p.get("priority_decay_factor"),
+        "execution_result": p.get("execution_result"),
+        "conversion_result": p.get("conversion_result"),
+        "revenue_realized": p.get("revenue_realized"),
+        "performance_accuracy_score": p.get("performance_accuracy_score"),
     }
 
 
@@ -663,11 +688,12 @@ def run_command(
                 project_path=path,
             )
         try:
-            from NEXUS.execution_package_registry import list_execution_package_journal_entries
+            from NEXUS.execution_package_registry import build_execution_queue_intelligence_safe
 
             limit = max(1, min(int(n or 20), 50))
-            packages = list_execution_package_journal_entries(project_path=path, n=limit)
-            queue_rows = [_build_execution_package_queue_row(pkg) for pkg in packages]
+            intelligence = build_execution_queue_intelligence_safe(project_path=path, n=limit)
+            ranked_packages = list(intelligence.get("ranked_packages") or [])
+            queue_rows = [_build_execution_package_queue_row(pkg) for pkg in ranked_packages]
             pending_count = sum(
                 1
                 for pkg in queue_rows
@@ -698,13 +724,22 @@ def run_command(
                 command=cmd,
                 status="ok",
                 project_name=proj_name,
-                summary=f"packages={len(packages)}; pending={pending_count}",
+                summary=f"packages={len(queue_rows)}; pending={pending_count}",
                 payload={
                     "status": "ok",
                     "reason": "Execution package queue loaded.",
                     "project_path": path,
-                    "count": len(packages),
+                    "count": len(queue_rows),
                     "pending_count": pending_count,
+                    "queue_intelligence_status": intelligence.get("queue_intelligence_status") or "ok",
+                    "queue_sort_basis": [
+                        "dynamic_execution_priority",
+                        "execution_score",
+                        "roi_estimate",
+                        "time_sensitivity",
+                    ],
+                    "top_execution_candidates": intelligence.get("top_execution_candidates") or [],
+                    "adaptive_profile": intelligence.get("adaptive_profile") or {},
                     "packages": queue_rows,
                     "top_revenue_candidates": [
                         {
@@ -822,9 +857,9 @@ def run_command(
                 package_id=package_id,
             )
         try:
-            from NEXUS.execution_package_registry import record_execution_package_decision_safe
+            from NEXUS.execution_approval_actions import record_execution_decision_safe
 
-            result = record_execution_package_decision_safe(
+            result = record_execution_decision_safe(
                 project_path=path,
                 package_id=package_id,
                 decision_status=decision_status,
@@ -955,9 +990,9 @@ def run_command(
                 package_id=package_id,
             )
         try:
-            from NEXUS.execution_package_registry import record_execution_package_eligibility_safe
+            from NEXUS.execution_approval_actions import record_execution_eligibility_safe
 
-            result = record_execution_package_eligibility_safe(
+            result = record_execution_eligibility_safe(
                 project_path=path,
                 package_id=package_id,
                 eligibility_checked_by=eligibility_checked_by,
@@ -1087,9 +1122,9 @@ def run_command(
                 package_id=package_id,
             )
         try:
-            from NEXUS.execution_package_registry import record_execution_package_release_safe
+            from NEXUS.execution_approval_actions import record_execution_release_safe
 
-            result = record_execution_package_release_safe(
+            result = record_execution_release_safe(
                 project_path=path,
                 package_id=package_id,
                 release_actor=release_actor,
@@ -1233,9 +1268,9 @@ def run_command(
                 package_id=package_id,
             )
         try:
-            from NEXUS.execution_package_registry import record_execution_package_handoff_safe
+            from NEXUS.execution_approval_actions import record_execution_handoff_safe
 
-            result = record_execution_package_handoff_safe(
+            result = record_execution_handoff_safe(
                 project_path=path,
                 package_id=package_id,
                 handoff_actor=handoff_actor,
@@ -1376,9 +1411,9 @@ def run_command(
                 package_id=package_id,
             )
         try:
-            from NEXUS.execution_package_registry import record_execution_package_execution_safe
+            from NEXUS.execution_approval_actions import record_execution_request_safe
 
-            result = record_execution_package_execution_safe(
+            result = record_execution_request_safe(
                 project_path=path,
                 package_id=package_id,
                 execution_actor=execution_actor,

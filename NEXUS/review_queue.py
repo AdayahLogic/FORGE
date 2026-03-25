@@ -22,6 +22,7 @@ def build_review_queue_entry(
     workflow_route_reason: str | None = None,
     governance_status: str | None = None,
     project_lifecycle_status: str | None = None,
+    top_execution_candidates: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Build a normalized review queue entry from enforcement and routing state.
@@ -39,6 +40,7 @@ def build_review_queue_entry(
     e_status = (enforcement_status or "").strip().lower()
     route = (workflow_route_status or "").strip().lower()
     er = enforcement_result or {}
+    candidates = [dict(x) for x in list(top_execution_candidates or [])[:5] if isinstance(x, dict)]
 
     # manual_review_required / manual_review_hold
     if e_status == "manual_review_required" or route == "manual_review_hold":
@@ -51,6 +53,7 @@ def build_review_queue_entry(
             "active_project": active_project or "",
             "run_id": run_id or "",
             "requires_human_action": True,
+            "top_execution_candidates": candidates,
         }
 
     # approval_required / approval_hold
@@ -64,6 +67,7 @@ def build_review_queue_entry(
             "active_project": active_project or "",
             "run_id": run_id or "",
             "requires_human_action": True,
+            "top_execution_candidates": candidates,
         }
 
     # hold / hold_state
@@ -77,6 +81,7 @@ def build_review_queue_entry(
             "active_project": active_project or "",
             "run_id": run_id or "",
             "requires_human_action": False,
+            "top_execution_candidates": candidates,
         }
 
     # blocked / blocked_stop
@@ -90,6 +95,7 @@ def build_review_queue_entry(
             "active_project": active_project or "",
             "run_id": run_id or "",
             "requires_human_action": True,
+            "top_execution_candidates": candidates,
         }
 
     # Proceed path or unknown: not queued
@@ -102,6 +108,7 @@ def build_review_queue_entry(
         "active_project": active_project or "",
         "run_id": run_id or "",
         "requires_human_action": False,
+        "top_execution_candidates": candidates,
     }
 
 
@@ -119,4 +126,5 @@ def build_review_queue_entry_safe(**kwargs: Any) -> dict[str, Any]:
             "active_project": kwargs.get("active_project") or "",
             "run_id": kwargs.get("run_id") or "",
             "requires_human_action": True,
+            "top_execution_candidates": [dict(x) for x in list(kwargs.get("top_execution_candidates") or [])[:5] if isinstance(x, dict)],
         }

@@ -83,11 +83,210 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+ABACUS_ADAPTIVE_PROFILE_FILENAME = "abacus_adaptive_profile.json"
 
 
 def _utc_now_iso() -> str:
     return utc_now_iso()
 
+
+def _normalize_score_0_100(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = float(default)
+    return round(max(0.0, min(parsed, 100.0)), 4)
+
+
+def _normalize_unit_interval(value: Any, default: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = float(default)
+    return round(max(0.0, min(parsed, 1.0)), 4)
+
+
+def _parse_iso_timestamp(value: Any) -> datetime | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        if raw.endswith("Z"):
+            raw = raw[:-1] + "+00:00"
+        dt = datetime.fromisoformat(raw)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _priority_from_request_priority(value: Any) -> float:
+    key = str(value or "").strip().lower()
+    mapping = {
+        "low": 25.0,
+        "normal": 50.0,
+        "medium": 60.0,
+        "high": 75.0,
+        "urgent": 90.0,
+        "critical": 95.0,
+    }
+    return mapping.get(key, 50.0)
+
+
+def _normalize_conversion_result(value: Any) -> str:
+    result = str(value or "pending").strip().lower()
+    allowed = {
+        "pending",
+        "converted",
+        "not_converted",
+        "partial",
+        "blocked",
+        "unknown",
+    }
+    return result if result in allowed else "pending"
+
+
+def _normalize_execution_result(value: Any) -> str:
+    result = str(value or "pending").strip().lower()
+    allowed = {
+        "pending",
+        "succeeded",
+        "failed",
+        "blocked",
+        "rolled_back",
+        "unknown",
+    }
+    return result if result in allowed else "pending"
+
+
+def _execution_result_from_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in {"succeeded", "failed", "blocked", "rolled_back"}:
+        return status
+    if status in {"pending", "not_started", "queued", "ready"}:
+        return "pending"
+    return "unknown"
+
+
+def _abacus_adaptive_profile_path(project_path: str | None) -> Path | None:
+    state_dir = get_execution_package_state_dir(project_path)
+    if not state_dir:
+        return None
+    return state_dir / ABACUS_ADAPTIVE_PROFILE_FILENAME
+
+
+def _normalize_adaptive_profile(value: Any) -> dict[str, Any]:
+    profile = dict(value) if isinstance(value, dict) else {}
+    weights = dict(profile.get("weights") or {})
+    normalized_weights = {
+        "execution_score_weight": _normalize_unit_interval(weights.get("execution_score_weight"), 0.35),
+        "roi_weight": _normalize_unit_interval(weights.get("roi_weight"), 0.30),
+        "probability_weight": _normalize_unit_interval(weights.get("probability_weight"), 0.20),
+        "time_sensitivity_weight": _normalize_unit_interval(weights.get("time_sensitivity_weight"), 0.15),
+    }
+    weight_total = sum(normalized_weights.values()) or 1.0
+    normalized_weights = {
+        k: round(v / weight_total, 4) for k, v in normalized_weights.items()
+    }
+    return {
+        "profile_version": str(profile.get("profile_version") or "v1"),
+        "updated_at": str(profile.get("updated_at") or _utc_now_iso()),
+        "last_adapted_outcome_at": str(profile.get("last_adapted_outcome_at") or ""),
+        "risk_bias": _normalize_unit_interval(profile.get("risk_bias"), 0.5),
+        "weights": normalized_weights,
+        "adaptation_history": [
+            dict(x) for x in list(profile.get("adaptation_history") or [])[:40] if isinstance(x, dict)
+        ],
+    }
+
+
+def _read_adaptive_profile(project_path: str | None) -> dict[str, Any]:
+    profile_path = _abacus_adaptive_profile_path(project_path)
+    if not profile_path or not profile_path.exists():
+        return _normalize_adaptive_profile({})
+    try:
+        return _normalize_adaptive_profile(json.loads(profile_path.read_text(encoding="utf-8")))
+    except Exception:
+        return _normalize_adaptive_profile({})
+
+
+def _write_adaptive_profile(project_path: str | None, profile: dict[str, Any]) -> None:
+    profile_path = _abacus_adaptive_profile_path(project_path)
+    if not profile_path:
+        return
+    try:
+        normalized = _normalize_adaptive_profile(profile)
+        profile_path.write_text(json.dumps(normalized, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        return
+
+
+def _build_expected_vs_actual(
+    *,
+    expected_roi: float,
+    expected_conversion: float,
+    actual_revenue: float,
+    actual_conversion: float,
+) -> tuple[dict[str, float], float]:
+    roi_delta = round(actual_revenue - expected_roi, 4)
+    conversion_delta = round(actual_conversion - expected_conversion, 4)
+    roi_acc = max(0.0, 100.0 - min(abs(roi_delta), 100.0))
+    conv_acc = max(0.0, 100.0 - (abs(conversion_delta) * 100.0))
+    accuracy = round(max(0.0, min((roi_acc * 0.6) + (conv_acc * 0.4), 100.0)), 4)
+    return (
+        {
+            "roi_delta": roi_delta,
+            "conversion_delta": conversion_delta,
+        },
+        accuracy,
+    )
+
+
+def _build_dynamic_priority(
+    package: dict[str, Any] | None,
+    *,
+    now: datetime | None = None,
+    profile: dict[str, Any] | None = None,
+) -> tuple[float, dict[str, Any]]:
+    p = package or {}
+    ts = now or datetime.now(timezone.utc)
+    profile_weights = _normalize_adaptive_profile(profile).get("weights") if isinstance(profile, dict) else _normalize_adaptive_profile({}).get("weights")
+    execution_score = _normalize_score_0_100(p.get("execution_score"), 50.0)
+    roi_estimate = _normalize_score_0_100(p.get("roi_estimate"), 0.0)
+    probability = _normalize_unit_interval(p.get("execution_probability"), _normalize_unit_interval(p.get("probability"), 0.5))
+    time_sensitivity = _normalize_unit_interval(p.get("time_sensitivity"), 0.5)
+    decay_factor = _normalize_unit_interval(p.get("priority_decay_factor"), 0.04)
+    last_update = _parse_iso_timestamp(p.get("last_score_update_timestamp")) or _parse_iso_timestamp(p.get("created_at"))
+    stale_hours = 0.0
+    if last_update:
+        stale_hours = max(0.0, (ts - last_update).total_seconds() / 3600.0)
+    staleness_penalty = min(30.0, stale_hours * decay_factor * 2.0)
+    weighted = (
+        execution_score * float(profile_weights.get("execution_score_weight") or 0.35)
+        + roi_estimate * float(profile_weights.get("roi_weight") or 0.30)
+        + (probability * 100.0) * float(profile_weights.get("probability_weight") or 0.20)
+        + (time_sensitivity * 100.0) * float(profile_weights.get("time_sensitivity_weight") or 0.15)
+    )
+    roi_probability_lift = 8.0 if (roi_estimate >= 70.0 and probability >= 0.7) else 0.0
+    urgency_lift = time_sensitivity * 6.0
+    base_priority = _normalize_score_0_100(
+        p.get("execution_priority"),
+        _priority_from_request_priority(((p.get("command_request") or {}).get("priority"))),
+    )
+    dynamic_priority = round(
+        max(0.0, min((base_priority * 0.25) + (weighted * 0.75) + roi_probability_lift + urgency_lift - staleness_penalty, 100.0)),
+        4,
+    )
+    explanation = {
+        "base_priority": round(base_priority, 4),
+        "weighted_signal": round(weighted, 4),
+        "roi_probability_lift": round(roi_probability_lift, 4),
+        "urgency_lift": round(urgency_lift, 4),
+        "staleness_penalty": round(staleness_penalty, 4),
+        "stale_hours": round(stale_hours, 4),
+    }
+    return dynamic_priority, explanation
 
 def _build_estimated_cost_tracking(
     *,
@@ -302,6 +501,23 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "remaining_estimated_budget": float(normalized.get("remaining_estimated_budget") or 0.0),
         "kill_switch_active": bool(normalized.get("kill_switch_active")),
         "budget_reason": str(normalized.get("budget_reason") or ""),
+        "execution_priority": float(normalized.get("execution_priority") or 0.0),
+        "execution_score": float(normalized.get("execution_score") or 0.0),
+        "roi_estimate": float(normalized.get("roi_estimate") or 0.0),
+        "execution_probability": float(normalized.get("execution_probability") or 0.0),
+        "time_sensitivity": float(normalized.get("time_sensitivity") or 0.0),
+        "dynamic_execution_priority": float(normalized.get("dynamic_execution_priority") or 0.0),
+        "last_score_update_timestamp": str(normalized.get("last_score_update_timestamp") or ""),
+        "priority_decay_factor": float(normalized.get("priority_decay_factor") or 0.0),
+        "execution_result": str(normalized.get("execution_result") or "pending"),
+        "conversion_result": str(normalized.get("conversion_result") or "pending"),
+        "revenue_realized": float(normalized.get("revenue_realized") or 0.0),
+        "expected_roi": float(normalized.get("expected_roi") or 0.0),
+        "expected_conversion": float(normalized.get("expected_conversion") or 0.0),
+        "actual_revenue": float(normalized.get("actual_revenue") or 0.0),
+        "actual_conversion": float(normalized.get("actual_conversion") or 0.0),
+        "expected_vs_actual_delta": dict(normalized.get("expected_vs_actual_delta") or {}),
+        "performance_accuracy_score": float(normalized.get("performance_accuracy_score") or 0.0),
     }
 
 
@@ -493,7 +709,26 @@ def _persist_package_update(
     status: str,
     reason: str,
 ) -> dict[str, Any]:
-    normalized = normalize_execution_package(package)
+    working = dict(package or {})
+    profile = _read_adaptive_profile(project_path)
+    dynamic_priority, explanation = _build_dynamic_priority(working, profile=profile)
+    working["dynamic_execution_priority"] = dynamic_priority
+    working["last_score_update_timestamp"] = _utc_now_iso()
+    metadata = dict(working.get("metadata") or {})
+    audit = [dict(x) for x in list(metadata.get("adaptive_priority_audit") or []) if isinstance(x, dict)]
+    audit.append(
+        {
+            "recorded_at": _utc_now_iso(),
+            "event_type": "priority_update",
+            "update_status": str(status or ""),
+            "update_reason": str(reason or ""),
+            "dynamic_execution_priority": dynamic_priority,
+            "priority_explanation": explanation,
+        }
+    )
+    metadata["adaptive_priority_audit"] = audit[-20:]
+    working["metadata"] = metadata
+    normalized = normalize_execution_package(working)
     package_path = get_execution_package_file_path(project_path, package_id or normalized.get("package_id"))
     journal_path = get_execution_package_journal_path(project_path)
     if not package_path or not journal_path:
@@ -1159,6 +1394,42 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
         }
     )
+    execution_priority = _normalize_score_0_100(
+        p.get("execution_priority"),
+        _priority_from_request_priority(((p.get("command_request") or {}).get("priority"))),
+    )
+    execution_score = _normalize_score_0_100(p.get("execution_score"), execution_priority)
+    roi_estimate = _normalize_score_0_100(p.get("roi_estimate"), execution_score)
+    execution_probability = _normalize_unit_interval(
+        p.get("execution_probability"),
+        _normalize_unit_interval(p.get("probability"), 0.5),
+    )
+    time_sensitivity = _normalize_unit_interval(p.get("time_sensitivity"), 0.5)
+    priority_decay_factor = _normalize_unit_interval(p.get("priority_decay_factor"), 0.04)
+    expected_roi = _normalize_score_0_100(p.get("expected_roi"), roi_estimate)
+    expected_conversion = _normalize_unit_interval(p.get("expected_conversion"), execution_probability)
+    execution_result = _normalize_execution_result(
+        p.get("execution_result") or _execution_result_from_status(p.get("execution_status"))
+    )
+    conversion_result = _normalize_conversion_result(p.get("conversion_result"))
+    revenue_realized = _normalize_score_0_100(p.get("revenue_realized"), 0.0)
+    actual_revenue = _normalize_score_0_100(p.get("actual_revenue"), revenue_realized)
+    conversion_to_actual_map = {"converted": 1.0, "partial": 0.5, "not_converted": 0.0}
+    actual_conversion = _normalize_unit_interval(
+        p.get("actual_conversion"),
+        conversion_to_actual_map.get(conversion_result, 0.0),
+    )
+    expected_vs_actual_delta, performance_accuracy_score = _build_expected_vs_actual(
+        expected_roi=expected_roi,
+        expected_conversion=expected_conversion,
+        actual_revenue=actual_revenue,
+        actual_conversion=actual_conversion,
+    )
+    dynamic_execution_priority = _normalize_score_0_100(
+        p.get("dynamic_execution_priority"),
+        _build_dynamic_priority(p)[0],
+    )
+    last_score_update_timestamp = str(p.get("last_score_update_timestamp") or p.get("created_at") or _utc_now_iso())
 
     return {
         "package_id": package_id,
@@ -1260,6 +1531,23 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "local_analysis_reason": normalize_local_analysis_reason(p.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(p.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
+        "execution_priority": execution_priority,
+        "execution_score": execution_score,
+        "roi_estimate": roi_estimate,
+        "execution_probability": execution_probability,
+        "time_sensitivity": time_sensitivity,
+        "dynamic_execution_priority": dynamic_execution_priority,
+        "last_score_update_timestamp": last_score_update_timestamp,
+        "priority_decay_factor": priority_decay_factor,
+        "execution_result": execution_result,
+        "conversion_result": conversion_result,
+        "revenue_realized": revenue_realized,
+        "expected_roi": expected_roi,
+        "expected_conversion": expected_conversion,
+        "actual_revenue": actual_revenue,
+        "actual_conversion": actual_conversion,
+        "expected_vs_actual_delta": expected_vs_actual_delta,
+        "performance_accuracy_score": performance_accuracy_score,
         "cost_tracking": normalized_cost_tracking,
         "budget_caps": budget_caps,
         "budget_control": budget_control,
@@ -1391,6 +1679,23 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "remaining_estimated_budget": float(r.get("remaining_estimated_budget") or 0.0),
         "kill_switch_active": bool(r.get("kill_switch_active")),
         "budget_reason": str(r.get("budget_reason") or ""),
+        "execution_priority": _normalize_score_0_100(r.get("execution_priority"), 0.0),
+        "execution_score": _normalize_score_0_100(r.get("execution_score"), 0.0),
+        "roi_estimate": _normalize_score_0_100(r.get("roi_estimate"), 0.0),
+        "execution_probability": _normalize_unit_interval(r.get("execution_probability"), 0.0),
+        "time_sensitivity": _normalize_unit_interval(r.get("time_sensitivity"), 0.0),
+        "dynamic_execution_priority": _normalize_score_0_100(r.get("dynamic_execution_priority"), 0.0),
+        "last_score_update_timestamp": str(r.get("last_score_update_timestamp") or ""),
+        "priority_decay_factor": _normalize_unit_interval(r.get("priority_decay_factor"), 0.04),
+        "execution_result": _normalize_execution_result(r.get("execution_result")),
+        "conversion_result": _normalize_conversion_result(r.get("conversion_result")),
+        "revenue_realized": _normalize_score_0_100(r.get("revenue_realized"), 0.0),
+        "expected_roi": _normalize_score_0_100(r.get("expected_roi"), 0.0),
+        "expected_conversion": _normalize_unit_interval(r.get("expected_conversion"), 0.0),
+        "actual_revenue": _normalize_score_0_100(r.get("actual_revenue"), 0.0),
+        "actual_conversion": _normalize_unit_interval(r.get("actual_conversion"), 0.0),
+        "expected_vs_actual_delta": dict(r.get("expected_vs_actual_delta") or {}),
+        "performance_accuracy_score": _normalize_score_0_100(r.get("performance_accuracy_score"), 0.0),
     }
 
 
@@ -1498,6 +1803,229 @@ def list_reviewable_execution_packages(project_path: str | None, n: int = 20) ->
     reviewable = [normalize_execution_package_journal_record(r) for r in rows if _is_review_pending_package(r)]
     reviewable.sort(key=lambda x: str(x.get("created_at") or ""), reverse=True)
     return reviewable[:limit]
+
+
+def _evolve_abacus_adaptive_profile(
+    *,
+    project_path: str | None,
+    journal_rows: list[dict[str, Any]] | None,
+) -> dict[str, Any]:
+    profile = _read_adaptive_profile(project_path)
+    rows = [dict(x) for x in (journal_rows or []) if isinstance(x, dict)]
+    if not rows:
+        return profile
+    adaptation_cutoff = _parse_iso_timestamp(profile.get("last_adapted_outcome_at"))
+    high_roi_low_conv = 0
+    low_roi_high_conv = 0
+    considered_outcomes = 0
+    latest_outcome_ts: datetime | None = adaptation_cutoff
+    for row in rows[-25:]:
+        conversion_result = _normalize_conversion_result(row.get("conversion_result"))
+        if conversion_result in {"pending", "unknown"}:
+            continue
+        outcome_ts = _parse_iso_timestamp(row.get("last_score_update_timestamp")) or _parse_iso_timestamp(row.get("created_at"))
+        if adaptation_cutoff and outcome_ts and outcome_ts <= adaptation_cutoff:
+            continue
+        considered_outcomes += 1
+        if outcome_ts and (latest_outcome_ts is None or outcome_ts > latest_outcome_ts):
+            latest_outcome_ts = outcome_ts
+        roi = _normalize_score_0_100(row.get("expected_roi"), row.get("roi_estimate"))
+        conversion = _normalize_unit_interval(row.get("actual_conversion"), 0.0)
+        if roi >= 70.0 and conversion <= 0.2:
+            high_roi_low_conv += 1
+        if roi <= 35.0 and conversion >= 0.8:
+            low_roi_high_conv += 1
+    if considered_outcomes == 0 or (high_roi_low_conv == 0 and low_roi_high_conv == 0):
+        return profile
+    weights = dict(profile.get("weights") or {})
+    before = dict(weights)
+    step = 0.03
+    if high_roi_low_conv > low_roi_high_conv:
+        weights["probability_weight"] = _normalize_unit_interval(weights.get("probability_weight"), 0.2) + step
+        weights["roi_weight"] = _normalize_unit_interval(weights.get("roi_weight"), 0.3) - (step / 2.0)
+    elif low_roi_high_conv > high_roi_low_conv:
+        weights["roi_weight"] = _normalize_unit_interval(weights.get("roi_weight"), 0.3) + step
+        weights["probability_weight"] = _normalize_unit_interval(weights.get("probability_weight"), 0.2) - (step / 2.0)
+    normalized = _normalize_adaptive_profile(
+        {
+            **profile,
+            "weights": weights,
+            "updated_at": _utc_now_iso(),
+            "adaptation_history": [
+                *list(profile.get("adaptation_history") or [])[-39:],
+                {
+                    "updated_at": _utc_now_iso(),
+                    "reason": "abacus_pattern_adaptation",
+                    "high_roi_low_conversion_count": high_roi_low_conv,
+                    "low_roi_high_conversion_count": low_roi_high_conv,
+                    "considered_outcome_rows": considered_outcomes,
+                    "before": before,
+                    "after": _normalize_adaptive_profile({"weights": weights}).get("weights"),
+                    "bounds_applied": True,
+                },
+            ],
+            "last_adapted_outcome_at": latest_outcome_ts.isoformat().replace("+00:00", "Z") if latest_outcome_ts else "",
+        }
+    )
+    _write_adaptive_profile(project_path, normalized)
+    return normalized
+
+
+def build_execution_queue_intelligence(
+    *,
+    project_path: str | None,
+    n: int = 20,
+) -> dict[str, Any]:
+    """
+    Build ranked queue intelligence without triggering execution.
+    Applies governance/enforcement-safe ranking and surfaces top candidates.
+    """
+    limit = max(1, min(int(n or 20), MAX_EXECUTION_PACKAGE_LIST_LIMIT))
+    rows = list_execution_package_journal_entries(project_path=project_path, n=MAX_EXECUTION_PACKAGE_LIST_LIMIT)
+    profile = _evolve_abacus_adaptive_profile(project_path=project_path, journal_rows=rows)
+    ranked: list[dict[str, Any]] = []
+    now = datetime.now(timezone.utc)
+    for row in rows:
+        package_id = str(row.get("package_id") or "").strip()
+        if not package_id:
+            continue
+        package = read_execution_package(project_path=project_path, package_id=package_id) or {}
+        dynamic_priority, score_explanation = _build_dynamic_priority(package, now=now, profile=profile)
+        governance_state: dict[str, Any]
+        enforcement_state: dict[str, Any]
+        try:
+            from NEXUS.governance_layer import evaluate_execution_package_governance_state_safe
+            from NEXUS.enforcement_layer import evaluate_execution_package_enforcement_state_safe
+
+            governance_state = evaluate_execution_package_governance_state_safe(package=package)
+            enforcement_state = evaluate_execution_package_enforcement_state_safe(
+                package=package,
+                governance_state=governance_state,
+            )
+        except Exception:
+            governance_state = {"governance_status": "review_required", "hard_block": False, "blocked": False}
+            enforcement_state = {"enforcement_status": "manual_review_required", "queue_eligible": True}
+        queue_eligible = bool(enforcement_state.get("queue_eligible")) and not bool(governance_state.get("hard_block"))
+        ranked.append(
+            {
+                "package_id": package_id,
+                "created_at": str(package.get("created_at") or row.get("created_at") or ""),
+                "review_status": str(package.get("review_status") or row.get("review_status") or ""),
+                "execution_priority": _normalize_score_0_100(package.get("execution_priority"), 0.0),
+                "execution_score": _normalize_score_0_100(package.get("execution_score"), 0.0),
+                "roi_estimate": _normalize_score_0_100(package.get("roi_estimate"), 0.0),
+                "execution_probability": _normalize_unit_interval(package.get("execution_probability"), 0.0),
+                "time_sensitivity": _normalize_unit_interval(package.get("time_sensitivity"), 0.0),
+                "dynamic_execution_priority": dynamic_priority,
+                "priority_decay_factor": _normalize_unit_interval(package.get("priority_decay_factor"), 0.04),
+                "last_score_update_timestamp": str(
+                    package.get("last_score_update_timestamp") or package.get("created_at") or ""
+                ),
+                "governance_status": str(governance_state.get("governance_status") or "review_required"),
+                "enforcement_status": str(enforcement_state.get("enforcement_status") or "manual_review_required"),
+                "hard_block": bool(governance_state.get("hard_block")),
+                "queue_eligible": queue_eligible,
+                "priority_reasoning": score_explanation,
+            }
+        )
+    ranked.sort(
+        key=lambda item: (
+            1 if item.get("queue_eligible") else 0,
+            float(item.get("dynamic_execution_priority") or 0.0),
+            float(item.get("execution_score") or 0.0),
+            float(item.get("roi_estimate") or 0.0),
+            float(item.get("time_sensitivity") or 0.0),
+            str(item.get("created_at") or ""),
+        ),
+        reverse=True,
+    )
+    top_candidates = [item for item in ranked if item.get("queue_eligible")][: min(5, limit)]
+    return {
+        "queue_intelligence_status": "ok",
+        "reason": "Ranked execution packages using adaptive priority and governance-safe queue gates.",
+        "adaptive_profile": profile,
+        "count": min(limit, len(ranked)),
+        "ranked_packages": ranked[:limit],
+        "top_execution_candidates": top_candidates,
+    }
+
+
+def build_execution_queue_intelligence_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return build_execution_queue_intelligence(**kwargs)
+    except Exception as e:
+        return {
+            "queue_intelligence_status": "error_fallback",
+            "reason": f"Queue intelligence failed: {e}",
+            "adaptive_profile": _normalize_adaptive_profile({}),
+            "count": 0,
+            "ranked_packages": [],
+            "top_execution_candidates": [],
+        }
+
+
+def record_execution_package_business_outcome(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    conversion_result: str,
+    revenue_realized: float | int | str,
+    outcome_actor: str = "abacus",
+    actual_conversion: float | int | str | None = None,
+) -> dict[str, Any]:
+    """
+    Persist immutable business outcome fields after execution review.
+    """
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    if str(package.get("conversion_result") or "pending").strip().lower() != "pending":
+        return {"status": "error", "reason": "conversion_result is immutable once recorded.", "package": package}
+    if float(package.get("revenue_realized") or 0.0) > 0.0:
+        return {"status": "error", "reason": "revenue_realized is immutable once recorded.", "package": package}
+    package["conversion_result"] = _normalize_conversion_result(conversion_result)
+    package["revenue_realized"] = _normalize_score_0_100(revenue_realized, 0.0)
+    package["actual_revenue"] = _normalize_score_0_100(package.get("actual_revenue"), package["revenue_realized"])
+    package["actual_conversion"] = _normalize_unit_interval(
+        actual_conversion,
+        {"converted": 1.0, "partial": 0.5}.get(package["conversion_result"], 0.0),
+    )
+    delta, accuracy = _build_expected_vs_actual(
+        expected_roi=_normalize_score_0_100(package.get("expected_roi"), package.get("roi_estimate")),
+        expected_conversion=_normalize_unit_interval(package.get("expected_conversion"), package.get("execution_probability")),
+        actual_revenue=_normalize_score_0_100(package.get("actual_revenue"), 0.0),
+        actual_conversion=_normalize_unit_interval(package.get("actual_conversion"), 0.0),
+    )
+    package["expected_vs_actual_delta"] = delta
+    package["performance_accuracy_score"] = accuracy
+    metadata = dict(package.get("metadata") or {})
+    audit = list(metadata.get("adaptive_priority_audit") or [])
+    audit.append(
+        {
+            "recorded_at": _utc_now_iso(),
+            "recorded_by": str(outcome_actor or "abacus"),
+            "event_type": "business_outcome_recorded",
+            "conversion_result": package.get("conversion_result"),
+            "revenue_realized": package.get("revenue_realized"),
+            "performance_accuracy_score": package.get("performance_accuracy_score"),
+        }
+    )
+    metadata["adaptive_priority_audit"] = audit[-20:]
+    package["metadata"] = metadata
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package business outcome recorded.",
+    )
+
+
+def record_execution_package_business_outcome_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return record_execution_package_business_outcome(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to record execution package business outcome.", "package": None}
 
 
 def get_self_change_audit_path(project_path: str | None) -> str | None:
@@ -2628,7 +3156,8 @@ def record_execution_package_execution(
     if bool(projected_budget_control.get("kill_switch_active")):
         blocked_at = _utc_now_iso()
         package["execution_status"] = "blocked"
-        package["execution_timestamp"] = blocked_at
+        if not str(package.get("execution_timestamp") or "").strip():
+            package["execution_timestamp"] = blocked_at
         package["execution_started_at"] = blocked_at
         package["execution_finished_at"] = blocked_at
         package["execution_actor"] = actor
@@ -2707,7 +3236,8 @@ def record_execution_package_execution(
     package["execution_actor"] = actor
     package["execution_id"] = execution_id
     package["execution_version"] = "v1"
-    package["execution_timestamp"] = started_at
+    if not str(package.get("execution_timestamp") or "").strip():
+        package["execution_timestamp"] = started_at
     package["execution_started_at"] = started_at
     package["execution_executor_target_id"] = str(evaluation.get("execution_executor_target_id") or "")
     package["execution_executor_target_name"] = str(evaluation.get("execution_executor_target_name") or "")
@@ -2808,7 +3338,8 @@ def record_execution_package_execution(
         package["execution_finished_at"] = str(exec_result.get("execution_finished_at") or _utc_now_iso())
         if package["execution_started_at"] and package["execution_finished_at"] and package["execution_started_at"] > package["execution_finished_at"]:
             package["execution_started_at"] = package["execution_finished_at"]
-        package["execution_timestamp"] = package["execution_finished_at"]
+        if not str(package.get("execution_timestamp") or "").strip():
+            package["execution_timestamp"] = package["execution_finished_at"]
         package["rollback_status"] = str(exec_result.get("rollback_status") or "not_needed")
         package["rollback_timestamp"] = str(exec_result.get("rollback_timestamp") or "")
         package["rollback_reason"] = _normalize_rollback_reason(exec_result.get("rollback_reason"))
@@ -2875,6 +3406,28 @@ def record_execution_package_execution(
     package["budget_caps"] = budget_control.get("budget_caps") or _resolve_package_budget_caps(package, project_path)
     package["budget_control"] = budget_control
     package.update(_budget_fields_from_control(budget_control))
+    if str(package.get("execution_result") or "pending").strip().lower() == "pending":
+        package["execution_result"] = _execution_result_from_status(package.get("execution_status"))
+    if not str(package.get("last_score_update_timestamp") or "").strip():
+        package["last_score_update_timestamp"] = _utc_now_iso()
+    profile = _read_adaptive_profile(project_path)
+    dynamic_priority, explanation = _build_dynamic_priority(package, profile=profile)
+    package["dynamic_execution_priority"] = dynamic_priority
+    package["last_score_update_timestamp"] = _utc_now_iso()
+    metadata = dict(package.get("metadata") or {})
+    audit = [dict(x) for x in list(metadata.get("adaptive_priority_audit") or []) if isinstance(x, dict)]
+    audit.append(
+        {
+            "recorded_at": _utc_now_iso(),
+            "event_type": "execution_recorded",
+            "execution_status": str(package.get("execution_status") or ""),
+            "execution_result": str(package.get("execution_result") or ""),
+            "dynamic_execution_priority": dynamic_priority,
+            "priority_explanation": explanation,
+        }
+    )
+    metadata["adaptive_priority_audit"] = audit[-20:]
+    package["metadata"] = metadata
 
     return _persist_package_update(
         project_path=project_path,

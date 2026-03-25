@@ -31,6 +31,81 @@ from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 from NEXUS.studio_driver import build_studio_driver_result_safe
 
 
+def evaluate_execution_package_governance_state(
+    package: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Lightweight package-level governance projection used for queue intelligence.
+    Read-only and conservative: unknown states default to manual review posture.
+    """
+    p = package if isinstance(package, dict) else {}
+    metadata = dict(p.get("metadata") or {})
+    status = str(
+        metadata.get("governance_status")
+        or p.get("governance_status")
+        or "review_required"
+    ).strip().lower()
+    routing_outcome = str(
+        metadata.get("governance_routing_outcome")
+        or metadata.get("routing_outcome")
+        or ""
+    ).strip().lower()
+    resolution_state = str(metadata.get("governance_resolution_state") or "").strip().lower()
+    execution_status = str(p.get("execution_status") or "").strip().lower()
+    hard_block = (
+        status == "blocked"
+        or routing_outcome == "stop"
+        or resolution_state == "stop"
+        or execution_status == "blocked"
+    )
+    if hard_block:
+        return {
+            "governance_status": "blocked",
+            "blocked": True,
+            "hard_block": True,
+            "reason": "Package is in a hard-block governance or execution state.",
+            "policy_tags": ["blocked_execution", "human_review"],
+        }
+    if status == "approval_required":
+        return {
+            "governance_status": "approval_required",
+            "blocked": False,
+            "hard_block": False,
+            "reason": "Package requires approval before progression.",
+            "policy_tags": ["approval_required", "human_review"],
+        }
+    if status == "approved":
+        return {
+            "governance_status": "approved",
+            "blocked": False,
+            "hard_block": False,
+            "reason": "Package governance state is approved.",
+            "policy_tags": [],
+        }
+    return {
+        "governance_status": "review_required",
+        "blocked": False,
+        "hard_block": False,
+        "reason": "Package requires human review before progression.",
+        "policy_tags": ["human_review"],
+    }
+
+
+def evaluate_execution_package_governance_state_safe(
+    package: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        return evaluate_execution_package_governance_state(package=package)
+    except Exception as e:
+        return {
+            "governance_status": "review_required",
+            "blocked": False,
+            "hard_block": False,
+            "reason": f"Package governance projection failed: {e}",
+            "policy_tags": ["human_review", "error_fallback"],
+        }
+
+
 def _evaluate_dispatch_governance(
     *,
     dispatch_status: str | None = None,
