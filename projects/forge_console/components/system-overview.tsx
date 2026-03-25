@@ -33,6 +33,7 @@ export function SystemOverview({ overview }: Props) {
   const costVisibility = data?.cost_visibility;
   const budgetVisibility = data?.budget_visibility;
   const modelRouting = data?.model_routing_visibility;
+  const operatorGuidance = data?.operator_guidance;
   const systemStatus = data?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const displayState = (value: unknown, fallback: string) => {
@@ -132,6 +133,23 @@ export function SystemOverview({ overview }: Props) {
           value={Number(modelRouting?.blocked_or_deferred_count ?? 0)}
           subvalue={modelRouting?.policy_output_label ?? "Policy Output (Read-only)"}
         />
+        <StatCard
+          label="Operator Guidance (Suggested, Not Executed)"
+          value={String(operatorGuidance?.guidance_status ?? "idle")}
+          subvalue={operatorGuidance?.next_best_action || "No action is currently required."}
+        />
+      </div>
+      <div className="detail-card-subsection" style={{ marginTop: 12 }}>
+        <div className="stat-label">Operator Guidance (Suggested, Not Executed)</div>
+        <div style={{ marginTop: 8 }}>
+          <strong>Posture:</strong> {String(operatorGuidance?.system_posture ?? "healthy")}
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <strong>Reason:</strong> {operatorGuidance?.action_reason || "No active guidance reason."}
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <strong>Priority:</strong> {String(operatorGuidance?.recommended_priority ?? "low")}
+        </div>
       </div>
     </section>
   );

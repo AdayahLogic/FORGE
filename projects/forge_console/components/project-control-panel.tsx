@@ -161,6 +161,8 @@ export function ProjectControlPanel({
   const preview = intake?.preview;
   const modelRouting = preview?.model_routing_policy;
   const workflow = projectSnapshot?.workflow_activity;
+  const operatorGuidance =
+    projectSnapshot?.operator_guidance ?? intake?.operator_guidance;
   const systemStatus = projectSnapshot?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const operatorProjects = projects as ForgeProjectRow[];
@@ -357,6 +359,23 @@ export function ProjectControlPanel({
                   <strong>
                     {projectSnapshot.cost_summary?.kill_switch_active ? "active" : "inactive"}
                   </strong>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Operator Guidance (Suggested, Not Executed)</div>
+                  <div style={{ marginTop: 8 }}>
+                    <strong>Status:</strong> {displayValue(operatorGuidance?.guidance_status, "idle")}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <strong>Posture:</strong> {displayValue(operatorGuidance?.system_posture, "healthy")}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <strong>Next Action:</strong>{" "}
+                    {displayValue(operatorGuidance?.next_best_action, "No action is currently required.")}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <strong>Priority:</strong>{" "}
+                    {displayValue(operatorGuidance?.recommended_priority, "low")}
+                  </div>
                 </div>
                 <div className="detail-card-subsection">
                   <div className="stat-label">Routing Reason (Policy Output)</div>

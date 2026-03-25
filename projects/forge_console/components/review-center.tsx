@@ -204,6 +204,7 @@ export function ReviewCenter({
 
   const review = getReview(detail);
   const approval = review?.approval_ready_context;
+  const operatorGuidance = detail?.operator_guidance ?? review?.operator_guidance;
 
   return (
     <section className="panel" style={{ padding: 18 }}>
@@ -227,6 +228,33 @@ export function ReviewCenter({
         </div>
       ) : (
         <div className="review-grid">
+          <div className="detail-card">
+            <h4>Operator Guidance (Suggested, Not Executed)</h4>
+            <div className="chip-row" style={{ marginBottom: 10 }}>
+              <span className={chipClass(String(operatorGuidance?.guidance_status ?? "idle"))}>
+                {String(operatorGuidance?.guidance_status ?? "idle")}
+              </span>
+              <span className={chipClass(String(operatorGuidance?.system_posture ?? "healthy"))}>
+                posture {String(operatorGuidance?.system_posture ?? "healthy")}
+              </span>
+              <span className="chip">
+                priority {String(operatorGuidance?.recommended_priority ?? "low")}
+              </span>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">Next Best Action</div>
+              <div style={{ marginTop: 8 }}>
+                {displayValue(operatorGuidance?.next_best_action, "No action is currently required.")}
+              </div>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">Reason</div>
+              <div style={{ marginTop: 8 }}>
+                {displayValue(operatorGuidance?.action_reason, "No guidance reason is currently available.")}
+              </div>
+            </div>
+          </div>
+
           <div className="detail-card">
             <h4>Execution Feedback</h4>
             <div className="chip-row" style={{ marginBottom: 10 }}>

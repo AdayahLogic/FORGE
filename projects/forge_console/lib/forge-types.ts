@@ -21,6 +21,25 @@ export type ForgeWorkflowActivity = {
   package_created_at: string;
 };
 
+export type ForgeOperatorGuidance = {
+  guidance_status:
+    | "idle"
+    | "ready_for_review"
+    | "awaiting_input"
+    | "blocked"
+    | "action_recommended";
+  system_posture: "healthy" | "caution" | "blocked" | "needs_attention";
+  next_best_action: string;
+  action_reason: string;
+  blocking_reason: string;
+  recommended_priority: "low" | "medium" | "high";
+  guidance_scope: "project" | "package" | "system";
+  governance_alignment: string;
+  budget_context_note: string;
+  routing_context_note: string;
+  delivery_context_note: string;
+};
+
 export type ForgeLifecycleTransition = {
   stage_id: string;
   stage_label: string;
@@ -310,6 +329,7 @@ export type ForgeReviewCenterSnapshot = {
     suggested_next_action: string;
   };
   execution_feedback: ForgeExecutionFeedback;
+  operator_guidance?: ForgeOperatorGuidance;
   model_routing_policy?: ForgeModelRoutingPolicy;
   evaluation_summary: Record<string, unknown>;
   local_analysis_summary: Record<string, unknown>;
@@ -396,6 +416,7 @@ export type ForgeIntakeWorkspace = {
     blocked_use_cases: string[];
   };
   preview: ForgeIntakePreview;
+  operator_guidance?: ForgeOperatorGuidance;
 };
 
 export type ForgeProjectRow = {
@@ -543,6 +564,7 @@ export type ForgeOverviewSnapshot = {
       blocked_or_deferred_count: number;
       budget_note: string;
     };
+    operator_guidance?: ForgeOperatorGuidance;
   };
   projects: ForgeProjectRow[];
   approval_center: {
@@ -596,6 +618,7 @@ export type PackageDetailSnapshot = {
   delivery_summary?: ForgeDeliverySummary;
   timeline: Array<Record<string, unknown>>;
   execution_feedback: ForgeExecutionFeedback;
+  operator_guidance?: ForgeOperatorGuidance;
   model_routing_policy?: ForgeModelRoutingPolicy;
   cost_summary?: {
     operation_cost: ForgeEstimatedCost;
@@ -634,6 +657,7 @@ export type ProjectSnapshot = {
   current_package: PackageDetailSnapshot | null;
   system_status: ForgeSystemStatus;
   workflow_activity: ForgeWorkflowActivity;
+  operator_guidance?: ForgeOperatorGuidance;
   approval_summary: Record<string, unknown>;
   delivery_summary?: ForgeDeliverySummary;
   intake_workspace: ForgeIntakeWorkspace | null;

@@ -37,9 +37,14 @@ from NEXUS.console_attachment_registry import (
 from NEXUS.execution_package_registry import (
     build_delivery_summary_contract,
     list_execution_package_journal_entries,
+    list_self_change_audit_entries,
     read_execution_package,
 )
 from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
+from NEXUS.operator_guidance import (
+    build_operator_guidance_safe,
+    build_system_operator_guidance_safe,
+)
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
 
@@ -739,6 +744,16 @@ def _read_current_package(project_path: str, project_state: dict[str, Any]) -> d
     return read_execution_package(project_path, package_id) or {}
 
 
+def _latest_self_change_entry(project_path: str) -> dict[str, Any]:
+    if not str(project_path or "").strip():
+        return {}
+    entries = list_self_change_audit_entries(project_path, n=1)
+    if not entries:
+        return {}
+    latest = entries[0]
+    return dict(latest) if isinstance(latest, dict) else {}
+
+
 def _build_client_project_row(
     *,
     project_key: str,
@@ -909,6 +924,11 @@ def build_studio_snapshot() -> dict[str, Any]:
         "execution_failed": execution_summary.get("failed_count_total", 0),
         "execution_succeeded": execution_summary.get("succeeded_count_total", 0),
     }
+    self_evolution_summary = dashboard.get("self_evolution_governance_summary") or {}
+    system_operator_guidance = build_system_operator_guidance_safe(
+        project_rows=project_rows,
+        self_evolution_governance_summary=self_evolution_summary,
+    )
     return {
         "generated_at": dashboard.get("summary_generated_at") or "",
         "studio_name": dashboard.get("studio_name") or "FORGE",
@@ -967,6 +987,7 @@ def build_studio_snapshot() -> dict[str, Any]:
                 "kill_switch_active": bool(governing_project_budget.get("kill_switch_active")),
             },
             "model_routing_visibility": _build_model_routing_visibility(project_rows),
+            "operator_guidance": system_operator_guidance,
         },
         "projects": project_rows,
         "approval_center": {
@@ -1016,8 +1037,21 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
     )
     current_package_id = str(project_state.get("execution_package_id") or "")
     current_package_data = _read_current_package(project_path, project_state)
+    latest_self_change_entry = _latest_self_change_entry(project_path)
     delivery_summary = build_delivery_summary_contract(current_package_data if current_package_data else None)
     execution_feedback = _build_execution_feedback(current_package_data)
+    operator_guidance = build_operator_guidance_safe(
+        scope="project",
+        project_state=project_state,
+        intake_preview=dict((intake_workspace or {}).get("preview") or {}),
+        delivery_summary=delivery_summary,
+        model_routing_policy=dict(((intake_workspace or {}).get("preview") or {}).get("model_routing_policy") or {}),
+        budget_status=str((cost_summary or {}).get("budget_status") or ""),
+        budget_reason=str((cost_summary or {}).get("budget_reason") or ""),
+        has_active_package=bool(current_package_id),
+        package=current_package_data,
+        latest_self_change_entry=latest_self_change_entry,
+    )
     current_package = None
     if current_package_id:
         current_package = (
@@ -1054,6 +1088,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             ),
             "approval_summary": approvals,
             "delivery_summary": delivery_summary,
+            "operator_guidance": operator_guidance,
             "intake_workspace": intake_workspace,
             "cost_summary": cost_summary,
             "degraded_sources": [
@@ -1199,6 +1234,8 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         or {}
     )
     package = read_execution_package(project_path, package_id) or {}
+    project_state = load_project_state(project_path)
+    latest_self_change_entry = _latest_self_change_entry(project_path)
     delivery_summary = build_delivery_summary_contract(package if package else None)
     related_attachments = build_attachment_review_context_safe(
         project_path=project_path,
@@ -1235,6 +1272,18 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         run_id=str(package.get("run_id") or ""),
     )
     model_routing_policy = _derive_package_model_routing_policy(package)
+    operator_guidance = build_operator_guidance_safe(
+        scope="package",
+        project_state=project_state,
+        intake_preview={},
+        delivery_summary=delivery_summary,
+        model_routing_policy=model_routing_policy,
+        budget_status=str((cost_summary or {}).get("budget_status") or package.get("budget_status") or ""),
+        budget_reason=str((cost_summary or {}).get("budget_reason") or package.get("budget_reason") or ""),
+        has_active_package=True,
+        package=package,
+        latest_self_change_entry=latest_self_change_entry,
+    )
     return _result(
         "ok",
         {
@@ -1251,6 +1300,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "execution_feedback": execution_feedback,
             "cost_summary": cost_summary,
             "model_routing_policy": model_routing_policy,
+            "operator_guidance": operator_guidance,
             "review_center": _build_review_center_snapshot(
                 package_id=package_id,
                 package=package,
@@ -1260,6 +1310,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 related_attachments=related_attachments,
                 model_routing_policy=model_routing_policy,
                 delivery_summary=delivery_summary,
+                operator_guidance=operator_guidance,
             ),
         },
         "",
@@ -1407,6 +1458,7 @@ def _build_review_center_snapshot(
     related_attachments: list[dict[str, Any]],
     model_routing_policy: dict[str, Any],
     delivery_summary: dict[str, Any],
+    operator_guidance: dict[str, Any],
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
@@ -1428,6 +1480,7 @@ def _build_review_center_snapshot(
         "test_results": _summarize_test_results(package, evaluation, local_analysis),
         "execution_feedback": execution_feedback,
         "model_routing_policy": model_routing_policy,
+        "operator_guidance": dict(operator_guidance or {}),
         "evaluation_summary": dict(evaluation.get("evaluation_summary") or {}),
         "local_analysis_summary": dict(local_analysis.get("local_analysis_summary") or {}),
         "related_attachments": related_attachments,
