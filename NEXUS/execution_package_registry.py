@@ -83,6 +83,17 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+COMMUNICATION_CHANNELS = ("email", "sms", "voice", "manual")
+CHANNEL_OUTCOME_TYPES = {
+    "success",
+    "failure",
+    "response",
+    "no_response",
+    "converted",
+    "rejected",
+    "manual_review",
+    "pending",
+}
 
 
 def _utc_now_iso() -> str:
@@ -292,6 +303,26 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "recommended_channel": str(normalized.get("recommended_channel") or "email"),
+        "channel_performance_profile": dict(normalized.get("channel_performance_profile") or {}),
+        "channel_performance_confidence": _normalize_revenue_ratio(normalized.get("channel_performance_confidence"), fallback=0.0),
+        "adaptive_channel_weight": dict(normalized.get("adaptive_channel_weight") or {}),
+        "adaptive_channel_selection_score": _normalize_revenue_ratio(normalized.get("adaptive_channel_selection_score"), fallback=0.0),
+        "adaptive_channel_routing_reason": str(normalized.get("adaptive_channel_routing_reason") or ""),
+        "adaptive_channel_learning_status": str(normalized.get("adaptive_channel_learning_status") or "insufficient_data"),
+        "adaptive_channel_recommendations": [
+            dict(item) for item in list(normalized.get("adaptive_channel_recommendations") or []) if isinstance(item, dict)
+        ][:4],
+        "cross_channel_sequence_status": str(normalized.get("cross_channel_sequence_status") or "sequence_continue"),
+        "cross_channel_next_recommended_channel": str(normalized.get("cross_channel_next_recommended_channel") or "email"),
+        "cross_channel_next_step_reason": str(normalized.get("cross_channel_next_step_reason") or ""),
+        "cross_channel_escalation_recommended": bool(normalized.get("cross_channel_escalation_recommended")),
+        "cross_channel_fallback_reason": str(normalized.get("cross_channel_fallback_reason") or ""),
+        "operator_channel_override_detected": bool(normalized.get("operator_channel_override_detected")),
+        "operator_selected_channel": str(normalized.get("operator_selected_channel") or ""),
+        "operator_selected_channel_reason": str(normalized.get("operator_selected_channel_reason") or ""),
+        "operator_override_outcome": str(normalized.get("operator_override_outcome") or ""),
+        "operator_override_effectiveness_signal": str(normalized.get("operator_override_effectiveness_signal") or "insufficient_data"),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -885,6 +916,283 @@ def _derive_revenue_workflow_readiness(
     return ("ready_for_revenue_action", True, "", priority, False)
 
 
+def _normalize_channel_name(value: Any, *, fallback: str = "email") -> str:
+    channel = str(value or "").strip().lower()
+    if channel in COMMUNICATION_CHANNELS:
+        return channel
+    return fallback
+
+
+def _normalize_channel_outcome(value: Any) -> str:
+    outcome = str(value or "").strip().lower()
+    if outcome in CHANNEL_OUTCOME_TYPES:
+        return outcome
+    if outcome in {"closed_won", "won"}:
+        return "converted"
+    if outcome in {"closed_lost", "lost", "failed"}:
+        return "failure"
+    if outcome in {"replied", "responded"}:
+        return "response"
+    return "pending"
+
+
+def _derive_channel_performance_profile(
+    *,
+    metadata: dict[str, Any],
+    pipeline_stage: str,
+    governance_status: str,
+    governance_outcome: str,
+    enforcement_status: str,
+    opportunity_classification: str,
+) -> tuple[dict[str, Any], dict[str, float], list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
+    channel_events: list[dict[str, Any]] = []
+    for item in list(metadata.get("channel_recent_outcomes") or []):
+        if not isinstance(item, dict):
+            continue
+        channel_events.append(
+            {
+                "channel": _normalize_channel_name(item.get("channel"), fallback="email"),
+                "outcome": _normalize_channel_outcome(item.get("outcome") or item.get("status")),
+                "responded": bool(item.get("responded")),
+                "converted": bool(item.get("converted")),
+                "follow_through": bool(item.get("follow_through")),
+                "at": str(item.get("at") or ""),
+                "reason": str(item.get("reason") or ""),
+            }
+        )
+    for item in list(metadata.get("revenue_recent_outcomes") or []):
+        if not isinstance(item, dict):
+            continue
+        normalized_outcome = _normalize_channel_outcome(item.get("status") or item.get("outcome"))
+        channel_events.append(
+            {
+                "channel": _normalize_channel_name(item.get("channel"), fallback="email"),
+                "outcome": normalized_outcome,
+                "responded": bool(item.get("responded")) or normalized_outcome in {"response", "converted", "success"},
+                "converted": bool(item.get("converted")) or normalized_outcome in {"converted", "success"},
+                "follow_through": bool(item.get("follow_through")) or normalized_outcome in {"converted", "success"},
+                "at": str(item.get("at") or ""),
+                "reason": str(item.get("reason") or ""),
+            }
+        )
+    channel_events = channel_events[-30:]
+
+    profile: dict[str, dict[str, Any]] = {}
+    weights: dict[str, float] = {}
+    sparse = len(channel_events) < 3
+    for channel in COMMUNICATION_CHANNELS:
+        channel_rows = [event for event in channel_events if event.get("channel") == channel]
+        attempts = len(channel_rows)
+        response_count = sum(1 for event in channel_rows if bool(event.get("responded")))
+        conversion_count = sum(1 for event in channel_rows if bool(event.get("converted")))
+        follow_through_count = sum(1 for event in channel_rows if bool(event.get("follow_through")))
+        success_count = sum(1 for event in channel_rows if str(event.get("outcome")) in {"success", "converted"})
+        failure_count = sum(1 for event in channel_rows if str(event.get("outcome")) in {"failure", "rejected", "no_response"})
+        response_rate = _normalize_revenue_ratio((response_count + 1.0) / (attempts + 2.0), fallback=0.5)
+        conversion_rate = _normalize_revenue_ratio((conversion_count + 1.0) / (attempts + 2.0), fallback=0.5)
+        follow_through_rate = _normalize_revenue_ratio((follow_through_count + 1.0) / (attempts + 2.0), fallback=0.5)
+        confidence = _normalize_revenue_ratio(min(1.0, attempts / 8.0), fallback=0.0)
+        recent_outcomes = [
+            {
+                "channel": channel,
+                "outcome": str(event.get("outcome") or "pending"),
+                "at": str(event.get("at") or ""),
+                "reason": str(event.get("reason") or ""),
+            }
+            for event in channel_rows[-5:]
+        ]
+        profile[channel] = {
+            "channel_performance_profile": channel,
+            "channel_response_rate": response_rate,
+            "channel_conversion_rate": conversion_rate,
+            "channel_follow_through_rate": follow_through_rate,
+            "channel_success_count": success_count,
+            "channel_failure_count": failure_count,
+            "channel_last_outcome_at": str(channel_rows[-1].get("at") or "") if channel_rows else "",
+            "channel_recent_outcomes": recent_outcomes,
+            "channel_performance_confidence": confidence,
+            "channel_attempt_count": attempts,
+        }
+        stage_weight = 0.52 if channel == "email" else 0.35
+        if pipeline_stage in {"proposal_pending", "negotiation"} and channel in {"email", "voice"}:
+            stage_weight += 0.1
+        if opportunity_classification in {"hot", "strategic"} and channel in {"email", "voice"}:
+            stage_weight += 0.06
+        perf_score = (response_rate * 0.35) + (conversion_rate * 0.4) + (follow_through_rate * 0.25)
+        learned_boost = (perf_score - 0.5) * confidence * 0.35
+        weights[channel] = _normalize_revenue_ratio(stage_weight + learned_boost, fallback=0.0)
+
+    operational = metadata.get("channel_operational_availability")
+    operational_map = dict(operational) if isinstance(operational, dict) else {}
+    availability = {
+        "email": bool(operational_map.get("email", True)),
+        "sms": bool(operational_map.get("sms", False)),
+        "voice": bool(operational_map.get("voice", False)),
+        "manual": True,
+    }
+    if governance_status == "blocked" or governance_outcome == "stop" or enforcement_status in {"blocked", "approval_required", "manual_review_required", "hold"}:
+        weights["manual"] = _normalize_revenue_ratio(max(weights.get("manual", 0.5), 0.95), fallback=0.95)
+        for channel in ("email", "sms", "voice"):
+            weights[channel] = _normalize_revenue_ratio(min(weights.get(channel, 0.0), 0.2), fallback=0.1)
+
+    top_channel = "email"
+    top_score = -1.0
+    for channel in COMMUNICATION_CHANNELS:
+        score = float(weights.get(channel) or 0.0)
+        if not availability.get(channel, False):
+            score = min(score, 0.05)
+        if score > top_score:
+            top_score = score
+            top_channel = channel
+    learning_status = "insufficient_data" if sparse else "learning_stable"
+    if governance_status == "blocked" or governance_outcome == "stop":
+        learning_status = "governance_limited"
+
+    sorted_channels = sorted(
+        (
+            {
+                "channel": channel,
+                "score": _normalize_revenue_ratio(weights.get(channel), fallback=0.0),
+                "confidence": _normalize_revenue_ratio(
+                    (profile.get(channel) or {}).get("channel_performance_confidence"),
+                    fallback=0.0,
+                ),
+                "available": bool(availability.get(channel, False)),
+            }
+            for channel in COMMUNICATION_CHANNELS
+        ),
+        key=lambda item: float(item.get("score") or 0.0),
+        reverse=True,
+    )
+    adaptive = {
+        "adaptive_channel_weight": {channel: _normalize_revenue_ratio(weights.get(channel), fallback=0.0) for channel in COMMUNICATION_CHANNELS},
+        "adaptive_channel_selection_score": _normalize_revenue_ratio(top_score, fallback=0.0),
+        "adaptive_channel_routing_reason": (
+            "Routing is governed-first; weighted by stage, outcome history, and channel confidence."
+        ),
+        "adaptive_channel_learning_status": learning_status,
+        "adaptive_channel_recommendations": sorted_channels[:4],
+    }
+    return profile, weights, channel_events, adaptive, availability
+
+
+def _derive_cross_channel_sequence(
+    *,
+    recommended_channel: str,
+    channel_events: list[dict[str, Any]],
+    availability: dict[str, Any],
+) -> dict[str, Any]:
+    recent_for_channel = [
+        event for event in channel_events if str(event.get("channel") or "") == recommended_channel
+    ][-3:]
+    recent_failures = sum(
+        1 for event in recent_for_channel if str(event.get("outcome") or "") in {"failure", "no_response", "rejected"}
+    )
+    if recommended_channel == "email":
+        if recent_failures >= 2 and bool(availability.get("sms")):
+            return {
+                "cross_channel_sequence_status": "escalation_recommended",
+                "cross_channel_next_recommended_channel": "sms",
+                "cross_channel_next_step_reason": "Recent email outcomes indicate low response; suggest governed SMS escalation.",
+                "cross_channel_escalation_recommended": True,
+                "cross_channel_fallback_reason": "",
+            }
+        if recent_failures >= 2 and bool(availability.get("voice")):
+            return {
+                "cross_channel_sequence_status": "escalation_recommended",
+                "cross_channel_next_recommended_channel": "voice",
+                "cross_channel_next_step_reason": "Recent email outcomes indicate low response; suggest governed voice escalation.",
+                "cross_channel_escalation_recommended": True,
+                "cross_channel_fallback_reason": "",
+            }
+        return {
+            "cross_channel_sequence_status": "sequence_continue",
+            "cross_channel_next_recommended_channel": "email",
+            "cross_channel_next_step_reason": "Continue governed email sequence while preserving manual approval controls.",
+            "cross_channel_escalation_recommended": False,
+            "cross_channel_fallback_reason": "",
+        }
+    if recommended_channel == "sms":
+        if not bool(availability.get("voice")):
+            return {
+                "cross_channel_sequence_status": "manual_review_recommended",
+                "cross_channel_next_recommended_channel": "manual",
+                "cross_channel_next_step_reason": "SMS escalation requires manual review when voice channel is unavailable.",
+                "cross_channel_escalation_recommended": True,
+                "cross_channel_fallback_reason": "Voice channel not operationally available.",
+            }
+        return {
+            "cross_channel_sequence_status": "escalation_recommended",
+            "cross_channel_next_recommended_channel": "voice",
+            "cross_channel_next_step_reason": "SMS sequence can escalate to voice after explicit operator review.",
+            "cross_channel_escalation_recommended": True,
+            "cross_channel_fallback_reason": "",
+        }
+    if recommended_channel == "voice" and not bool(availability.get("voice")):
+        return {
+            "cross_channel_sequence_status": "fallback_required",
+            "cross_channel_next_recommended_channel": "manual",
+            "cross_channel_next_step_reason": "Voice is recommended but unavailable; fall back to manual/email review.",
+            "cross_channel_escalation_recommended": True,
+            "cross_channel_fallback_reason": "Voice channel not operationally available.",
+        }
+    return {
+        "cross_channel_sequence_status": "manual_review_recommended",
+        "cross_channel_next_recommended_channel": "manual",
+        "cross_channel_next_step_reason": "Manual review is recommended for this channel posture.",
+        "cross_channel_escalation_recommended": False,
+        "cross_channel_fallback_reason": "",
+    }
+
+
+def _derive_operator_override_memory(
+    *,
+    metadata: dict[str, Any],
+    recommended_channel: str,
+) -> dict[str, Any]:
+    history = [
+        item
+        for item in list(metadata.get("operator_channel_override_history") or [])
+        if isinstance(item, dict)
+    ]
+    latest = dict(history[-1]) if history else {}
+    selected_channel = _normalize_channel_name(
+        latest.get("operator_selected_channel") or metadata.get("operator_selected_channel"),
+        fallback=recommended_channel,
+    )
+    selected_reason = str(
+        latest.get("operator_selected_channel_reason")
+        or metadata.get("operator_selected_channel_reason")
+        or ""
+    )
+    override_outcome = _normalize_channel_outcome(
+        latest.get("operator_override_outcome") or metadata.get("operator_override_outcome")
+    )
+    override_detected = selected_channel != recommended_channel
+    positive_signals = sum(
+        1
+        for item in history[-8:]
+        if _normalize_channel_outcome(item.get("operator_override_outcome")) in {"success", "converted", "response"}
+    )
+    negative_signals = sum(
+        1
+        for item in history[-8:]
+        if _normalize_channel_outcome(item.get("operator_override_outcome")) in {"failure", "rejected", "no_response"}
+    )
+    effectiveness = "insufficient_data"
+    if positive_signals + negative_signals >= 2:
+        effectiveness = "positive" if positive_signals >= negative_signals else "negative"
+    elif override_detected:
+        effectiveness = "pending_outcome"
+    return {
+        "operator_channel_override_detected": bool(override_detected),
+        "operator_selected_channel": selected_channel,
+        "operator_selected_channel_reason": selected_reason,
+        "operator_override_outcome": override_outcome,
+        "operator_override_effectiveness_signal": effectiveness,
+    }
+
+
 def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(package.get("metadata") or {})
     revenue_context = dict(metadata.get("revenue_pipeline_context") or {})
@@ -960,6 +1268,27 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         workflow_status = "needs_revision"
     if workflow_priority not in REVENUE_WORKFLOW_PRIORITIES:
         workflow_priority = "medium"
+    channel_profile, channel_weights, channel_events, adaptive_fields, availability = _derive_channel_performance_profile(
+        metadata=metadata,
+        pipeline_stage=pipeline_stage,
+        governance_status=governance_status,
+        governance_outcome=governance_outcome,
+        enforcement_status=enforcement_status,
+        opportunity_classification=opportunity_classification,
+    )
+    recommended_channel = _normalize_channel_name(
+        metadata.get("recommended_channel") or max(channel_weights, key=channel_weights.get, default="email"),
+        fallback="email",
+    )
+    cross_channel_fields = _derive_cross_channel_sequence(
+        recommended_channel=recommended_channel,
+        channel_events=channel_events,
+        availability=availability,
+    )
+    override_fields = _derive_operator_override_memory(
+        metadata=metadata,
+        recommended_channel=recommended_channel,
+    )
 
     return {
         "lead_id": lead_id,
@@ -983,6 +1312,21 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         "operator_revenue_review_required": operator_review,
         "opportunity_classification": opportunity_classification,
         "opportunity_classification_reason": opportunity_classification_reason,
+        "recommended_channel": recommended_channel,
+        "channel_performance_profile": channel_profile,
+        "channel_performance_confidence": _normalize_revenue_ratio(
+            max(
+                (
+                    float((channel_profile.get(channel) or {}).get("channel_performance_confidence") or 0.0)
+                    for channel in COMMUNICATION_CHANNELS
+                ),
+                default=0.0,
+            ),
+            fallback=0.0,
+        ),
+        **adaptive_fields,
+        **cross_channel_fields,
+        **override_fields,
         "revenue_activation_trace": {
             "signals": {
                 "execution_score": execution_score,
@@ -995,6 +1339,11 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
                 "enforcement_status": enforcement_status,
                 "recent_outcome_adjustment": recent_outcome_adjustment,
             },
+            "channel_profile": channel_profile,
+            "adaptive_channel_weight": adaptive_fields.get("adaptive_channel_weight"),
+            "recommended_channel": recommended_channel,
+            "cross_channel_sequence_status": cross_channel_fields.get("cross_channel_sequence_status"),
+            "operator_override_effectiveness_signal": override_fields.get("operator_override_effectiveness_signal"),
             "classification_reason": opportunity_classification_reason,
             "workflow_status": workflow_status,
         },
@@ -1381,6 +1730,29 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "recommended_channel": _normalize_channel_name(r.get("recommended_channel"), fallback="email"),
+        "channel_performance_profile": dict(r.get("channel_performance_profile") or {}),
+        "channel_performance_confidence": _normalize_revenue_ratio(r.get("channel_performance_confidence"), fallback=0.0),
+        "adaptive_channel_weight": dict(r.get("adaptive_channel_weight") or {}),
+        "adaptive_channel_selection_score": _normalize_revenue_ratio(r.get("adaptive_channel_selection_score"), fallback=0.0),
+        "adaptive_channel_routing_reason": str(r.get("adaptive_channel_routing_reason") or ""),
+        "adaptive_channel_learning_status": str(r.get("adaptive_channel_learning_status") or "insufficient_data"),
+        "adaptive_channel_recommendations": [
+            dict(item) for item in list(r.get("adaptive_channel_recommendations") or []) if isinstance(item, dict)
+        ][:4],
+        "cross_channel_sequence_status": str(r.get("cross_channel_sequence_status") or "sequence_continue"),
+        "cross_channel_next_recommended_channel": _normalize_channel_name(
+            r.get("cross_channel_next_recommended_channel"),
+            fallback="email",
+        ),
+        "cross_channel_next_step_reason": str(r.get("cross_channel_next_step_reason") or ""),
+        "cross_channel_escalation_recommended": bool(r.get("cross_channel_escalation_recommended")),
+        "cross_channel_fallback_reason": str(r.get("cross_channel_fallback_reason") or ""),
+        "operator_channel_override_detected": bool(r.get("operator_channel_override_detected")),
+        "operator_selected_channel": _normalize_channel_name(r.get("operator_selected_channel"), fallback="email"),
+        "operator_selected_channel_reason": str(r.get("operator_selected_channel_reason") or ""),
+        "operator_override_outcome": _normalize_channel_outcome(r.get("operator_override_outcome")),
+        "operator_override_effectiveness_signal": str(r.get("operator_override_effectiveness_signal") or "insufficient_data"),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -3118,6 +3490,62 @@ def record_execution_package_governance_safe(**kwargs: Any) -> dict[str, Any]:
         return {"status": "error", "reason": "Failed to persist execution package governance metadata.", "package": None}
 
 
+def record_execution_package_channel_override(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    operator_selected_channel: str,
+    operator_selected_channel_reason: str = "",
+    operator_override_outcome: str = "",
+) -> dict[str, Any]:
+    """
+    Persist operator channel override memory for adaptive, explainable routing.
+
+    This function is metadata-only and never triggers communication execution.
+    """
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    selected_channel = _normalize_channel_name(operator_selected_channel, fallback="email")
+    if selected_channel not in COMMUNICATION_CHANNELS:
+        return {"status": "error", "reason": "Invalid operator_selected_channel.", "package": None}
+
+    metadata = dict(package.get("metadata") or {})
+    history = [
+        item
+        for item in list(metadata.get("operator_channel_override_history") or [])
+        if isinstance(item, dict)
+    ]
+    record = {
+        "at": _utc_now_iso(),
+        "recommended_channel": _normalize_channel_name(package.get("recommended_channel"), fallback="email"),
+        "operator_selected_channel": selected_channel,
+        "operator_selected_channel_reason": str(operator_selected_channel_reason or ""),
+        "operator_override_outcome": _normalize_channel_outcome(operator_override_outcome),
+    }
+    history.append(record)
+    metadata["operator_channel_override_history"] = history[-20:]
+    metadata["operator_selected_channel"] = record["operator_selected_channel"]
+    metadata["operator_selected_channel_reason"] = record["operator_selected_channel_reason"]
+    metadata["operator_override_outcome"] = record["operator_override_outcome"]
+    package["metadata"] = metadata
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package channel override metadata recorded.",
+    )
+
+
+def record_execution_package_channel_override_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_channel_override(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package channel override metadata.", "package": None}
+
+
 def record_execution_package_revenue_activation(
     *,
     project_path: str | None,
@@ -3146,10 +3574,39 @@ def record_execution_package_revenue_activation(
     metadata["revenue_recent_outcomes"] = [
         {
             "status": str((item or {}).get("status") or ""),
+            "channel": _normalize_channel_name((item or {}).get("channel"), fallback="email"),
+            "outcome": _normalize_channel_outcome((item or {}).get("outcome") or (item or {}).get("status")),
+            "responded": bool((item or {}).get("responded")),
+            "converted": bool((item or {}).get("converted")),
+            "follow_through": bool((item or {}).get("follow_through")),
             "at": str((item or {}).get("at") or ""),
             "reason": str((item or {}).get("reason") or ""),
         }
         for item in list(ps.get("revenue_recent_outcomes") or metadata.get("revenue_recent_outcomes") or [])
+        if isinstance(item, dict)
+    ][:20]
+    metadata["channel_recent_outcomes"] = [
+        {
+            "channel": _normalize_channel_name((item or {}).get("channel"), fallback="email"),
+            "outcome": _normalize_channel_outcome((item or {}).get("outcome")),
+            "responded": bool((item or {}).get("responded")),
+            "converted": bool((item or {}).get("converted")),
+            "follow_through": bool((item or {}).get("follow_through")),
+            "at": str((item or {}).get("at") or ""),
+            "reason": str((item or {}).get("reason") or ""),
+        }
+        for item in list(ps.get("channel_recent_outcomes") or metadata.get("channel_recent_outcomes") or [])
+        if isinstance(item, dict)
+    ][:30]
+    metadata["operator_channel_override_history"] = [
+        {
+            "at": str((item or {}).get("at") or ""),
+            "recommended_channel": _normalize_channel_name((item or {}).get("recommended_channel"), fallback="email"),
+            "operator_selected_channel": _normalize_channel_name((item or {}).get("operator_selected_channel"), fallback="email"),
+            "operator_selected_channel_reason": str((item or {}).get("operator_selected_channel_reason") or ""),
+            "operator_override_outcome": _normalize_channel_outcome((item or {}).get("operator_override_outcome")),
+        }
+        for item in list(ps.get("operator_channel_override_history") or metadata.get("operator_channel_override_history") or [])
         if isinstance(item, dict)
     ][:20]
     package["metadata"] = metadata

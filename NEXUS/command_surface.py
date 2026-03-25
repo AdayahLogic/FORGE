@@ -48,6 +48,7 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_queue",
     "execution_package_details",
     "execution_package_decide",
+    "execution_package_channel_override",
     "execution_package_decision_status",
     "execution_package_eligibility_check",
     "execution_package_eligibility_status",
@@ -287,6 +288,16 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "recommended_channel": p.get("recommended_channel") or "email",
+        "adaptive_channel_selection_score": p.get("adaptive_channel_selection_score") or 0.0,
+        "adaptive_channel_routing_reason": p.get("adaptive_channel_routing_reason") or "",
+        "adaptive_channel_learning_status": p.get("adaptive_channel_learning_status") or "insufficient_data",
+        "channel_performance_confidence": p.get("channel_performance_confidence") or 0.0,
+        "cross_channel_next_recommended_channel": p.get("cross_channel_next_recommended_channel") or "email",
+        "cross_channel_escalation_recommended": bool(p.get("cross_channel_escalation_recommended")),
+        "operator_channel_override_detected": bool(p.get("operator_channel_override_detected")),
+        "operator_selected_channel": p.get("operator_selected_channel") or "",
+        "operator_override_effectiveness_signal": p.get("operator_override_effectiveness_signal") or "insufficient_data",
     }
 
 
@@ -376,7 +387,29 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "rollback_repair": dict(p.get("rollback_repair") or {}),
             "integrity_verification": dict(p.get("integrity_verification") or {}),
         },
-        "metadata": dict(p.get("metadata") or {}),
+        "metadata": {
+            **dict(p.get("metadata") or {}),
+            "channel_routing": {
+                "recommended_channel": p.get("recommended_channel") or "email",
+                "adaptive_channel_weight": dict(p.get("adaptive_channel_weight") or {}),
+                "adaptive_channel_selection_score": p.get("adaptive_channel_selection_score") or 0.0,
+                "adaptive_channel_routing_reason": p.get("adaptive_channel_routing_reason") or "",
+                "adaptive_channel_learning_status": p.get("adaptive_channel_learning_status") or "insufficient_data",
+                "adaptive_channel_recommendations": list(p.get("adaptive_channel_recommendations") or []),
+                "channel_performance_profile": dict(p.get("channel_performance_profile") or {}),
+                "channel_performance_confidence": p.get("channel_performance_confidence") or 0.0,
+                "cross_channel_sequence_status": p.get("cross_channel_sequence_status") or "sequence_continue",
+                "cross_channel_next_recommended_channel": p.get("cross_channel_next_recommended_channel") or "email",
+                "cross_channel_next_step_reason": p.get("cross_channel_next_step_reason") or "",
+                "cross_channel_escalation_recommended": bool(p.get("cross_channel_escalation_recommended")),
+                "cross_channel_fallback_reason": p.get("cross_channel_fallback_reason") or "",
+                "operator_channel_override_detected": bool(p.get("operator_channel_override_detected")),
+                "operator_selected_channel": p.get("operator_selected_channel") or "",
+                "operator_selected_channel_reason": p.get("operator_selected_channel_reason") or "",
+                "operator_override_outcome": p.get("operator_override_outcome") or "",
+                "operator_override_effectiveness_signal": p.get("operator_override_effectiveness_signal") or "insufficient_data",
+            },
+        },
     }
     cursor_bridge_artifacts = list(p.get("cursor_bridge_artifacts") or [])
     if cursor_bridge or cursor_bridge_artifacts:
@@ -424,6 +457,14 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "recommended_channel": p.get("recommended_channel") or "email",
+        "adaptive_channel_selection_score": p.get("adaptive_channel_selection_score") or 0.0,
+        "adaptive_channel_learning_status": p.get("adaptive_channel_learning_status") or "insufficient_data",
+        "channel_performance_confidence": p.get("channel_performance_confidence") or 0.0,
+        "cross_channel_next_recommended_channel": p.get("cross_channel_next_recommended_channel") or "email",
+        "cross_channel_fallback_reason": p.get("cross_channel_fallback_reason") or "",
+        "operator_channel_override_detected": bool(p.get("operator_channel_override_detected")),
+        "operator_selected_channel": p.get("operator_selected_channel") or "",
     }
 
 
@@ -694,6 +735,23 @@ def run_command(
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
             ]
+            ranked_channels = sorted(
+                queue_rows,
+                key=lambda row: float(row.get("adaptive_channel_selection_score") or 0.0),
+                reverse=True,
+            )
+            low_confidence_routing = [
+                {
+                    "package_id": row.get("package_id"),
+                    "recommended_channel": row.get("recommended_channel"),
+                    "channel_performance_confidence": row.get("channel_performance_confidence"),
+                    "adaptive_channel_learning_status": row.get("adaptive_channel_learning_status"),
+                    "fallback_channel": row.get("cross_channel_next_recommended_channel") or "email",
+                    "fallback_reason": row.get("cross_channel_fallback_reason") or "Use email/manual review until confidence improves.",
+                }
+                for row in queue_rows
+                if float(row.get("channel_performance_confidence") or 0.0) < 0.45
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -717,6 +775,18 @@ def run_command(
                         for row in ranked_revenue[:5]
                     ],
                     "blocked_revenue_candidates": blocked_revenue[:5],
+                    "top_channel_recommendations": [
+                        {
+                            "package_id": row.get("package_id"),
+                            "recommended_channel": row.get("recommended_channel"),
+                            "adaptive_channel_selection_score": row.get("adaptive_channel_selection_score"),
+                            "channel_performance_confidence": row.get("channel_performance_confidence"),
+                            "adaptive_channel_learning_status": row.get("adaptive_channel_learning_status"),
+                            "cross_channel_next_recommended_channel": row.get("cross_channel_next_recommended_channel"),
+                        }
+                        for row in ranked_channels[:5]
+                    ],
+                    "low_confidence_channel_routing": low_confidence_routing[:5],
                 },
             )
         except Exception as e:
@@ -916,6 +986,79 @@ def run_command(
                         "decision_notes": package.get("decision_notes"),
                         "decision_id": package.get("decision_id"),
                     },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_channel_override":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        operator_selected_channel = str(kwargs.get("operator_selected_channel") or "").strip().lower()
+        operator_selected_channel_reason = str(kwargs.get("operator_selected_channel_reason") or "")
+        operator_override_outcome = str(kwargs.get("operator_override_outcome") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if operator_selected_channel not in {"email", "sms", "voice", "manual"}:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="operator_selected_channel must be one of email, sms, voice, manual.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_channel_override_safe
+
+            result = record_execution_package_channel_override_safe(
+                project_path=path,
+                package_id=package_id,
+                operator_selected_channel=operator_selected_channel,
+                operator_selected_channel_reason=operator_selected_channel_reason,
+                operator_override_outcome=operator_override_outcome,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to record execution package channel override."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; selected_channel={operator_selected_channel}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package channel override metadata recorded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "recommended_channel": package.get("recommended_channel"),
+                    "operator_selected_channel": package.get("operator_selected_channel"),
+                    "operator_channel_override_detected": bool(package.get("operator_channel_override_detected")),
+                    "operator_override_effectiveness_signal": package.get("operator_override_effectiveness_signal"),
                 },
             )
         except Exception as e:
