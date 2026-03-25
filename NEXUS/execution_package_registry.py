@@ -83,6 +83,17 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+SEGMENT_TYPES = {"industry", "business_function", "opportunity", "value_tier", "pipeline_group"}
+VALUE_TIERS = {"high", "medium", "low"}
+STRATEGY_CONFIDENCE_LEVELS = {"low", "medium", "high"}
+DATA_MATURITY_LEVELS = {"low", "medium", "high"}
+PATTERN_TYPES = {
+    "repeated_drop_off",
+    "high_performing_sequence",
+    "ineffective_follow_up",
+    "timing_sensitivity",
+    "insufficient_pattern_evidence",
+}
 
 
 def _utc_now_iso() -> str:
@@ -292,6 +303,40 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "segment_id": str(normalized.get("segment_id") or ""),
+        "segment_type": str(normalized.get("segment_type") or ""),
+        "segment_key": str(normalized.get("segment_key") or ""),
+        "segment_confidence": _normalize_revenue_ratio(normalized.get("segment_confidence"), fallback=0.0),
+        "segment_reason": str(normalized.get("segment_reason") or ""),
+        "segment_channel_performance": _normalize_channel_performance(normalized.get("segment_channel_performance")),
+        "segment_response_rate": _normalize_revenue_ratio(normalized.get("segment_response_rate"), fallback=0.0),
+        "segment_conversion_rate": _normalize_revenue_ratio(normalized.get("segment_conversion_rate"), fallback=0.0),
+        "segment_follow_up_success_rate": _normalize_revenue_ratio(normalized.get("segment_follow_up_success_rate"), fallback=0.0),
+        "segment_sequence_completion_rate": _normalize_revenue_ratio(
+            normalized.get("segment_sequence_completion_rate"),
+            fallback=0.0,
+        ),
+        "segment_recent_outcomes": [x for x in list(normalized.get("segment_recent_outcomes") or []) if isinstance(x, dict)][:10],
+        "segment_performance_confidence": _normalize_revenue_ratio(
+            normalized.get("segment_performance_confidence"),
+            fallback=0.0,
+        ),
+        "segment_strategy_profile": str(normalized.get("segment_strategy_profile") or ""),
+        "recommended_strategy_type": str(normalized.get("recommended_strategy_type") or ""),
+        "recommended_follow_up_pattern": str(normalized.get("recommended_follow_up_pattern") or ""),
+        "recommended_channel_mix": [str(x).strip().lower() for x in list(normalized.get("recommended_channel_mix") or []) if str(x).strip()][:6],
+        "recommended_timing_pattern": str(normalized.get("recommended_timing_pattern") or ""),
+        "strategy_reason": str(normalized.get("strategy_reason") or ""),
+        "strategy_confidence_level": str(normalized.get("strategy_confidence_level") or "low"),
+        "data_maturity_level": str(normalized.get("data_maturity_level") or "low"),
+        "data_point_count": max(0, int(normalized.get("data_point_count") or 0)),
+        "exploration_mode": bool(normalized.get("exploration_mode")),
+        "detected_pattern_type": str(normalized.get("detected_pattern_type") or "insufficient_pattern_evidence"),
+        "pattern_confidence": _normalize_revenue_ratio(normalized.get("pattern_confidence"), fallback=0.0),
+        "pattern_impact": str(normalized.get("pattern_impact") or "low"),
+        "pattern_recommendation": str(normalized.get("pattern_recommendation") or ""),
+        "strategy_recommendation_only": bool(normalized.get("strategy_recommendation_only", True)),
+        "strategy_governance_guard": str(normalized.get("strategy_governance_guard") or "recommendation_only_no_auto_execution"),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -615,6 +660,84 @@ def _delivery_progress_state_for_package(package: dict[str, Any]) -> str:
 
 def _normalize_revenue_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_slug(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return "unknown"
+    out: list[str] = []
+    for ch in raw:
+        if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+            out.append(ch)
+        elif ch in {" ", "-", "_", "/", "."}:
+            out.append("_")
+    slug = "".join(out).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "unknown"
+
+
+def _normalize_ratio_auto(value: Any, *, fallback: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        return _normalize_revenue_ratio(fallback, fallback=fallback)
+    if parsed > 1.0:
+        parsed = parsed / 100.0
+    return _normalize_revenue_ratio(parsed, fallback=fallback)
+
+
+def _normalize_value_tier(value: Any) -> str:
+    tier = str(value or "").strip().lower()
+    return tier if tier in VALUE_TIERS else ""
+
+
+def _pipeline_stage_group(stage: str) -> str:
+    if stage in {"intake", "qualified", "follow_up"}:
+        return "engagement"
+    if stage in {"proposal_pending", "negotiation"}:
+        return "conversion"
+    if stage in {"onboarding", "delivery"}:
+        return "delivery"
+    if stage in {"closed_won", "closed_lost"}:
+        return "closed"
+    return "engagement"
+
+
+def _derive_value_tier(*, package: dict[str, Any], roi_estimate: float, conversion_probability: float) -> str:
+    explicit_tier = _normalize_value_tier(package.get("value_tier"))
+    if explicit_tier:
+        return explicit_tier
+    blended = (roi_estimate * 0.6) + (conversion_probability * 0.4)
+    if blended >= 0.72:
+        return "high"
+    if blended >= 0.45:
+        return "medium"
+    return "low"
+
+
+def _normalize_channel_performance(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for channel, stats in value.items():
+        channel_key = _normalize_slug(channel)
+        if not channel_key:
+            continue
+        if isinstance(stats, dict):
+            out[channel_key] = {
+                "response_rate": _normalize_ratio_auto(stats.get("response_rate"), fallback=0.0),
+                "conversion_rate": _normalize_ratio_auto(stats.get("conversion_rate"), fallback=0.0),
+                "follow_up_success_rate": _normalize_ratio_auto(stats.get("follow_up_success_rate"), fallback=0.0),
+                "sequence_completion_rate": _normalize_ratio_auto(stats.get("sequence_completion_rate"), fallback=0.0),
+                "observation_count": max(0, int(stats.get("observation_count") or 0)),
+            }
+        else:
+            out[channel_key] = {"score": _normalize_ratio_auto(stats, fallback=0.0)}
+        if len(out) >= 6:
+            break
+    return out
 
 
 def _normalize_revenue_ratio(value: Any, *, fallback: float = 0.0) -> float:
@@ -1001,6 +1124,282 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _derive_segmented_intelligence_fields(package: dict[str, Any]) -> dict[str, Any]:
+    p = dict(package or {})
+    metadata = dict(p.get("metadata") or {})
+    revenue_context = dict(metadata.get("revenue_pipeline_context") or {})
+    action_tracking = dict(metadata.get("action_tracking_summary") or {})
+    follow_up_intel = dict(metadata.get("follow_up_intelligence") or {})
+    channel_perf_raw = (
+        metadata.get("segment_channel_performance")
+        or metadata.get("channel_performance")
+        or metadata.get("adaptive_channel_learning")
+        or {}
+    )
+    segment_channel_performance = _normalize_channel_performance(channel_perf_raw)
+    recent_outcomes = [x for x in list(metadata.get("revenue_recent_outcomes") or []) if isinstance(x, dict)]
+
+    industry = _normalize_slug(p.get("industry") or revenue_context.get("industry") or metadata.get("industry"))
+    business_function = _normalize_slug(p.get("business_function") or revenue_context.get("business_function") or "general")
+    opportunity_classification = str(p.get("opportunity_classification") or "cold").strip().lower()
+    pipeline_stage = _normalize_pipeline_stage(p.get("pipeline_stage"))
+    pipeline_group = _pipeline_stage_group(pipeline_stage)
+    roi_estimate = _normalize_revenue_ratio(p.get("roi_estimate"), fallback=0.0)
+    conversion_probability = _normalize_revenue_ratio(p.get("conversion_probability"), fallback=0.0)
+    time_sensitivity = _normalize_revenue_ratio(p.get("time_sensitivity"), fallback=0.0)
+    value_tier = _derive_value_tier(package=p, roi_estimate=roi_estimate, conversion_probability=conversion_probability)
+
+    if industry != "unknown":
+        segment_type = "industry"
+        segment_key_source = industry
+        segment_reason = "Segmented by explicit industry to align strategy with market-specific behavior."
+    elif business_function not in {"unknown", "general"}:
+        segment_type = "business_function"
+        segment_key_source = business_function
+        segment_reason = "Segmented by business function because industry is unavailable."
+    elif opportunity_classification in OPPORTUNITY_CLASSIFICATIONS and opportunity_classification != "cold":
+        segment_type = "opportunity"
+        segment_key_source = opportunity_classification
+        segment_reason = "Segmented by opportunity classification derived from conversion and ROI signals."
+    elif value_tier in VALUE_TIERS:
+        segment_type = "value_tier"
+        segment_key_source = value_tier
+        segment_reason = "Segmented by value tier to align effort with expected commercial impact."
+    else:
+        segment_type = "pipeline_group"
+        segment_key_source = pipeline_group
+        segment_reason = "Segmented by pipeline-stage group due to limited explicit context."
+
+    segment_key = f"{segment_type}:{segment_key_source}"
+    segment_id = f"seg-{uuid.uuid5(uuid.NAMESPACE_URL, segment_key).hex[:12]}"
+    segment_confidence_sources = 0
+    if industry != "unknown":
+        segment_confidence_sources += 1
+    if business_function not in {"unknown", "general"}:
+        segment_confidence_sources += 1
+    if opportunity_classification in OPPORTUNITY_CLASSIFICATIONS:
+        segment_confidence_sources += 1
+    if value_tier in VALUE_TIERS:
+        segment_confidence_sources += 1
+    if pipeline_group:
+        segment_confidence_sources += 1
+
+    data_point_count = (
+        len(recent_outcomes)
+        + max(0, int(action_tracking.get("total_actions") or action_tracking.get("action_count") or 0))
+        + max(
+            0,
+            int(
+                follow_up_intel.get("observed_sequences")
+                or follow_up_intel.get("data_points")
+                or metadata.get("communication_outcome_count")
+                or 0
+            ),
+        )
+        + sum(
+            max(0, int((stats or {}).get("observation_count") or 0))
+            for stats in segment_channel_performance.values()
+            if isinstance(stats, dict)
+        )
+    )
+    if data_point_count >= 15:
+        data_maturity_level = "high"
+    elif data_point_count >= 5:
+        data_maturity_level = "medium"
+    else:
+        data_maturity_level = "low"
+    exploration_mode = data_maturity_level == "low"
+
+    segment_response_rate = _normalize_ratio_auto(
+        follow_up_intel.get("response_rate")
+        or metadata.get("response_rate")
+        or conversion_probability * 0.78,
+        fallback=0.0,
+    )
+    segment_conversion_rate = _normalize_ratio_auto(
+        follow_up_intel.get("conversion_rate") or metadata.get("conversion_rate") or conversion_probability,
+        fallback=0.0,
+    )
+    segment_follow_up_success_rate = _normalize_ratio_auto(
+        follow_up_intel.get("follow_up_success_rate")
+        or metadata.get("follow_up_success_rate")
+        or segment_response_rate,
+        fallback=0.0,
+    )
+    segment_sequence_completion_rate = _normalize_ratio_auto(
+        follow_up_intel.get("sequence_completion_rate")
+        or metadata.get("sequence_completion_rate")
+        or ((segment_follow_up_success_rate * 0.7) + 0.15),
+        fallback=0.0,
+    )
+    segment_recent_outcomes = [
+        {
+            "status": str(item.get("status") or "").strip().lower(),
+            "channel": str(item.get("channel") or "").strip().lower(),
+            "stage": _normalize_pipeline_stage(item.get("stage")),
+            "at": str(item.get("at") or item.get("timestamp") or ""),
+        }
+        for item in recent_outcomes[:10]
+    ]
+
+    if data_point_count >= 18:
+        segment_performance_confidence = 0.86
+    elif data_point_count >= 8:
+        segment_performance_confidence = 0.64
+    elif data_point_count >= 3:
+        segment_performance_confidence = 0.46
+    else:
+        segment_performance_confidence = 0.28
+    segment_performance_confidence = _normalize_revenue_ratio(segment_performance_confidence, fallback=0.28)
+
+    segment_confidence = _normalize_revenue_ratio(
+        0.3 + (segment_confidence_sources * 0.1) + (segment_performance_confidence * 0.2),
+        fallback=0.35,
+    )
+
+    governance_status, governance_outcome, enforcement_status = _derive_governance_enforcement_posture(p)
+    if governance_status == "blocked" or governance_outcome == "stop" or enforcement_status in {"blocked", "hold"}:
+        recommended_strategy_type = "high_touch_manual"
+        recommended_follow_up_pattern = "operator_gated_checkpoints"
+        recommended_channel_mix = ["operator_review"]
+        recommended_timing_pattern = "await_governance_clearance"
+        strategy_reason = "Governance/enforcement posture requires human-gated handling; no automated progression is allowed."
+    elif exploration_mode:
+        recommended_strategy_type = "soft_nurture_sequence"
+        recommended_follow_up_pattern = "low_risk_exploration_cadence"
+        recommended_channel_mix = ["email"]
+        recommended_timing_pattern = "72h_feedback_cycle"
+        strategy_reason = "Data maturity is low, so the strategy remains exploratory and conservative."
+    elif conversion_probability >= 0.72 and time_sensitivity >= 0.65 and value_tier == "high":
+        recommended_strategy_type = "fast_conversion_push"
+        recommended_follow_up_pattern = "tight_conversion_window"
+        recommended_channel_mix = ["email", "phone", "linkedin"]
+        recommended_timing_pattern = "same_day_plus_24h"
+        strategy_reason = "High value, urgency, and conversion signals justify a fast conversion push under governance."
+    elif opportunity_classification in {"strategic", "high_margin"} and data_maturity_level == "high":
+        recommended_strategy_type = "aggressive_follow_up"
+        recommended_follow_up_pattern = "multi_touch_priority_sequence"
+        recommended_channel_mix = ["email", "linkedin", "phone"]
+        recommended_timing_pattern = "24h_iteration"
+        strategy_reason = "Strategic/high-margin segment with mature data supports assertive follow-up recommendations."
+    else:
+        recommended_strategy_type = "soft_nurture_sequence"
+        recommended_follow_up_pattern = "value_reinforcement_sequence"
+        recommended_channel_mix = ["email", "linkedin"]
+        recommended_timing_pattern = "48h_to_72h_sequence"
+        strategy_reason = "Balanced engagement posture is recommended for this segment profile."
+    segment_strategy_profile = f"{recommended_strategy_type}:{segment_type}:{value_tier}:{data_maturity_level}"
+
+    strategy_confidence_score = _normalize_revenue_ratio(
+        (segment_confidence * 0.45)
+        + (segment_performance_confidence * 0.35)
+        + (_normalize_ratio_auto(data_point_count / 20.0, fallback=0.0) * 0.2),
+        fallback=0.25,
+    )
+    if strategy_confidence_score >= 0.72:
+        strategy_confidence_level = "high"
+    elif strategy_confidence_score >= 0.45:
+        strategy_confidence_level = "medium"
+    else:
+        strategy_confidence_level = "low"
+
+    drop_off_count = sum(
+        1
+        for item in segment_recent_outcomes
+        if str(item.get("status") or "") in {"no_response", "dropped", "closed_lost", "unresponsive"}
+    )
+    success_count = sum(
+        1
+        for item in segment_recent_outcomes
+        if str(item.get("status") or "") in {"closed_won", "converted", "reply_positive"}
+    )
+    if drop_off_count >= 3:
+        detected_pattern_type = "repeated_drop_off"
+        pattern_confidence = _normalize_revenue_ratio(0.62 + (drop_off_count * 0.04), fallback=0.62)
+        pattern_impact = "high"
+        pattern_recommendation = "Reduce sequence length and pivot channel after second non-response."
+    elif success_count >= 3:
+        detected_pattern_type = "high_performing_sequence"
+        pattern_confidence = _normalize_revenue_ratio(0.64 + (success_count * 0.03), fallback=0.64)
+        pattern_impact = "high"
+        pattern_recommendation = "Replicate winning sequence pattern for matching segment profiles."
+    elif segment_follow_up_success_rate < 0.35 and data_point_count >= 5:
+        detected_pattern_type = "ineffective_follow_up"
+        pattern_confidence = _normalize_revenue_ratio(0.58, fallback=0.58)
+        pattern_impact = "medium"
+        pattern_recommendation = "Switch to softer cadence and refresh message framing before next follow-up."
+    elif time_sensitivity >= 0.7 and data_point_count >= 3:
+        detected_pattern_type = "timing_sensitivity"
+        pattern_confidence = _normalize_revenue_ratio(0.56, fallback=0.56)
+        pattern_impact = "medium"
+        pattern_recommendation = "Prioritize shorter follow-up windows and avoid delayed outreach."
+    else:
+        detected_pattern_type = "insufficient_pattern_evidence"
+        pattern_confidence = _normalize_revenue_ratio(0.22, fallback=0.22)
+        pattern_impact = "low"
+        pattern_recommendation = "Collect additional outcomes before applying pattern-optimized strategy."
+
+    if segment_type not in SEGMENT_TYPES:
+        segment_type = "pipeline_group"
+    if strategy_confidence_level not in STRATEGY_CONFIDENCE_LEVELS:
+        strategy_confidence_level = "low"
+    if data_maturity_level not in DATA_MATURITY_LEVELS:
+        data_maturity_level = "low"
+    if detected_pattern_type not in PATTERN_TYPES:
+        detected_pattern_type = "insufficient_pattern_evidence"
+
+    return {
+        "segment_id": segment_id,
+        "segment_type": segment_type,
+        "segment_key": segment_key,
+        "segment_confidence": segment_confidence,
+        "segment_reason": segment_reason,
+        "segment_channel_performance": segment_channel_performance,
+        "segment_response_rate": segment_response_rate,
+        "segment_conversion_rate": segment_conversion_rate,
+        "segment_follow_up_success_rate": segment_follow_up_success_rate,
+        "segment_sequence_completion_rate": segment_sequence_completion_rate,
+        "segment_recent_outcomes": segment_recent_outcomes,
+        "segment_performance_confidence": segment_performance_confidence,
+        "segment_strategy_profile": segment_strategy_profile,
+        "recommended_strategy_type": recommended_strategy_type,
+        "recommended_follow_up_pattern": recommended_follow_up_pattern,
+        "recommended_channel_mix": recommended_channel_mix,
+        "recommended_timing_pattern": recommended_timing_pattern,
+        "strategy_reason": strategy_reason,
+        "strategy_confidence_level": strategy_confidence_level,
+        "data_maturity_level": data_maturity_level,
+        "data_point_count": max(0, int(data_point_count)),
+        "exploration_mode": bool(exploration_mode),
+        "detected_pattern_type": detected_pattern_type,
+        "pattern_confidence": pattern_confidence,
+        "pattern_impact": pattern_impact,
+        "pattern_recommendation": pattern_recommendation,
+        "strategy_recommendation_only": True,
+        "strategy_governance_guard": "recommendation_only_no_auto_execution",
+        "segmentation_strategy_trace": {
+            "segment_inputs": {
+                "industry": industry,
+                "business_function": business_function,
+                "opportunity_classification": opportunity_classification,
+                "value_tier": value_tier,
+                "pipeline_group": pipeline_group,
+            },
+            "confidence_signals": {
+                "segment_confidence_sources": segment_confidence_sources,
+                "data_point_count": data_point_count,
+                "segment_performance_confidence": segment_performance_confidence,
+                "strategy_confidence_score": strategy_confidence_score,
+            },
+            "governance_posture": {
+                "governance_status": governance_status,
+                "governance_routing_outcome": governance_outcome,
+                "enforcement_status": enforcement_status,
+            },
+        },
+    }
+
+
 def build_delivery_summary_contract(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Build a governed delivery-summary and packaging contract from package state.
@@ -1159,6 +1558,14 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
         }
     )
+    segmented_intelligence_fields = _derive_segmented_intelligence_fields(
+        {
+            **p,
+            "metadata": metadata,
+            "cost_tracking": normalized_cost_tracking,
+            **revenue_fields,
+        }
+    )
 
     return {
         "package_id": package_id,
@@ -1265,6 +1672,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "budget_control": budget_control,
         **budget_fields,
         **revenue_fields,
+        **segmented_intelligence_fields,
         "delivery_summary": build_delivery_summary_contract(
             {
                 **p,
@@ -1381,6 +1789,34 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "segment_id": str(r.get("segment_id") or ""),
+        "segment_type": str(r.get("segment_type") or "pipeline_group"),
+        "segment_key": str(r.get("segment_key") or ""),
+        "segment_confidence": _normalize_revenue_ratio(r.get("segment_confidence"), fallback=0.0),
+        "segment_reason": str(r.get("segment_reason") or ""),
+        "segment_channel_performance": _normalize_channel_performance(r.get("segment_channel_performance")),
+        "segment_response_rate": _normalize_revenue_ratio(r.get("segment_response_rate"), fallback=0.0),
+        "segment_conversion_rate": _normalize_revenue_ratio(r.get("segment_conversion_rate"), fallback=0.0),
+        "segment_follow_up_success_rate": _normalize_revenue_ratio(r.get("segment_follow_up_success_rate"), fallback=0.0),
+        "segment_sequence_completion_rate": _normalize_revenue_ratio(r.get("segment_sequence_completion_rate"), fallback=0.0),
+        "segment_recent_outcomes": [x for x in list(r.get("segment_recent_outcomes") or []) if isinstance(x, dict)][:10],
+        "segment_performance_confidence": _normalize_revenue_ratio(r.get("segment_performance_confidence"), fallback=0.0),
+        "segment_strategy_profile": str(r.get("segment_strategy_profile") or ""),
+        "recommended_strategy_type": str(r.get("recommended_strategy_type") or ""),
+        "recommended_follow_up_pattern": str(r.get("recommended_follow_up_pattern") or ""),
+        "recommended_channel_mix": [str(x).strip().lower() for x in list(r.get("recommended_channel_mix") or []) if str(x).strip()][:6],
+        "recommended_timing_pattern": str(r.get("recommended_timing_pattern") or ""),
+        "strategy_reason": str(r.get("strategy_reason") or ""),
+        "strategy_confidence_level": str(r.get("strategy_confidence_level") or "low").strip().lower(),
+        "data_maturity_level": str(r.get("data_maturity_level") or "low").strip().lower(),
+        "data_point_count": max(0, int(r.get("data_point_count") or 0)),
+        "exploration_mode": bool(r.get("exploration_mode")),
+        "detected_pattern_type": str(r.get("detected_pattern_type") or "insufficient_pattern_evidence"),
+        "pattern_confidence": _normalize_revenue_ratio(r.get("pattern_confidence"), fallback=0.0),
+        "pattern_impact": str(r.get("pattern_impact") or "low").strip().lower(),
+        "pattern_recommendation": str(r.get("pattern_recommendation") or ""),
+        "strategy_recommendation_only": bool(r.get("strategy_recommendation_only", True)),
+        "strategy_governance_guard": str(r.get("strategy_governance_guard") or "recommendation_only_no_auto_execution"),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),

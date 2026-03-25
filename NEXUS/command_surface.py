@@ -287,6 +287,27 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "segment_id": p.get("segment_id") or "",
+        "segment_type": p.get("segment_type") or "pipeline_group",
+        "segment_key": p.get("segment_key") or "",
+        "segment_confidence": p.get("segment_confidence") or 0.0,
+        "segment_reason": p.get("segment_reason") or "",
+        "segment_strategy_profile": p.get("segment_strategy_profile") or "",
+        "recommended_strategy_type": p.get("recommended_strategy_type") or "",
+        "recommended_follow_up_pattern": p.get("recommended_follow_up_pattern") or "",
+        "recommended_channel_mix": list(p.get("recommended_channel_mix") or []),
+        "recommended_timing_pattern": p.get("recommended_timing_pattern") or "",
+        "strategy_reason": p.get("strategy_reason") or "",
+        "strategy_confidence_level": p.get("strategy_confidence_level") or "low",
+        "data_maturity_level": p.get("data_maturity_level") or "low",
+        "data_point_count": p.get("data_point_count") or 0,
+        "exploration_mode": bool(p.get("exploration_mode")),
+        "detected_pattern_type": p.get("detected_pattern_type") or "insufficient_pattern_evidence",
+        "pattern_confidence": p.get("pattern_confidence") or 0.0,
+        "pattern_impact": p.get("pattern_impact") or "low",
+        "pattern_recommendation": p.get("pattern_recommendation") or "",
+        "strategy_recommendation_only": bool(p.get("strategy_recommendation_only", True)),
+        "strategy_governance_guard": p.get("strategy_governance_guard") or "recommendation_only_no_auto_execution",
     }
 
 
@@ -301,6 +322,25 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "dispatch_plan_summary": dict(p.get("dispatch_plan_summary") or {}),
             "routing_summary": dict(p.get("routing_summary") or {}),
             "execution_summary": dict(p.get("execution_summary") or {}),
+            "segment_classification": {
+                "segment_id": p.get("segment_id") or "",
+                "segment_type": p.get("segment_type") or "pipeline_group",
+                "segment_key": p.get("segment_key") or "",
+                "segment_confidence": p.get("segment_confidence") or 0.0,
+                "segment_reason": p.get("segment_reason") or "",
+            },
+            "strategy_recommendation": {
+                "segment_strategy_profile": p.get("segment_strategy_profile") or "",
+                "recommended_strategy_type": p.get("recommended_strategy_type") or "",
+                "recommended_follow_up_pattern": p.get("recommended_follow_up_pattern") or "",
+                "recommended_channel_mix": list(p.get("recommended_channel_mix") or []),
+                "recommended_timing_pattern": p.get("recommended_timing_pattern") or "",
+                "strategy_reason": p.get("strategy_reason") or "",
+                "strategy_confidence_level": p.get("strategy_confidence_level") or "low",
+                "data_maturity_level": p.get("data_maturity_level") or "low",
+                "exploration_mode": bool(p.get("exploration_mode")),
+                "recommendation_only": bool(p.get("strategy_recommendation_only", True)),
+            },
         },
         "approval": {
             "requires_human_approval": bool(p.get("requires_human_approval")),
@@ -424,6 +464,15 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "segment_type": p.get("segment_type") or "pipeline_group",
+        "segment_key": p.get("segment_key") or "",
+        "segment_confidence": p.get("segment_confidence") or 0.0,
+        "recommended_strategy_type": p.get("recommended_strategy_type") or "",
+        "strategy_confidence_level": p.get("strategy_confidence_level") or "low",
+        "data_maturity_level": p.get("data_maturity_level") or "low",
+        "detected_pattern_type": p.get("detected_pattern_type") or "insufficient_pattern_evidence",
+        "pattern_impact": p.get("pattern_impact") or "low",
+        "strategy_recommendation_only": bool(p.get("strategy_recommendation_only", True)),
     }
 
 
@@ -690,6 +739,8 @@ def run_command(
                     "revenue_workflow_block_reason": row.get("revenue_workflow_block_reason") or "Blocked by governance/enforcement posture.",
                     "pipeline_stage": row.get("pipeline_stage"),
                     "highest_value_next_action": row.get("highest_value_next_action"),
+                    "segment_key": row.get("segment_key"),
+                    "recommended_strategy_type": row.get("recommended_strategy_type"),
                 }
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
@@ -713,6 +764,10 @@ def run_command(
                             "highest_value_next_action_score": row.get("highest_value_next_action_score"),
                             "pipeline_stage": row.get("pipeline_stage"),
                             "opportunity_classification": row.get("opportunity_classification"),
+                            "segment_key": row.get("segment_key"),
+                            "recommended_strategy_type": row.get("recommended_strategy_type"),
+                            "strategy_confidence_level": row.get("strategy_confidence_level"),
+                            "data_maturity_level": row.get("data_maturity_level"),
                         }
                         for row in ranked_revenue[:5]
                     ],
