@@ -9,6 +9,7 @@ under the project state directory.
 from __future__ import annotations
 
 import json
+import os
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,6 +84,25 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+COMMUNICATION_CHANNELS = {"", "email"}
+COMMUNICATION_APPROVAL_STATUSES = {"pending", "approved", "rejected", "denied"}
+COMMUNICATION_DELIVERY_STATUSES = {
+    "not_attempted",
+    "provider_not_configured",
+    "delivery_pending",
+    "delivered",
+    "failed",
+    "rejected_by_provider",
+}
+COMMUNICATION_DELIVERY_EVENTS = {
+    "not_attempted",
+    "provider_not_configured",
+    "delivery_pending",
+    "delivered",
+    "failed",
+    "rejected_by_provider",
+    "blocked",
+}
 
 
 def _utc_now_iso() -> str:
@@ -292,6 +312,24 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "communication_channel": _normalize_communication_channel(normalized.get("communication_channel")),
+        "recipient_email": str(normalized.get("recipient_email") or ""),
+        "recipient_name": str(normalized.get("recipient_name") or ""),
+        "draft_message_subject": str(normalized.get("draft_message_subject") or ""),
+        "draft_message_body": str(normalized.get("draft_message_body") or ""),
+        "communication_approval_status": _normalize_communication_approval_status(normalized.get("communication_approval_status")),
+        "communication_send_eligible": bool(normalized.get("communication_send_eligible")),
+        "communication_provider": str(normalized.get("communication_provider") or "resend"),
+        "communication_provider_message_id": str(normalized.get("communication_provider_message_id") or ""),
+        "communication_delivery_status": _normalize_communication_delivery_status(normalized.get("communication_delivery_status")),
+        "communication_delivery_attempted_at": str(normalized.get("communication_delivery_attempted_at") or ""),
+        "communication_delivery_error_code": str(normalized.get("communication_delivery_error_code") or ""),
+        "communication_delivery_error_message": str(normalized.get("communication_delivery_error_message") or ""),
+        "communication_delivery_last_event": _normalize_communication_delivery_event(normalized.get("communication_delivery_last_event")),
+        "communication_sent_at": str(normalized.get("communication_sent_at") or ""),
+        "communication_last_send_actor": str(normalized.get("communication_last_send_actor") or ""),
+        "communication_last_send_id": str(normalized.get("communication_last_send_id") or ""),
+        "communication_follow_up_ready": bool(normalized.get("communication_follow_up_ready")),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -627,6 +665,39 @@ def _normalize_revenue_ratio(value: Any, *, fallback: float = 0.0) -> float:
     if parsed > 1.0:
         parsed = 1.0
     return round(parsed, 4)
+
+
+def _normalize_communication_channel(value: Any) -> str:
+    channel = str(value or "").strip().lower()
+    if channel in COMMUNICATION_CHANNELS:
+        return channel
+    return ""
+
+
+def _normalize_communication_approval_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in COMMUNICATION_APPROVAL_STATUSES:
+        return status
+    return "pending"
+
+
+def _normalize_communication_delivery_status(value: Any) -> str:
+    status = str(value or "").strip().lower()
+    if status in COMMUNICATION_DELIVERY_STATUSES:
+        return status
+    return "not_attempted"
+
+
+def _normalize_communication_delivery_event(value: Any) -> str:
+    event = str(value or "").strip().lower()
+    if event in COMMUNICATION_DELIVERY_EVENTS:
+        return event
+    return "not_attempted"
+
+
+def _is_valid_email(value: Any) -> bool:
+    text = str(value or "").strip()
+    return bool(text and "@" in text and "." in text.split("@")[-1])
 
 
 def _normalize_pipeline_stage(value: Any) -> str:
@@ -1159,6 +1230,12 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
         }
     )
+    communication_channel = _normalize_communication_channel(p.get("communication_channel"))
+    communication_delivery_status = _normalize_communication_delivery_status(p.get("communication_delivery_status"))
+    communication_delivery_last_event = _normalize_communication_delivery_event(p.get("communication_delivery_last_event"))
+    communication_follow_up_ready = bool(p.get("communication_follow_up_ready"))
+    if not communication_follow_up_ready and communication_delivery_status == "delivered":
+        communication_follow_up_ready = True
 
     return {
         "package_id": package_id,
@@ -1265,6 +1342,24 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "budget_control": budget_control,
         **budget_fields,
         **revenue_fields,
+        "communication_channel": communication_channel,
+        "recipient_email": str(p.get("recipient_email") or ""),
+        "recipient_name": str(p.get("recipient_name") or ""),
+        "draft_message_subject": str(p.get("draft_message_subject") or ""),
+        "draft_message_body": str(p.get("draft_message_body") or ""),
+        "communication_approval_status": _normalize_communication_approval_status(p.get("communication_approval_status")),
+        "communication_send_eligible": bool(p.get("communication_send_eligible")),
+        "communication_provider": str(p.get("communication_provider") or "resend"),
+        "communication_provider_message_id": str(p.get("communication_provider_message_id") or ""),
+        "communication_delivery_status": communication_delivery_status,
+        "communication_delivery_attempted_at": str(p.get("communication_delivery_attempted_at") or ""),
+        "communication_delivery_error_code": str(p.get("communication_delivery_error_code") or ""),
+        "communication_delivery_error_message": str(p.get("communication_delivery_error_message") or ""),
+        "communication_delivery_last_event": communication_delivery_last_event,
+        "communication_sent_at": str(p.get("communication_sent_at") or ""),
+        "communication_last_send_actor": str(p.get("communication_last_send_actor") or ""),
+        "communication_last_send_id": str(p.get("communication_last_send_id") or ""),
+        "communication_follow_up_ready": communication_follow_up_ready,
         "delivery_summary": build_delivery_summary_contract(
             {
                 **p,
@@ -1381,6 +1476,24 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "communication_channel": _normalize_communication_channel(r.get("communication_channel")),
+        "recipient_email": str(r.get("recipient_email") or ""),
+        "recipient_name": str(r.get("recipient_name") or ""),
+        "draft_message_subject": str(r.get("draft_message_subject") or ""),
+        "draft_message_body": str(r.get("draft_message_body") or ""),
+        "communication_approval_status": _normalize_communication_approval_status(r.get("communication_approval_status")),
+        "communication_send_eligible": bool(r.get("communication_send_eligible")),
+        "communication_provider": str(r.get("communication_provider") or "resend"),
+        "communication_provider_message_id": str(r.get("communication_provider_message_id") or ""),
+        "communication_delivery_status": _normalize_communication_delivery_status(r.get("communication_delivery_status")),
+        "communication_delivery_attempted_at": str(r.get("communication_delivery_attempted_at") or ""),
+        "communication_delivery_error_code": str(r.get("communication_delivery_error_code") or ""),
+        "communication_delivery_error_message": str(r.get("communication_delivery_error_message") or ""),
+        "communication_delivery_last_event": _normalize_communication_delivery_event(r.get("communication_delivery_last_event")),
+        "communication_sent_at": str(r.get("communication_sent_at") or ""),
+        "communication_last_send_actor": str(r.get("communication_last_send_actor") or ""),
+        "communication_last_send_id": str(r.get("communication_last_send_id") or ""),
+        "communication_follow_up_ready": bool(r.get("communication_follow_up_ready")),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -3168,3 +3281,198 @@ def record_execution_package_revenue_activation_safe(**kwargs: Any) -> dict[str,
         return record_execution_package_revenue_activation(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package revenue activation metadata.", "package": None}
+
+
+def record_execution_package_email_delivery(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    send_actor: str,
+    send_provider_email_fn: Any | None = None,
+) -> dict[str, Any]:
+    """
+    Persist explicit governed email delivery attempt and provider-backed outcome.
+
+    This function never auto-sends; it only runs when explicitly invoked.
+    """
+    actor = str(send_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "send_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+
+    now_iso = _utc_now_iso()
+    send_id = str(uuid.uuid4())
+    package["communication_provider"] = str(package.get("communication_provider") or "resend")
+    package["communication_delivery_attempted_at"] = now_iso
+    package["communication_last_send_actor"] = actor
+    package["communication_last_send_id"] = send_id
+    package["communication_provider_message_id"] = ""
+    package["communication_sent_at"] = ""
+    package["communication_follow_up_ready"] = False
+    package["communication_delivery_error_code"] = ""
+    package["communication_delivery_error_message"] = ""
+
+    metadata = dict(package.get("metadata") or {})
+    governance_status = str(metadata.get("governance_status") or package.get("governance_status") or "").strip().lower()
+    governance_outcome = str(
+        metadata.get("governance_routing_outcome") or package.get("governance_routing_outcome") or ""
+    ).strip().lower()
+    enforcement_status = str(metadata.get("enforcement_status") or package.get("enforcement_status") or "").strip().lower()
+
+    def _persist_failed(
+        *,
+        reason_code: str,
+        reason_message: str,
+        delivery_status: str,
+        delivery_event: str,
+        result_status: str,
+    ) -> dict[str, Any]:
+        package["communication_delivery_status"] = _normalize_communication_delivery_status(delivery_status)
+        package["communication_delivery_last_event"] = _normalize_communication_delivery_event(delivery_event)
+        package["communication_delivery_error_code"] = str(reason_code or "")
+        package["communication_delivery_error_message"] = str(reason_message or "")[:400]
+        persisted = _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status=result_status,
+            reason=reason_message,
+        )
+        return {
+            **persisted,
+            "reason_code": str(reason_code or ""),
+        }
+
+    if _normalize_communication_channel(package.get("communication_channel")) != "email":
+        return _persist_failed(
+            reason_code="channel_not_email",
+            reason_message="Communication channel must be email for provider send.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+    if not str(package.get("draft_message_subject") or "").strip() or not str(package.get("draft_message_body") or "").strip():
+        return _persist_failed(
+            reason_code="draft_missing",
+            reason_message="Approved draft subject and body are required before send.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+    if _normalize_communication_approval_status(package.get("communication_approval_status")) != "approved":
+        return _persist_failed(
+            reason_code="approval_not_approved",
+            reason_message="Communication approval status must be approved before send.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+    if not bool(package.get("communication_send_eligible")):
+        return _persist_failed(
+            reason_code="communication_not_eligible",
+            reason_message="Communication send eligibility must be true before send.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+    if governance_status == "blocked" or governance_outcome == "stop":
+        return _persist_failed(
+            reason_code="governance_hard_block",
+            reason_message="Governance hard block is active; provider send is denied.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+    if enforcement_status == "blocked":
+        return _persist_failed(
+            reason_code="enforcement_hard_block",
+            reason_message="Enforcement hard block is active; provider send is denied.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+    recipient_email = str(package.get("recipient_email") or "").strip()
+    if not _is_valid_email(recipient_email):
+        return _persist_failed(
+            reason_code="recipient_email_missing",
+            reason_message="Recipient email is required before provider send.",
+            delivery_status="failed",
+            delivery_event="blocked",
+            result_status="blocked",
+        )
+
+    provider_fn = send_provider_email_fn
+    if provider_fn is None:
+        if not str(os.getenv("RESEND_API_KEY") or "").strip() or not str(os.getenv("RESEND_FROM_EMAIL") or "").strip():
+            return _persist_failed(
+                reason_code="provider_not_configured",
+                reason_message="Email provider configuration is missing.",
+                delivery_status="provider_not_configured",
+                delivery_event="provider_not_configured",
+                result_status="failed",
+            )
+        from NEXUS.resend_provider import send_email_via_resend
+
+        provider_fn = send_email_via_resend
+
+    package["communication_delivery_status"] = "delivery_pending"
+    package["communication_delivery_last_event"] = "delivery_pending"
+    provider_result = provider_fn(
+        to_email=recipient_email,
+        subject=str(package.get("draft_message_subject") or "").strip(),
+        body=str(package.get("draft_message_body") or ""),
+    )
+    provider_status = str((provider_result or {}).get("status") or "").strip().lower()
+    provider_message_id = str((provider_result or {}).get("provider_message_id") or "").strip()
+    error_code = str((provider_result or {}).get("error_code") or "").strip().lower()
+    error_message = str((provider_result or {}).get("error_message") or "").strip()[:400]
+
+    if provider_status == "ok" and provider_message_id:
+        package["communication_provider_message_id"] = provider_message_id
+        package["communication_delivery_status"] = "delivered"
+        package["communication_delivery_last_event"] = "delivered"
+        package["communication_delivery_error_code"] = ""
+        package["communication_delivery_error_message"] = ""
+        package["communication_sent_at"] = now_iso
+        package["communication_follow_up_ready"] = True
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="ok",
+            reason="Execution package email delivered through provider.",
+        )
+
+    if provider_status == "rejected":
+        return _persist_failed(
+            reason_code=error_code or "rejected_by_provider",
+            reason_message=error_message or "Email rejected by provider.",
+            delivery_status="rejected_by_provider",
+            delivery_event="rejected_by_provider",
+            result_status="failed",
+        )
+    if error_code == "provider_not_configured":
+        return _persist_failed(
+            reason_code=error_code,
+            reason_message=error_message or "Email provider configuration is missing.",
+            delivery_status="provider_not_configured",
+            delivery_event="provider_not_configured",
+            result_status="failed",
+        )
+    return _persist_failed(
+        reason_code=error_code or "provider_request_failed",
+        reason_message=error_message or "Provider request failed.",
+        delivery_status="failed",
+        delivery_event="failed",
+        result_status="failed",
+    )
+
+
+def record_execution_package_email_delivery_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_email_delivery(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package email delivery.", "package": None}

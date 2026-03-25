@@ -61,6 +61,8 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_evaluation_status",
     "execution_package_local_analysis",
     "execution_package_local_analysis_status",
+    "execution_package_email_send",
+    "execution_package_email_delivery_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -287,6 +289,12 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "communication_channel": p.get("communication_channel") or "",
+        "communication_approval_status": p.get("communication_approval_status") or "pending",
+        "communication_send_eligible": bool(p.get("communication_send_eligible")),
+        "communication_delivery_status": p.get("communication_delivery_status") or "not_attempted",
+        "communication_delivery_last_event": p.get("communication_delivery_last_event") or "not_attempted",
+        "communication_provider": p.get("communication_provider") or "resend",
     }
 
 
@@ -376,6 +384,26 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "rollback_repair": dict(p.get("rollback_repair") or {}),
             "integrity_verification": dict(p.get("integrity_verification") or {}),
         },
+        "communication": {
+            "communication_channel": p.get("communication_channel") or "",
+            "recipient_email": p.get("recipient_email") or "",
+            "recipient_name": p.get("recipient_name") or "",
+            "draft_message_subject": p.get("draft_message_subject") or "",
+            "draft_message_body": p.get("draft_message_body") or "",
+            "communication_approval_status": p.get("communication_approval_status") or "pending",
+            "communication_send_eligible": bool(p.get("communication_send_eligible")),
+            "communication_provider": p.get("communication_provider") or "resend",
+            "communication_provider_message_id": p.get("communication_provider_message_id") or "",
+            "communication_delivery_status": p.get("communication_delivery_status") or "not_attempted",
+            "communication_delivery_attempted_at": p.get("communication_delivery_attempted_at") or "",
+            "communication_delivery_error_code": p.get("communication_delivery_error_code") or "",
+            "communication_delivery_error_message": p.get("communication_delivery_error_message") or "",
+            "communication_delivery_last_event": p.get("communication_delivery_last_event") or "not_attempted",
+            "communication_sent_at": p.get("communication_sent_at") or "",
+            "communication_last_send_actor": p.get("communication_last_send_actor") or "",
+            "communication_last_send_id": p.get("communication_last_send_id") or "",
+            "communication_follow_up_ready": bool(p.get("communication_follow_up_ready")),
+        },
         "metadata": dict(p.get("metadata") or {}),
     }
     cursor_bridge_artifacts = list(p.get("cursor_bridge_artifacts") or [])
@@ -424,6 +452,8 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "communication_delivery_status": p.get("communication_delivery_status") or "not_attempted",
+        "communication_delivery_last_event": p.get("communication_delivery_last_event") or "not_attempted",
     }
 
 
@@ -1807,6 +1837,178 @@ def run_command(
                     "project_path": path,
                     "package_id": package_id,
                     "local_analysis": local_analysis,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_email_send":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        send_actor = str(kwargs.get("send_actor") or "").strip()
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not send_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="send_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_email_delivery_safe
+
+            result = record_execution_package_email_delivery_safe(
+                project_path=path,
+                package_id=package_id,
+                send_actor=send_actor,
+            )
+            package = result.get("package") or {}
+            communication = {
+                "communication_channel": package.get("communication_channel"),
+                "recipient_email": package.get("recipient_email"),
+                "recipient_name": package.get("recipient_name"),
+                "draft_message_subject": package.get("draft_message_subject"),
+                "communication_approval_status": package.get("communication_approval_status"),
+                "communication_send_eligible": package.get("communication_send_eligible"),
+                "communication_provider": package.get("communication_provider"),
+                "communication_provider_message_id": package.get("communication_provider_message_id"),
+                "communication_delivery_status": package.get("communication_delivery_status"),
+                "communication_delivery_attempted_at": package.get("communication_delivery_attempted_at"),
+                "communication_delivery_error_code": package.get("communication_delivery_error_code"),
+                "communication_delivery_error_message": package.get("communication_delivery_error_message"),
+                "communication_delivery_last_event": package.get("communication_delivery_last_event"),
+                "communication_sent_at": package.get("communication_sent_at"),
+                "communication_last_send_actor": package.get("communication_last_send_actor"),
+                "communication_last_send_id": package.get("communication_last_send_id"),
+                "communication_follow_up_ready": package.get("communication_follow_up_ready"),
+            }
+            result_status = str(result.get("status") or "error").strip().lower()
+            if result_status == "ok":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; communication_delivery_status={communication.get('communication_delivery_status')}",
+                    payload={
+                        "status": "ok",
+                        "reason": str(result.get("reason") or "Execution package email delivery recorded."),
+                        "project_path": path,
+                        "package_id": package_id,
+                        "communication": communication,
+                    },
+                )
+            if result_status in {"blocked", "failed"}:
+                return _result(
+                    command=cmd,
+                    status="blocked",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; communication_delivery_status={communication.get('communication_delivery_status')}",
+                    payload={
+                        "status": "blocked",
+                        "reason": str(result.get("reason") or "Execution package email delivery blocked."),
+                        "reason_code": str(result.get("reason_code") or ""),
+                        "project_path": path,
+                        "package_id": package_id,
+                        "communication": communication,
+                    },
+                )
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(result.get("reason") or "Failed to record execution package email delivery."),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_email_delivery_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            communication = {
+                "communication_channel": package.get("communication_channel"),
+                "recipient_email": package.get("recipient_email"),
+                "recipient_name": package.get("recipient_name"),
+                "draft_message_subject": package.get("draft_message_subject"),
+                "communication_approval_status": package.get("communication_approval_status"),
+                "communication_send_eligible": package.get("communication_send_eligible"),
+                "communication_provider": package.get("communication_provider"),
+                "communication_provider_message_id": package.get("communication_provider_message_id"),
+                "communication_delivery_status": package.get("communication_delivery_status"),
+                "communication_delivery_attempted_at": package.get("communication_delivery_attempted_at"),
+                "communication_delivery_error_code": package.get("communication_delivery_error_code"),
+                "communication_delivery_error_message": package.get("communication_delivery_error_message"),
+                "communication_delivery_last_event": package.get("communication_delivery_last_event"),
+                "communication_sent_at": package.get("communication_sent_at"),
+                "communication_last_send_actor": package.get("communication_last_send_actor"),
+                "communication_last_send_id": package.get("communication_last_send_id"),
+                "communication_follow_up_ready": package.get("communication_follow_up_ready"),
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; communication_delivery_status={communication.get('communication_delivery_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package email delivery status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "communication": communication,
                 },
             )
         except Exception as e:
