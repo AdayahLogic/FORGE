@@ -111,6 +111,9 @@ function getChipClass(value: string) {
       "no_offer_yet",
       "offer_needs_more_info",
       "high_touch_review_recommended",
+      "no_response",
+      "needs_more_info",
+      "high_touch_required",
     ].includes(value)
   ) {
     return "chip warn";
@@ -122,6 +125,7 @@ function getChipClass(value: string) {
       "qualified",
       "high_priority",
       "offer_ready",
+      "response_ready",
     ].includes(value)
   ) {
     return "chip success";
@@ -912,6 +916,41 @@ export function ProjectIntakeWorkspace({
                         ))
                       ) : (
                         <div className="audit-item muted">No additional offer constraints noted.</div>
+                      )}
+                    </div>
+                  </div>
+                ) : null}
+                {effectivePreview.response_summary ? (
+                  <div className="detail-card">
+                    <h4>Draft Response (Preview Only)</h4>
+                    <div className="chip-row" style={{ marginBottom: 10 }}>
+                      <span className={getChipClass(effectivePreview.response_summary.response_status)}>
+                        {effectivePreview.response_summary.response_status}
+                      </span>
+                      <span className="chip">{effectivePreview.response_summary.response_tone}</span>
+                      <span className="chip warn">not sent</span>
+                    </div>
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Response Summary</div>
+                      <div style={{ marginTop: 8 }}>
+                        {effectivePreview.response_summary.response_summary || "No response summary yet."}
+                      </div>
+                    </div>
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Response Message</div>
+                      <div style={{ marginTop: 8 }}>
+                        {effectivePreview.response_summary.response_message || "No draft response generated yet."}
+                      </div>
+                    </div>
+                    <div className="detail-list">
+                      {effectivePreview.response_summary.response_constraints.length > 0 ? (
+                        effectivePreview.response_summary.response_constraints.map((constraint) => (
+                          <div className="audit-item" key={constraint}>
+                            {constraint}
+                          </div>
+                        ))
+                      ) : (
+                        <div className="audit-item muted">No response constraints provided.</div>
                       )}
                     </div>
                   </div>

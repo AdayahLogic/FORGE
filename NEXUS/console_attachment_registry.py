@@ -721,6 +721,113 @@ def _build_revenue_offer_summary(
     }
 
 
+def _response_tone_for_offer(*, offer_status: str, urgency: str) -> str:
+    normalized_offer_status = str(offer_status or "").strip().lower()
+    normalized_urgency = str(urgency or "").strip().lower()
+    if normalized_offer_status == "high_touch_review_recommended":
+        return "consultative"
+    if normalized_urgency in {"low", "medium"}:
+        return "friendly"
+    return "professional"
+
+
+def _build_revenue_response_summary(
+    *,
+    lead_profile: dict[str, str],
+    qualification_summary: dict[str, Any],
+    offer_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    qualification_status = str(qualification_summary.get("qualification_status") or "").strip().lower()
+    offer = dict(offer_summary or {})
+    offer_status = str(offer.get("offer_status") or "").strip().lower()
+    contact_name = str(lead_profile.get("contact_name") or "").strip()
+    company_name = str(lead_profile.get("company_name") or "").strip()
+    problem_summary = str(lead_profile.get("problem_summary") or "").strip()
+    requested_outcome = str(lead_profile.get("requested_outcome") or "").strip()
+    missing_lead_fields = _lead_intake_missing_fields(lead_profile)
+    urgency = str((qualification_summary.get("qualification_signals") or {}).get("urgency") or "")
+    tone = _response_tone_for_offer(offer_status=offer_status, urgency=urgency)
+    constraints = [
+        "Draft response only. This is not sent externally.",
+        "No execution, routing, or package creation is triggered by this draft.",
+    ]
+    if missing_lead_fields:
+        constraints.append("Lead profile still has missing required fields.")
+
+    if qualification_status == "needs_more_info" or not offer_status or offer_status == "no_offer_yet":
+        return {
+            "response_status": "no_response",
+            "response_tone": tone,
+            "response_message": "",
+            "response_summary": (
+                "Response drafting is deferred until qualification and offer framing are ready."
+            ),
+            "response_constraints": constraints,
+        }
+
+    if missing_lead_fields or offer_status == "offer_needs_more_info":
+        missing_bits = []
+        if missing_lead_fields:
+            missing_bits.append("lead profile details")
+        if offer_status == "offer_needs_more_info":
+            missing_bits.append("offer inputs")
+        missing_label = " and ".join(missing_bits) if missing_bits else "key details"
+        return {
+            "response_status": "needs_more_info",
+            "response_tone": tone,
+            "response_message": (
+                f"Thanks for sharing this context{f', {contact_name}' if contact_name else ''}. "
+                "We understand the core challenge and are preparing a tailored recommendation. "
+                f"Before we finalize a formal response, we need a bit more clarity on {missing_label}. "
+                "Once those details are confirmed, we can provide a more precise next-step proposal."
+            ),
+            "response_summary": (
+                "A draft response exists, but additional information is needed before it is fully ready."
+            ),
+            "response_constraints": constraints,
+        }
+
+    if offer_status == "high_touch_review_recommended":
+        constraints.append("High-touch review is recommended before any external commitments.")
+        return {
+            "response_status": "high_touch_required",
+            "response_tone": tone,
+            "response_message": (
+                f"Thank you{f' {contact_name}' if contact_name else ''} for outlining your goals"
+                f"{f' at {company_name}' if company_name else ''}. "
+                "Based on the complexity and risk signals in your request, our recommended next step is a high-touch "
+                "scoping review so we can align on boundaries, priorities, and delivery posture. "
+                "After that review, we can share a refined implementation direction and commercial framing."
+            ),
+            "response_summary": (
+                "Complexity is elevated, so the draft response recommends high-touch review before final offer messaging."
+            ),
+            "response_constraints": constraints,
+        }
+
+    recommended_service_type = str(offer.get("recommended_service_type") or "governed_implementation")
+    recommended_tier = str(offer.get("recommended_package_tier") or "growth")
+    pricing_direction = str(offer.get("pricing_direction") or "standard_project_direction")
+    response_body = (
+        f"Thank you{f' {contact_name}' if contact_name else ''} for sharing your request"
+        f"{f' for {company_name}' if company_name else ''}. "
+        f"We understand the core problem: {problem_summary or 'you need a governed implementation path that reduces delivery risk'}. "
+        f"Based on your intake and qualification signals, our current draft direction is a {recommended_service_type} approach "
+        f"with a {recommended_tier} package tier and {pricing_direction} pricing posture. "
+        f"{requested_outcome + '. ' if requested_outcome else ''}"
+        "If this direction aligns, the next step is a scoped planning review to confirm priorities, constraints, and implementation sequencing."
+    )
+    return {
+        "response_status": "response_ready",
+        "response_tone": tone,
+        "response_message": response_body.strip(),
+        "response_summary": (
+            "Draft response is ready and aligned to intake, qualification, and offer framing."
+        ),
+        "response_constraints": constraints,
+    }
+
+
 def _resolve_default_request_kind(project_state: dict[str, Any]) -> str:
     intake_mode = str(project_state.get("intake_mode") or "").strip().lower()
     if intake_mode == "lead_intake":
@@ -953,6 +1060,15 @@ def preview_intake_request(
         if normalized_request_kind == "lead_intake"
         else None
     )
+    response_summary = (
+        _build_revenue_response_summary(
+            lead_profile=lead_profile,
+            qualification_summary=qualification_summary,
+            offer_summary=offer_summary,
+        )
+        if normalized_request_kind == "lead_intake"
+        else None
+    )
     return {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
@@ -979,6 +1095,7 @@ def preview_intake_request(
             else None
         ),
         "offer_summary": offer_summary,
+        "response_summary": response_summary,
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
@@ -1032,6 +1149,23 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
                     lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
                     qualification=_normalize_lead_qualification(kwargs.get("qualification")),
                     qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                )
+                if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                else None
+            ),
+            "response_summary": (
+                _build_revenue_response_summary(
+                    lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                    qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                    offer_summary=(
+                        _build_revenue_offer_summary(
+                            lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                            qualification=_normalize_lead_qualification(kwargs.get("qualification")),
+                            qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                        )
+                        if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                        else None
+                    ),
                 )
                 if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
                 else None
