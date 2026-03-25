@@ -32,6 +32,7 @@ export function SystemOverview({ overview }: Props) {
   const executorHealth = data?.executor_health ?? {};
   const costVisibility = data?.cost_visibility;
   const budgetVisibility = data?.budget_visibility;
+  const modelRouting = data?.model_routing_visibility;
   const systemStatus = data?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const displayState = (value: unknown, fallback: string) => {
@@ -125,6 +126,11 @@ export function SystemOverview({ overview }: Props) {
                 ).toFixed(4)}`
               : "Estimated Budget (Non-Billed Governance Control)"
           }
+        />
+        <StatCard
+          label="Model Routing Policy"
+          value={Number(modelRouting?.blocked_or_deferred_count ?? 0)}
+          subvalue={modelRouting?.policy_output_label ?? "Policy Output (Read-only)"}
         />
       </div>
     </section>

@@ -71,6 +71,36 @@ export type ForgeBudgetControl = {
   budget_reason: string;
 };
 
+export type ForgeModelLane =
+  | "low_cost_lane"
+  | "balanced_lane"
+  | "high_reasoning_lane"
+  | "governed_high_sensitivity_lane"
+  | "";
+
+export type ForgeModelRoutingOutcome =
+  | "route_low_cost"
+  | "route_balanced"
+  | "route_high_reasoning"
+  | "route_governed_high_sensitivity"
+  | "route_blocked_by_budget"
+  | "route_deferred_for_review";
+
+export type ForgeModelRoutingPolicy = {
+  task_type: string;
+  task_complexity: string;
+  task_risk_level: string;
+  cost_sensitivity: string;
+  budget_status: string;
+  selected_model_lane: ForgeModelLane;
+  routing_reason: string;
+  routing_status: string;
+  routing_outcome: ForgeModelRoutingOutcome | string;
+  budget_aware_note: string;
+  authority_trace: Record<string, unknown>;
+  governance_trace: Record<string, unknown>;
+};
+
 export type ForgeConstraintSections = {
   scope_boundaries: string[];
   risk_notes: string[];
@@ -259,6 +289,7 @@ export type ForgeReviewCenterSnapshot = {
     suggested_next_action: string;
   };
   execution_feedback: ForgeExecutionFeedback;
+  model_routing_policy?: ForgeModelRoutingPolicy;
   evaluation_summary: Record<string, unknown>;
   local_analysis_summary: Record<string, unknown>;
   related_attachments: ForgeReviewAttachmentRecord[];
@@ -302,12 +333,15 @@ export type ForgeIntakePreview = {
   remaining_estimated_budget: number;
   kill_switch_active: boolean;
   budget_reason: string;
+  model_routing_policy: ForgeModelRoutingPolicy;
   package_preview: {
     creation_mode: string;
     package_creation_allowed: boolean;
     governance_required: boolean;
     routing_authority: string;
     execution_authority: string;
+    routing_status?: string;
+    budget_aware_routing_note?: string;
     attachment_input_count: number;
     attachment_preview_count: number;
     summary: string;
@@ -363,6 +397,9 @@ export type ForgeProjectRow = {
   current_estimated_cost?: number;
   remaining_estimated_budget?: number;
   kill_switch_active?: boolean;
+  selected_model_lane?: ForgeModelLane;
+  routing_status?: string;
+  routing_reason?: string;
 };
 
 export type ForgeClientProjectRow = {
@@ -474,6 +511,13 @@ export type ForgeOverviewSnapshot = {
       remaining_estimated_budget: number;
       kill_switch_active: boolean;
     };
+    model_routing_visibility?: {
+      policy_output_label: string;
+      selected_lane_count: Record<string, number>;
+      routing_status_count: Record<string, number>;
+      blocked_or_deferred_count: number;
+      budget_note: string;
+    };
   };
   projects: ForgeProjectRow[];
   approval_center: {
@@ -526,6 +570,7 @@ export type PackageDetailSnapshot = {
   package_json: Record<string, unknown>;
   timeline: Array<Record<string, unknown>>;
   execution_feedback: ForgeExecutionFeedback;
+  model_routing_policy?: ForgeModelRoutingPolicy;
   cost_summary?: {
     operation_cost: ForgeEstimatedCost;
     timeline_estimated_cost_total: number;

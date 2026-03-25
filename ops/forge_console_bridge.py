@@ -38,6 +38,7 @@ from NEXUS.execution_package_registry import (
     list_execution_package_journal_entries,
     read_execution_package,
 )
+from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
 
@@ -183,6 +184,42 @@ def _project_cost_summary(
     }
 
 
+def _project_model_routing_policy(project_key: str, project_path: str) -> dict[str, Any]:
+    if not str(project_path or "").strip():
+        return {}
+    try:
+        intake_workspace = build_intake_workspace(project_key=project_key, project_path=project_path)
+        preview = dict(intake_workspace.get("preview") or {})
+        policy = dict(preview.get("model_routing_policy") or {})
+        return policy
+    except Exception:
+        return {}
+
+
+def _build_model_routing_visibility(project_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    lane_count: dict[str, int] = {}
+    status_count: dict[str, int] = {}
+    blocked_or_deferred = 0
+    for row in project_rows:
+        if not isinstance(row, dict):
+            continue
+        lane = str(row.get("selected_model_lane") or "").strip().lower()
+        status = str(row.get("routing_status") or "").strip().lower()
+        if lane:
+            lane_count[lane] = lane_count.get(lane, 0) + 1
+        if status:
+            status_count[status] = status_count.get(status, 0) + 1
+            if status in {"blocked_by_budget", "deferred_for_review"}:
+                blocked_or_deferred += 1
+    return {
+        "policy_output_label": "Policy Output (Read-only)",
+        "selected_lane_count": lane_count,
+        "routing_status_count": status_count,
+        "blocked_or_deferred_count": blocked_or_deferred,
+        "budget_note": "Routing remains governed and budget-aware; UI cannot override policy decisions.",
+    }
+
+
 def _resolve_project(project_key: str | None) -> tuple[str | None, dict[str, Any] | None]:
     key = str(project_key or "").strip().lower()
     if not key:
@@ -208,6 +245,7 @@ def _project_rows_from_dashboard(dashboard: dict[str, Any]) -> list[dict[str, An
     for key in sorted(PROJECTS.keys()):
         meta = PROJECTS.get(key) or {}
         project_path = str(meta.get("path") or "")
+        model_routing_policy = _project_model_routing_policy(key, project_path)
         cost_summary = _project_cost_summary(project_path=project_path) if project_path else {
             "cost_per_project": {"estimated_cost_total": 0.0, "cost_unit": "usd_estimated"}
         }
@@ -236,6 +274,9 @@ def _project_rows_from_dashboard(dashboard: dict[str, Any]) -> list[dict[str, An
                 "current_estimated_cost": float(cost_summary.get("current_estimated_cost") or 0.0),
                 "remaining_estimated_budget": float(cost_summary.get("remaining_estimated_budget") or 0.0),
                 "kill_switch_active": bool(cost_summary.get("kill_switch_active")),
+                "selected_model_lane": str(model_routing_policy.get("selected_model_lane") or ""),
+                "routing_status": str(model_routing_policy.get("routing_status") or ""),
+                "routing_reason": str(model_routing_policy.get("routing_reason") or ""),
             }
         )
     return rows
@@ -902,6 +943,7 @@ def build_studio_snapshot() -> dict[str, Any]:
                 "remaining_estimated_budget": remaining_total_budget,
                 "kill_switch_active": bool(governing_project_budget.get("kill_switch_active")),
             },
+            "model_routing_visibility": _build_model_routing_visibility(project_rows),
         },
         "projects": project_rows,
         "approval_center": {
@@ -1161,11 +1203,13 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         )
     execution_feedback = _build_execution_feedback(package, timeline=timeline)
     cost_summary = _build_package_cost_summary(
+    cost_summary = _build_package_cost_summary(
         package,
         timeline,
         project_path=project_path,
         run_id=str(package.get("run_id") or ""),
     )
+    model_routing_policy = _derive_package_model_routing_policy(package)
     return _result(
         "ok",
         {
@@ -1180,6 +1224,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "timeline": timeline,
             "execution_feedback": execution_feedback,
             "cost_summary": cost_summary,
+            "model_routing_policy": model_routing_policy,
             "review_center": _build_review_center_snapshot(
                 package_id=package_id,
                 package=package,
@@ -1187,6 +1232,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 evaluation=evaluation.get("evaluation") or {},
                 local_analysis=local_analysis.get("local_analysis") or {},
                 related_attachments=related_attachments,
+                model_routing_policy=model_routing_policy,
             ),
         },
         "",
@@ -1290,6 +1336,40 @@ def _build_package_cost_summary(
     }
 
 
+def _derive_package_model_routing_policy(package: dict[str, Any]) -> dict[str, Any]:
+    review_status = str(package.get("review_status") or "").strip().lower()
+    governance_required = bool(package.get("requires_human_approval"))
+    expected_outputs = [str(item) for item in list(package.get("expected_outputs") or []) if str(item).strip()]
+    metadata = dict(package.get("metadata") or {})
+    budget_status = str(
+        metadata.get("budget_status")
+        or metadata.get("budget_posture")
+        or ("kill_switch_active" if bool(metadata.get("kill_switch_active")) else "")
+        or "within_cap"
+    ).strip().lower()
+    risk_level = "governance_sensitive" if governance_required or review_status in {"review_pending", "pending"} else "medium"
+    task_type = "review" if review_status in {"review_pending", "pending", "reviewed"} else "implementation"
+    complexity = "high" if len(expected_outputs) >= 5 else ("low" if len(expected_outputs) <= 1 else "medium")
+    return resolve_model_routing_policy_safe(
+        task_type=task_type,
+        task_complexity=complexity,
+        task_risk_level=risk_level,
+        cost_sensitivity="medium",
+        budget_status=budget_status,
+        is_routine_task=(task_type == "implementation" and complexity == "low"),
+        is_high_impact_task=bool(governance_required),
+        authority_trace={
+            "routing_authority": "NEXUS",
+            "surface": "execution_package_snapshot",
+            "package_id": str(package.get("package_id") or ""),
+        },
+        governance_trace={
+            "execution_authority": "package_governance_only",
+            "source": "package_snapshot_derivation",
+        },
+    )
+
+
 def _build_review_center_snapshot(
     *,
     package_id: str,
@@ -1298,6 +1378,7 @@ def _build_review_center_snapshot(
     evaluation: dict[str, Any],
     local_analysis: dict[str, Any],
     related_attachments: list[dict[str, Any]],
+    model_routing_policy: dict[str, Any],
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
@@ -1318,6 +1399,7 @@ def _build_review_center_snapshot(
         "patch_context": _summarize_patch_context(package),
         "test_results": _summarize_test_results(package, evaluation, local_analysis),
         "execution_feedback": execution_feedback,
+        "model_routing_policy": model_routing_policy,
         "evaluation_summary": dict(evaluation.get("evaluation_summary") or {}),
         "local_analysis_summary": dict(local_analysis.get("local_analysis_summary") or {}),
         "related_attachments": related_attachments,

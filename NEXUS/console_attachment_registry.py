@@ -21,6 +21,7 @@ from NEXUS.budget_controls import (
     summarize_journal_estimated_costs,
 )
 from NEXUS.execution_package_registry import list_execution_package_journal_entries
+from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
 from NEXUS.path_utils import to_studio_relative_path
 from NEXUS.project_state import ensure_state_folder, load_project_state
 
@@ -110,6 +111,15 @@ HIGH_TOUCH_COMPLEXITY_TERMS = (
     "security",
     "integration",
     "enterprise",
+)
+HIGH_RISK_ROUTING_TERMS = (
+    "security",
+    "regulated",
+    "compliance",
+    "critical",
+    "high_risk",
+    "legal",
+    "privacy",
 )
 
 
@@ -991,6 +1001,92 @@ def _build_revenue_conversion_summary(
     }
 
 
+def _derive_task_complexity(
+    *,
+    objective: str,
+    project_context: str,
+    flat_constraints: list[str],
+    requested_artifacts: list[str],
+    mode: str,
+    offer_summary: dict[str, Any] | None,
+    conversion_summary: dict[str, Any] | None,
+) -> str:
+    if mode == "revenue_lead":
+        offer_status = str((offer_summary or {}).get("offer_status") or "").strip().lower()
+        conversion_status = str((conversion_summary or {}).get("conversion_status") or "").strip().lower()
+        if offer_status == "high_touch_review_recommended" or conversion_status == "high_touch_conversion_required":
+            return "high"
+    content_len = (
+        len(str(objective or ""))
+        + len(str(project_context or ""))
+        + sum(len(str(item or "")) for item in flat_constraints)
+        + sum(len(str(item or "")) for item in requested_artifacts)
+    )
+    if content_len >= 1100 or len(requested_artifacts) >= 6 or len(flat_constraints) >= 10:
+        return "high"
+    if content_len <= 260 and len(requested_artifacts) <= 2 and len(flat_constraints) <= 4:
+        return "low"
+    return "medium"
+
+
+def _derive_task_risk(
+    *,
+    structured_constraints: dict[str, list[str]],
+    lead_profile: dict[str, str],
+    mode: str,
+    offer_summary: dict[str, Any] | None,
+) -> str:
+    risk_text = " ".join(
+        list(structured_constraints.get("risk_notes") or [])
+        + [
+            str(lead_profile.get("problem_summary") or ""),
+            str(lead_profile.get("requested_outcome") or ""),
+        ]
+    ).strip().lower()
+    if mode == "revenue_lead" and str((offer_summary or {}).get("offer_status") or "").strip().lower() == "high_touch_review_recommended":
+        return "governance_sensitive"
+    if any(term in risk_text for term in HIGH_RISK_ROUTING_TERMS):
+        return "high"
+    return "medium"
+
+
+def _derive_cost_sensitivity(
+    *,
+    qualification_summary: dict[str, Any],
+    lead_profile: dict[str, str],
+) -> str:
+    budget_band = str(((qualification_summary.get("qualification_signals") or {}).get("budget_band")) or "").strip().lower()
+    if budget_band in {"none", "unknown", "very_low", "low"}:
+        return "high"
+    if budget_band in {"high", "enterprise"}:
+        return "low"
+    context = str(lead_profile.get("budget_context") or "").strip().lower()
+    if any(term in context for term in ("limited", "tight", "constrained", "reduced")):
+        return "high"
+    return "medium"
+
+
+def _derive_budget_status(project_path: str) -> str:
+    state = load_project_state(project_path) if str(project_path or "").strip() else {}
+    if not isinstance(state, dict):
+        return "within_cap"
+    if bool(state.get("kill_switch_active")):
+        return "kill_switch_active"
+    explicit = str(
+        state.get("budget_status")
+        or state.get("budget_posture")
+        or state.get("budget_cap_status")
+        or ""
+    ).strip().lower()
+    if explicit in {"within_cap", "approaching_cap", "cap_exceeded", "kill_switch_active"}:
+        return explicit
+    if bool(state.get("budget_cap_exceeded")):
+        return "cap_exceeded"
+    if bool(state.get("budget_cap_approaching")):
+        return "approaching_cap"
+    return "within_cap"
+
+
 def _resolve_default_request_kind(project_state: dict[str, Any]) -> str:
     intake_mode = str(project_state.get("intake_mode") or "").strip().lower()
     if intake_mode == "lead_intake":
@@ -1266,6 +1362,49 @@ def preview_intake_request(
         current_project_cost=project_cost,
         current_session_cost=session_cost,
     )
+    task_type = "preview"
+    if normalized_request_kind == "lead_intake" and str((offer_summary or {}).get("offer_status") or "").strip().lower() == "high_touch_review_recommended":
+        task_type = "governance_sensitive_evaluation"
+    policy_budget_status = str(budget_control.get("budget_status") or "within_budget").strip().lower()
+    if policy_budget_status == "kill_switch_triggered":
+        policy_budget_status = "kill_switch_active"
+    model_routing_policy = resolve_model_routing_policy_safe(
+        task_type=task_type,
+        task_complexity=_derive_task_complexity(
+            objective=objective_value,
+            project_context=project_context_value,
+            flat_constraints=flat_constraints,
+            requested_artifacts=flat_requested_artifacts,
+            mode=mode,
+            offer_summary=offer_summary,
+            conversion_summary=conversion_summary,
+        ),
+        task_risk_level=_derive_task_risk(
+            structured_constraints=structured_constraints,
+            lead_profile=lead_profile,
+            mode=mode,
+            offer_summary=offer_summary,
+        ),
+        cost_sensitivity=_derive_cost_sensitivity(
+            qualification_summary=qualification_summary,
+            lead_profile=lead_profile,
+        ),
+        budget_status=policy_budget_status,
+        is_routine_task=(mode != "revenue_lead" and len(flat_constraints) <= 4 and len(flat_requested_artifacts) <= 2),
+        is_high_impact_task=(mode == "revenue_lead" and str((qualification_summary.get("qualification_status") or "")).strip().lower() == "high_priority"),
+        authority_trace={
+            "routing_authority": "NEXUS",
+            "surface": "console_intake_preview",
+            "project_key": str(project_key or ""),
+            "budget_scope": str(budget_control.get("budget_scope") or "operation"),
+        },
+        governance_trace={
+            "request_kind": normalized_request_kind,
+            "preview_only": True,
+            "execution_authority": "package_governance_only",
+            "budget_policy_reason": str(budget_control.get("budget_reason") or ""),
+        },
+    )
     return {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
@@ -1304,12 +1443,15 @@ def preview_intake_request(
         "remaining_estimated_budget": float(budget_control.get("remaining_estimated_budget") or 0.0),
         "kill_switch_active": bool(budget_control.get("kill_switch_active")),
         "budget_reason": str(budget_control.get("budget_reason") or ""),
+        "model_routing_policy": model_routing_policy,
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
             "governance_required": True,
             "routing_authority": "NEXUS",
             "execution_authority": "package_governance_only",
+            "routing_status": str(model_routing_policy.get("routing_status") or ""),
+            "budget_aware_routing_note": str(model_routing_policy.get("budget_aware_note") or ""),
             "attachment_input_count": len(linked),
             "attachment_preview_count": allowed_link_count,
             "summary": (
@@ -1431,12 +1573,29 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
             "remaining_estimated_budget": 0.0,
             "kill_switch_active": False,
             "budget_reason": "Preview failed before budget evaluation could run.",
+            "model_routing_policy": resolve_model_routing_policy_safe(
+                task_type="preview",
+                task_complexity="medium",
+                task_risk_level="medium",
+                cost_sensitivity="medium",
+                budget_status="within_cap",
+                authority_trace={
+                    "routing_authority": "NEXUS",
+                    "surface": "console_intake_preview",
+                },
+                governance_trace={
+                    "preview_only": True,
+                    "execution_authority": "package_governance_only",
+                },
+            ),
             "package_preview": {
                 "creation_mode": "preview_only",
                 "package_creation_allowed": False,
                 "governance_required": True,
                 "routing_authority": "NEXUS",
                 "execution_authority": "package_governance_only",
+                "routing_status": "deferred_for_review",
+                "budget_aware_routing_note": "",
                 "attachment_input_count": 0,
                 "attachment_preview_count": 0,
                 "summary": "Preview unavailable.",

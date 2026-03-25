@@ -44,6 +44,7 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
   const sections = (detail?.sections ?? {}) as Record<string, unknown>;
   const feedback = detail?.execution_feedback;
   const costSummary = detail?.cost_summary;
+  const modelRouting = detail?.model_routing_policy;
   return (
     <section className={`drawer-panel ${open ? "open" : "closed"}`}>
       <div className="drawer-header">
@@ -105,6 +106,16 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
               {String(costSummary?.budget_scope ?? "operation")} | Remaining: $
               {Number(costSummary?.remaining_estimated_budget ?? 0).toFixed(4)} | Kill switch:{" "}
               {costSummary?.kill_switch_active ? "active" : "inactive"}
+            </div>
+          </div>
+          <div className="detail-card-subsection">
+            <div className="stat-label">Model Routing Policy (Read-only)</div>
+            <div style={{ marginTop: 8 }}>
+              Lane: {String(modelRouting?.selected_model_lane ?? "not_available")} | Status:{" "}
+              {String(modelRouting?.routing_status ?? "not_available")}
+            </div>
+            <div style={{ marginTop: 8 }}>
+              {String(modelRouting?.routing_reason ?? "Routing policy output is not available for this package snapshot.")}
             </div>
           </div>
           <div className="section-title" style={{ marginTop: 18 }}>

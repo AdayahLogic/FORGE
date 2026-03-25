@@ -143,6 +143,7 @@ export function ProjectControlPanel({
   const health = projectSnapshot?.system_health ?? {};
   const intake = projectSnapshot?.intake_workspace;
   const preview = intake?.preview;
+  const modelRouting = preview?.model_routing_policy;
   const workflow = projectSnapshot?.workflow_activity;
   const systemStatus = projectSnapshot?.system_status;
   const backendOffline = systemStatus?.status === "offline";
@@ -193,6 +194,9 @@ export function ProjectControlPanel({
                     <span className={getChipClass(String(project.budget_status ?? "within_budget"))}>
                       budget {String(project.budget_status ?? "within_budget")}
                     </span>
+                    {project.selected_model_lane ? (
+                      <span className="chip info">{project.selected_model_lane}</span>
+                    ) : null}
                   </div>
                 </button>
               </div>
@@ -268,6 +272,14 @@ export function ProjectControlPanel({
                   <strong>{displayValue(preview?.readiness, "Waiting for input")}</strong>
                 </div>
                 <div className="detail-row">
+                  <span>Model Lane (Policy)</span>
+                  <strong>{displayValue(modelRouting?.selected_model_lane, "Waiting for policy output")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Routing Status (Policy)</span>
+                  <strong>{displayValue(modelRouting?.routing_status, "Waiting for policy output")}</strong>
+                </div>
+                <div className="detail-row">
                   <span>Requested Outputs</span>
                   <strong>
                     {String(
@@ -319,6 +331,12 @@ export function ProjectControlPanel({
                   <strong>
                     {projectSnapshot.cost_summary?.kill_switch_active ? "active" : "inactive"}
                   </strong>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Routing Reason (Policy Output)</div>
+                  <div style={{ marginTop: 8 }}>
+                    {displayValue(modelRouting?.routing_reason, "Model routing policy output is not available yet.")}
+                  </div>
                 </div>
               </div>
             )}

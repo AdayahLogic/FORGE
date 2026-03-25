@@ -122,6 +122,10 @@ def build_runtime_target_selection_snapshot(selection: dict[str, Any] | None) ->
         "denial_reason": str(payload.get("denial_reason") or "").strip(),
         "selection_reason": str(payload.get("selection_reason") or "").strip(),
         "routing_outcome": str(payload.get("routing_outcome") or "").strip().lower(),
+        "selected_model_lane": str(payload.get("selected_model_lane") or "").strip().lower(),
+        "routing_reason": str(payload.get("routing_reason") or "").strip(),
+        "routing_status": str(payload.get("routing_status") or "").strip().lower(),
+        "authority_trace": dict(payload.get("authority_trace") or {}),
         "governance_trace": dict(payload.get("governance_trace") or {}),
         "recorded_at": str(payload.get("recorded_at") or datetime.now().isoformat()),
     }
