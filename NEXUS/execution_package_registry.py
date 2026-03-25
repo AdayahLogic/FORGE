@@ -526,6 +526,140 @@ def _normalize_cursor_bridge_artifact_record(value: Any) -> dict[str, Any]:
     }
 
 
+def _delivery_artifact_label(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lowered = text.lower()
+    known = {
+        "implementation_plan": "Implementation Plan",
+        "implementation_summary": "Implementation Summary",
+        "summary_report": "Summary Report",
+        "review_package": "Review Package",
+        "diff_review": "Diff Review",
+        "test_report": "Test Report",
+        "approved_summary": "Approved Summary",
+        "code_artifacts": "Code Artifacts",
+    }
+    if lowered in known:
+        return known[lowered]
+    return text.replace("_", " ").replace("-", " ").strip().title()
+
+
+def _delivery_progress_state_for_package(package: dict[str, Any]) -> str:
+    review_status = str(package.get("review_status") or "").strip().lower()
+    decision_status = str(package.get("decision_status") or "").strip().lower()
+    release_status = str(package.get("release_status") or "").strip().lower()
+    execution_status = str(package.get("execution_status") or "").strip().lower()
+    runtime_artifacts = [x for x in list(package.get("runtime_artifacts") or []) if isinstance(x, dict)]
+    expected_outputs = [str(x).strip() for x in list(package.get("expected_outputs") or []) if str(x).strip()]
+    has_artifacts = bool(runtime_artifacts or expected_outputs)
+    blocked_states = {"failed", "blocked", "error_fallback", "rejected", "denied"}
+    if not has_artifacts:
+        if review_status in {"pending", "review_pending"} and not decision_status:
+            return "delivery_in_progress"
+        if execution_status in {"pending", "not_started", ""}:
+            return "no_delivery_summary"
+        if execution_status in blocked_states:
+            return "internal_review_required"
+        return "delivery_in_progress"
+    if execution_status in blocked_states or decision_status in {"rejected", "denied"}:
+        return "internal_review_required"
+    if decision_status == "approved" or release_status == "released" or review_status in {"reviewed", "completed"}:
+        return "client_safe_packaging_ready"
+    if review_status in {"pending", "review_pending"}:
+        return "internal_review_required"
+    return "delivery_summary_ready"
+
+
+def build_delivery_summary_contract(package: dict[str, Any] | None) -> dict[str, Any]:
+    """
+    Build a governed delivery-summary and packaging contract from package state.
+    This output is auditable and can be further redacted for client-safe surfaces.
+    """
+    p = dict(package or {})
+    normalized = {
+        "review_status": str(p.get("review_status") or "pending").strip().lower(),
+        "decision_status": str(p.get("decision_status") or "pending").strip().lower(),
+        "release_status": str(p.get("release_status") or "pending").strip().lower(),
+        "execution_status": str(p.get("execution_status") or "pending").strip().lower(),
+        "runtime_artifacts": [x for x in list(p.get("runtime_artifacts") or []) if isinstance(x, dict)][:20],
+        "expected_outputs": [str(x).strip() for x in list(p.get("expected_outputs") or []) if str(x).strip()][:50],
+        "metadata": dict(p.get("metadata") or {}),
+    }
+    progress_state = _delivery_progress_state_for_package(normalized)
+    runtime_artifacts = [x for x in list(normalized.get("runtime_artifacts") or []) if isinstance(x, dict)]
+    expected_outputs = [str(x).strip() for x in list(normalized.get("expected_outputs") or []) if str(x).strip()]
+    delivered_types: list[str] = []
+    delivered_labels: list[str] = []
+    for item in expected_outputs:
+        if item not in delivered_types:
+            delivered_types.append(item)
+            label = _delivery_artifact_label(item)
+            if label and label not in delivered_labels:
+                delivered_labels.append(label)
+    for artifact in runtime_artifacts:
+        artifact_type = str(artifact.get("artifact_type") or "").strip().lower()
+        if not artifact_type:
+            continue
+        if artifact_type not in delivered_types:
+            delivered_types.append(artifact_type)
+            label = _delivery_artifact_label(artifact_type)
+            if label and label not in delivered_labels:
+                delivered_labels.append(label)
+    delivered_count = len(delivered_types)
+    if progress_state == "no_delivery_summary":
+        delivery_status = "not_available"
+        title = "No Delivery Summary Yet"
+        summary = "No suitable delivery output is available for packaging at this time."
+        notes = "Execution output has not produced packageable delivery artifacts yet."
+        packaging_reason = "No suitable output exists for delivery summarization."
+    elif progress_state == "delivery_in_progress":
+        delivery_status = "in_progress"
+        title = "Delivery In Progress"
+        summary = "Work is in progress and a governed delivery summary is not finalized yet."
+        notes = "Continue execution/review flow to produce packageable delivery outputs."
+        packaging_reason = "Delivery output is still in progress."
+    elif progress_state == "internal_review_required":
+        delivery_status = "internal_review_required"
+        title = "Internal Review Required"
+        summary = "Delivery output exists but requires internal review before client-safe packaging."
+        notes = "Review package state and approval gates before exposing client-ready summary."
+        packaging_reason = "Outputs exist but are not yet approved for safe client packaging."
+    elif progress_state == "client_safe_packaging_ready":
+        delivery_status = "client_safe_ready"
+        title = "Client-Ready Delivery Summary"
+        summary = (
+            f"Delivery package includes {delivered_count} artifact type(s): "
+            f"{', '.join(delivered_labels[:6]) if delivered_labels else 'packaged outputs'}."
+        )
+        notes = "Summary is safe-packaged for client-facing read-only surfaces."
+        packaging_reason = "Delivery outputs passed governed readiness for client-safe packaging."
+    else:
+        delivery_status = "ready"
+        title = "Delivery Summary Ready"
+        summary = (
+            f"Delivery summary is available with {delivered_count} artifact type(s): "
+            f"{', '.join(delivered_labels[:6]) if delivered_labels else 'packaged outputs'}."
+        )
+        notes = "Summary is available for operator review and governed packaging decisions."
+        packaging_reason = "Suitable outputs were identified for delivery summarization."
+    return {
+        "delivery_status": delivery_status,
+        "delivery_summary_title": title,
+        "delivery_summary_text": summary,
+        "delivered_artifact_types": delivered_types,
+        "delivered_artifact_labels": delivered_labels[:12],
+        "delivered_artifact_count": delivered_count,
+        "delivery_progress_state": progress_state,
+        "client_ready_notes": notes,
+        "internal_details_redacted": progress_state != "delivery_summary_ready",
+        "packaging_reason": packaging_reason,
+        "authority_trace": dict((normalized.get("metadata") or {}).get("authority_traces") or {}),
+        "governance_trace": dict((normalized.get("metadata") or {}).get("governance_trace") or {}),
+    }
+
+
 def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Normalize execution package to stable review-only contract shape.
@@ -692,6 +826,14 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "budget_caps": budget_caps,
         "budget_control": budget_control,
         **budget_fields,
+        "delivery_summary": build_delivery_summary_contract(
+            {
+                **p,
+                "runtime_artifacts": [x for x in runtime_artifacts[:20] if isinstance(x, dict)],
+                "expected_outputs": [str(x) for x in (p.get("expected_outputs") or []) if str(x).strip()][:50],
+                "metadata": metadata,
+            }
+        ),
     }
 
 

@@ -71,8 +71,18 @@ export function ReviewCenter({
                   {clientProject.client_status}
                 </span>
                 <span className="chip">{clientProject.current_phase}</span>
+                <span className="chip info">client-ready summary</span>
               </div>
               <div>{clientProject.safe_summary}</div>
+              <div className="detail-card-subsection">
+                <div className="stat-label">Safe Packaged Output</div>
+                <div style={{ marginTop: 8 }}>
+                  {clientProject.delivery_summary.delivery_summary_title}
+                </div>
+                <div className="muted" style={{ marginTop: 6 }}>
+                  {clientProject.delivery_summary.delivery_summary_text}
+                </div>
+              </div>
               <div className="detail-card-subsection">
                 <div className="stat-label">Progress</div>
                 <div className="bar" style={{ marginTop: 8 }}>
@@ -107,6 +117,14 @@ export function ReviewCenter({
 
             <div className="detail-card">
               <h4>Deliverables</h4>
+              <div className="chip-row" style={{ marginBottom: 10 }}>
+                <span className={chipClass(clientProject.delivery_summary.delivery_progress_state)}>
+                  {clientProject.delivery_summary.delivery_progress_state}
+                </span>
+                <span className="chip">
+                  {clientProject.delivery_summary.delivered_artifact_count} artifact types
+                </span>
+              </div>
               <div className="detail-list">
                 {clientProject.deliverables.length > 0 ? (
                   clientProject.deliverables.map((deliverable) => (
@@ -328,6 +346,34 @@ export function ReviewCenter({
                 <div className="audit-item muted">No returned artifacts recorded for this package.</div>
               )}
             </div>
+
+          <div className="detail-card">
+            <h4>Delivery Summary Packaging</h4>
+            <div className="chip-row" style={{ marginBottom: 10 }}>
+              <span className={chipClass(review.delivery_summary?.delivery_progress_state || "no_delivery_summary")}>
+                {review.delivery_summary?.delivery_progress_state || "no_delivery_summary"}
+              </span>
+              <span className="chip info">not raw internal system state</span>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">
+                {review.client_safe_delivery_summary?.delivery_summary_title || "Client-Ready Summary"}
+              </div>
+              <div style={{ marginTop: 8 }}>
+                {review.client_safe_delivery_summary?.delivery_summary_text || "No client-ready delivery summary available."}
+              </div>
+            </div>
+            <div className="detail-list" style={{ marginTop: 10 }}>
+              <div className="detail-row">
+                <span>Artifact Types</span>
+                <strong>{String(review.client_safe_delivery_summary?.delivered_artifact_count ?? 0)}</strong>
+              </div>
+              <div className="detail-row">
+                <span>Packaging Reason</span>
+                <strong>{review.client_safe_delivery_summary?.packaging_reason || "No packaging reason recorded."}</strong>
+              </div>
+            </div>
+          </div>
           </div>
 
           <div className="detail-card">

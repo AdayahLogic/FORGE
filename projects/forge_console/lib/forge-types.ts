@@ -38,6 +38,27 @@ export type ForgeExecutionFeedback = {
   lifecycle_transitions: ForgeLifecycleTransition[];
 };
 
+export type ForgeDeliverySummary = {
+  delivery_status: string;
+  delivery_summary_title: string;
+  delivery_summary_text: string;
+  delivered_artifact_types: string[];
+  delivered_artifact_labels: string[];
+  delivered_artifact_count: number;
+  delivery_progress_state:
+    | "no_delivery_summary"
+    | "delivery_summary_ready"
+    | "delivery_in_progress"
+    | "client_safe_packaging_ready"
+    | "internal_review_required"
+    | string;
+  client_ready_notes: string;
+  internal_details_redacted: boolean;
+  packaging_reason: string;
+  authority_trace?: Record<string, unknown>;
+  governance_trace?: Record<string, unknown>;
+};
+
 export type ForgeEstimatedCost = {
   cost_estimate: number;
   cost_unit: "usd_estimated" | string;
@@ -293,6 +314,8 @@ export type ForgeReviewCenterSnapshot = {
   evaluation_summary: Record<string, unknown>;
   local_analysis_summary: Record<string, unknown>;
   related_attachments: ForgeReviewAttachmentRecord[];
+  delivery_summary?: ForgeDeliverySummary;
+  client_safe_delivery_summary?: ForgeDeliverySummary;
 };
 
 export type ForgeIntakePreview = {
@@ -411,6 +434,7 @@ export type ForgeClientProjectRow = {
   progress_percent: number;
   progress_label: string;
   safe_summary: string;
+  delivery_summary: ForgeDeliverySummary;
 };
 
 export type ForgeClientMilestone = {
@@ -456,6 +480,7 @@ export type ForgeClientProjectSnapshot = {
   progress_percent: number;
   progress_label: string;
   safe_summary: string;
+  delivery_summary: ForgeDeliverySummary;
   milestones: ForgeClientMilestone[];
   deliverables: ForgeClientDeliverable[];
   approved_attachments: ForgeClientAttachment[];
@@ -568,6 +593,7 @@ export type PackageDetailSnapshot = {
   evaluation: Record<string, unknown>;
   local_analysis: Record<string, unknown>;
   package_json: Record<string, unknown>;
+  delivery_summary?: ForgeDeliverySummary;
   timeline: Array<Record<string, unknown>>;
   execution_feedback: ForgeExecutionFeedback;
   model_routing_policy?: ForgeModelRoutingPolicy;
@@ -609,6 +635,7 @@ export type ProjectSnapshot = {
   system_status: ForgeSystemStatus;
   workflow_activity: ForgeWorkflowActivity;
   approval_summary: Record<string, unknown>;
+  delivery_summary?: ForgeDeliverySummary;
   intake_workspace: ForgeIntakeWorkspace | null;
   cost_summary?: {
     cost_per_operation: ForgeEstimatedCost[];

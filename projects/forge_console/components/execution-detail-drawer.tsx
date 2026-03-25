@@ -45,6 +45,7 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
   const feedback = detail?.execution_feedback;
   const costSummary = detail?.cost_summary;
   const modelRouting = detail?.model_routing_policy;
+  const deliverySummary = detail?.delivery_summary;
   return (
     <section className={`drawer-panel ${open ? "open" : "closed"}`}>
       <div className="drawer-header">
@@ -90,6 +91,19 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
             <div style={{ marginTop: 8 }}>
               {feedback?.status_summary ||
                 "No active execution yet. Create an intake request and let Forge prepare a governed package to populate this drawer."}
+            </div>
+          </div>
+          <div className="detail-card-subsection">
+            <div className="stat-label">Client-Ready Summary (Safe Packaged Output)</div>
+            <div style={{ marginTop: 8 }}>
+              {deliverySummary?.delivery_summary_title || "No delivery summary available."}
+              {deliverySummary?.delivery_summary_text
+                ? `: ${deliverySummary.delivery_summary_text}`
+                : ""}
+            </div>
+            <div className="muted" style={{ marginTop: 6 }}>
+              {deliverySummary?.delivery_progress_state || "no_delivery_summary"} | artifacts:{" "}
+              {String(deliverySummary?.delivered_artifact_count ?? 0)}
             </div>
           </div>
           <div className="detail-card-subsection">

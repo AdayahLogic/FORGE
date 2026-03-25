@@ -186,6 +186,7 @@ def test_client_view_snapshot_is_allowlisted_and_shareable_only():
                 "approved_attachments",
                 "client_status",
                 "current_phase",
+                "delivery_summary",
                 "deliverables",
                 "description",
                 "milestones",
@@ -197,6 +198,7 @@ def test_client_view_snapshot_is_allowlisted_and_shareable_only():
                 "timeline",
             ]
             assert all(item["safe_to_share"] is True for item in project["deliverables"])
+            assert project["delivery_summary"]["delivery_progress_state"] == "client_safe_packaging_ready"
             assert len(project["approved_attachments"]) == 1
             assert project["approved_attachments"][0]["file_name"] == "shared-summary.md"
             assert project["approved_attachments"][0]["status"] == "safe_to_share"

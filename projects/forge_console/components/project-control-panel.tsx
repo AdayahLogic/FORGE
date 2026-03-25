@@ -126,9 +126,25 @@ export function ProjectControlPanel({
                   <span>Shared Attachments</span>
                   <strong>{clientProject.approved_attachments.length}</strong>
                 </div>
+                <div className="detail-row">
+                  <span>Delivery State</span>
+                  <strong>{clientProject.delivery_summary.delivery_progress_state}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Artifact Types</span>
+                  <strong>{clientProject.delivery_summary.delivered_artifact_count}</strong>
+                </div>
                 <div className="detail-card-subsection">
                   <div className="stat-label">Safe Summary</div>
                   <div style={{ marginTop: 8 }}>{clientProject.safe_summary}</div>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Client-Ready Summary</div>
+                  <div style={{ marginTop: 8 }}>
+                    {clientProject.delivery_summary.delivery_summary_title}
+                    {": "}
+                    {clientProject.delivery_summary.delivery_summary_text}
+                  </div>
                 </div>
               </div>
             )}
@@ -278,6 +294,16 @@ export function ProjectControlPanel({
                 <div className="detail-row">
                   <span>Routing Status (Policy)</span>
                   <strong>{displayValue(modelRouting?.routing_status, "Waiting for policy output")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Delivery Summary State</span>
+                  <strong>
+                    {displayValue(projectSnapshot.delivery_summary?.delivery_progress_state, "no_delivery_summary")}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Packaged Artifacts</span>
+                  <strong>{String(projectSnapshot.delivery_summary?.delivered_artifact_count ?? 0)}</strong>
                 </div>
                 <div className="detail-row">
                   <span>Requested Outputs</span>

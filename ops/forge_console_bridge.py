@@ -35,6 +35,7 @@ from NEXUS.console_attachment_registry import (
     preview_intake_request_safe,
 )
 from NEXUS.execution_package_registry import (
+    build_delivery_summary_contract,
     list_execution_package_journal_entries,
     read_execution_package,
 )
@@ -517,6 +518,22 @@ def _client_progress_label(client_status: str) -> str:
     return mapping.get(client_status, "Status unavailable")
 
 
+def _client_ready_delivery_summary(delivery_summary: dict[str, Any] | None) -> dict[str, Any]:
+    summary = dict(delivery_summary or {})
+    return {
+        "delivery_status": str(summary.get("delivery_status") or "not_available"),
+        "delivery_summary_title": str(summary.get("delivery_summary_title") or "Client-Ready Summary"),
+        "delivery_summary_text": str(summary.get("delivery_summary_text") or ""),
+        "delivered_artifact_types": [str(item) for item in list(summary.get("delivered_artifact_types") or []) if str(item).strip()],
+        "delivered_artifact_labels": [str(item) for item in list(summary.get("delivered_artifact_labels") or []) if str(item).strip()],
+        "delivered_artifact_count": max(0, int(summary.get("delivered_artifact_count") or 0)),
+        "delivery_progress_state": str(summary.get("delivery_progress_state") or "no_delivery_summary"),
+        "client_ready_notes": str(summary.get("client_ready_notes") or ""),
+        "internal_details_redacted": True,
+        "packaging_reason": str(summary.get("packaging_reason") or ""),
+    }
+
+
 def _client_safe_summary(
     *,
     client_status: str,
@@ -731,6 +748,7 @@ def _build_client_project_row(
 ) -> dict[str, Any]:
     deliverables = _build_client_deliverables(package)
     client_status = _client_status_from_state(project_state, package)
+    delivery_summary = _client_ready_delivery_summary(build_delivery_summary_contract(package))
     return {
         "project_key": project_key,
         "project_name": str(project.get("name") or project_key),
@@ -739,11 +757,15 @@ def _build_client_project_row(
         "current_phase": _client_phase_label(client_status),
         "progress_percent": _client_progress_percent(client_status),
         "progress_label": _client_progress_label(client_status),
-        "safe_summary": _client_safe_summary(
-            client_status=client_status,
-            package=package,
-            deliverable_count=len(deliverables),
+        "safe_summary": str(
+            delivery_summary.get("delivery_summary_text")
+            or _client_safe_summary(
+                client_status=client_status,
+                package=package,
+                deliverable_count=len(deliverables),
+            )
         ),
+        "delivery_summary": delivery_summary,
     }
 
 
@@ -769,6 +791,7 @@ def _build_client_project_snapshot(
         "progress_percent": row["progress_percent"],
         "progress_label": row["progress_label"],
         "safe_summary": row["safe_summary"],
+        "delivery_summary": row["delivery_summary"],
         "milestones": _build_client_milestones(str(row["client_status"])),
         "deliverables": _build_client_deliverables(package),
         "approved_attachments": _build_client_attachments(str(project.get("path") or "")),
@@ -993,6 +1016,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
     )
     current_package_id = str(project_state.get("execution_package_id") or "")
     current_package_data = _read_current_package(project_path, project_state)
+    delivery_summary = build_delivery_summary_contract(current_package_data if current_package_data else None)
     execution_feedback = _build_execution_feedback(current_package_data)
     current_package = None
     if current_package_id:
@@ -1029,6 +1053,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
                 execution_feedback=execution_feedback,
             ),
             "approval_summary": approvals,
+            "delivery_summary": delivery_summary,
             "intake_workspace": intake_workspace,
             "cost_summary": cost_summary,
             "degraded_sources": [
@@ -1174,6 +1199,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         or {}
     )
     package = read_execution_package(project_path, package_id) or {}
+    delivery_summary = build_delivery_summary_contract(package if package else None)
     related_attachments = build_attachment_review_context_safe(
         project_path=project_path,
         package_id=package_id,
@@ -1220,6 +1246,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "evaluation": evaluation.get("evaluation") or {},
             "local_analysis": local_analysis.get("local_analysis") or {},
             "package_json": package,
+            "delivery_summary": delivery_summary,
             "timeline": timeline,
             "execution_feedback": execution_feedback,
             "cost_summary": cost_summary,
@@ -1232,6 +1259,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 local_analysis=local_analysis.get("local_analysis") or {},
                 related_attachments=related_attachments,
                 model_routing_policy=model_routing_policy,
+                delivery_summary=delivery_summary,
             ),
         },
         "",
@@ -1378,6 +1406,7 @@ def _build_review_center_snapshot(
     local_analysis: dict[str, Any],
     related_attachments: list[dict[str, Any]],
     model_routing_policy: dict[str, Any],
+    delivery_summary: dict[str, Any],
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
@@ -1402,6 +1431,8 @@ def _build_review_center_snapshot(
         "evaluation_summary": dict(evaluation.get("evaluation_summary") or {}),
         "local_analysis_summary": dict(local_analysis.get("local_analysis_summary") or {}),
         "related_attachments": related_attachments,
+        "delivery_summary": dict(delivery_summary or {}),
+        "client_safe_delivery_summary": _client_ready_delivery_summary(delivery_summary),
     }
 
 
