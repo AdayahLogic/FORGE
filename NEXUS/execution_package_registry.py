@@ -83,6 +83,17 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+COMMUNICATION_CHANNELS = {"email", "sms", "voice", "manual_only", "no_outreach"}
+COMMUNICATION_CHANNEL_PRIORITIES = {"low", "medium", "high"}
+COMMUNICATION_CHANNEL_READINESS_STATES = {"provider_ready", "operator_ready", "future_channel", "blocked"}
+COMMUNICATION_ROUTE_RECOMMENDATIONS = {
+    "continue_with_email",
+    "recommend_sms_follow_up",
+    "recommend_voice_escalation",
+    "keep_manual_only",
+    "block_outreach",
+    "defer_contact",
+}
 
 
 def _utc_now_iso() -> str:
@@ -292,6 +303,18 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "communication_channel_strategy": dict(normalized.get("communication_channel_strategy") or {}),
+        "recommended_communication_route": str(normalized.get("recommended_communication_route") or "keep_manual_only"),
+        "recommended_communication_channel": str(normalized.get("recommended_communication_channel") or "manual_only"),
+        "recommended_communication_channel_reason": str(normalized.get("recommended_communication_channel_reason") or ""),
+        "communication_channel_priority": str(normalized.get("communication_channel_priority") or "medium"),
+        "communication_channel_readiness": str(normalized.get("communication_channel_readiness") or "future_channel"),
+        "communication_channel_block_reason": str(normalized.get("communication_channel_block_reason") or ""),
+        "communication_channel_fallback": str(normalized.get("communication_channel_fallback") or "manual_only"),
+        "communication_channel_selection_score": _normalize_revenue_ratio(
+            normalized.get("communication_channel_selection_score"),
+            fallback=0.0,
+        ),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -885,6 +908,356 @@ def _derive_revenue_workflow_readiness(
     return ("ready_for_revenue_action", True, "", priority, False)
 
 
+def _normalize_communication_channel(value: Any, *, fallback: str = "manual_only") -> str:
+    channel = str(value or "").strip().lower()
+    if channel in COMMUNICATION_CHANNELS:
+        return channel
+    return fallback
+
+
+def _normalize_communication_priority(value: Any, *, fallback: str = "medium") -> str:
+    priority = str(value or "").strip().lower()
+    if priority in COMMUNICATION_CHANNEL_PRIORITIES:
+        return priority
+    return fallback
+
+
+def _normalize_communication_readiness(value: Any, *, fallback: str = "future_channel") -> str:
+    readiness = str(value or "").strip().lower()
+    if readiness in COMMUNICATION_CHANNEL_READINESS_STATES:
+        return readiness
+    return fallback
+
+
+def _extract_communication_history(metadata: dict[str, Any], package: dict[str, Any]) -> list[dict[str, str]]:
+    source = metadata.get("communication_history")
+    if not isinstance(source, list):
+        source = package.get("communication_history")
+    if not isinstance(source, list):
+        source = metadata.get("email_communication_history")
+    if not isinstance(source, list):
+        source = []
+    history: list[dict[str, str]] = []
+    for item in source:
+        if not isinstance(item, dict):
+            continue
+        channel = _normalize_communication_channel(item.get("channel"), fallback="")
+        if not channel:
+            continue
+        history.append(
+            {
+                "channel": channel,
+                "status": str(item.get("status") or item.get("delivery_status") or "").strip().lower(),
+                "outcome": str(item.get("outcome") or "").strip().lower(),
+                "at": str(item.get("at") or item.get("timestamp") or "").strip(),
+            }
+        )
+    return history[:50]
+
+
+def _resolve_channel_capabilities(metadata: dict[str, Any], package: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = metadata.get("communication_capabilities")
+    if not isinstance(raw, dict):
+        raw = package.get("communication_capabilities")
+    if not isinstance(raw, dict):
+        raw = {}
+
+    provider_hints = {
+        "email": {"resend", "sendgrid", "mailgun", "postmark"},
+        "sms": {"twilio", "plivo", "vonage", "nexmo"},
+        "voice": {"twilio", "plivo", "vonage"},
+    }
+
+    def _provider_for(channel: str) -> str:
+        direct = raw.get(f"{channel}_provider")
+        if direct:
+            return str(direct).strip().lower()
+        return str(metadata.get(f"{channel}_provider") or package.get(f"{channel}_provider") or "").strip().lower()
+
+    def _send_enabled_for(channel: str) -> bool:
+        direct = raw.get(f"{channel}_send_enabled")
+        if isinstance(direct, bool):
+            return direct
+        if isinstance(package.get(f"{channel}_send_enabled"), bool):
+            return bool(package.get(f"{channel}_send_enabled"))
+        if isinstance(metadata.get(f"{channel}_send_enabled"), bool):
+            return bool(metadata.get(f"{channel}_send_enabled"))
+        return False
+
+    capabilities: dict[str, dict[str, Any]] = {}
+    for channel in ("email", "sms", "voice"):
+        provider = _provider_for(channel)
+        provider_ready = bool(provider and provider in provider_hints[channel])
+        send_enabled = _send_enabled_for(channel) or provider_ready
+        available = bool(raw.get(f"{channel}_available")) if f"{channel}_available" in raw else send_enabled
+        if channel == "email" and not available:
+            available = True
+        readiness = "provider_ready" if send_enabled else ("operator_ready" if channel == "email" else "future_channel")
+        capabilities[channel] = {
+            "channel": channel,
+            "provider": provider,
+            "available": available,
+            "send_enabled": send_enabled,
+            "readiness": readiness,
+            "block_reason": "",
+        }
+
+    capabilities["manual_only"] = {
+        "channel": "manual_only",
+        "provider": "",
+        "available": True,
+        "send_enabled": False,
+        "readiness": "operator_ready",
+        "block_reason": "",
+    }
+    capabilities["no_outreach"] = {
+        "channel": "no_outreach",
+        "provider": "",
+        "available": True,
+        "send_enabled": False,
+        "readiness": "blocked",
+        "block_reason": "Governance posture disallows outreach.",
+    }
+    return capabilities
+
+
+def _derive_communication_channel_fields(
+    *,
+    package: dict[str, Any],
+    metadata: dict[str, Any],
+    pipeline_stage: str,
+    time_sensitivity: float,
+    opportunity_classification: str,
+    revenue_workflow_priority: str,
+    highest_value_next_action: str,
+    highest_value_next_action_score: float,
+    revenue_activation_status: str,
+    governance_status: str,
+    governance_outcome: str,
+    enforcement_status: str,
+) -> dict[str, Any]:
+    capabilities = _resolve_channel_capabilities(metadata, package)
+    history = _extract_communication_history(metadata, package)
+    follow_up_intelligence = metadata.get("follow_up_intelligence")
+    if not isinstance(follow_up_intelligence, dict):
+        follow_up_intelligence = package.get("follow_up_intelligence")
+    if not isinstance(follow_up_intelligence, dict):
+        follow_up_intelligence = {}
+    drop_off_risk = str(
+        follow_up_intelligence.get("drop_off_risk")
+        or metadata.get("drop_off_risk")
+        or package.get("drop_off_risk")
+        or ""
+    ).strip().lower()
+    action_sequence_state = str(metadata.get("action_sequence_state") or package.get("action_sequence_state") or "").strip().lower()
+
+    scores = {"email": 0.55, "sms": 0.35, "voice": 0.3, "manual_only": 0.2}
+    reason_parts: list[str] = []
+
+    if governance_status == "blocked" or governance_outcome == "stop" or enforcement_status == "blocked":
+        return {
+            "communication_channel_strategy": {
+                "strategy_version": "phase98_v1",
+                "status": "bounded_block",
+                "channel_scores": {"email": 0.0, "sms": 0.0, "voice": 0.0, "manual_only": 0.0, "no_outreach": 1.0},
+                "governance_posture": {
+                    "governance_status": governance_status,
+                    "governance_routing_outcome": governance_outcome,
+                    "enforcement_status": enforcement_status,
+                },
+                "history_points_considered": len(history),
+            },
+            "recommended_communication_route": "block_outreach",
+            "recommended_communication_channel": "no_outreach",
+            "recommended_communication_channel_reason": "Governance/enforcement posture hard-blocks outreach.",
+            "communication_channel_priority": "high",
+            "communication_channel_readiness": "blocked",
+            "communication_channel_block_reason": "Governance/enforcement hard block is active.",
+            "communication_channel_fallback": "manual_only",
+            "communication_channel_selection_score": 1.0,
+        }
+
+    if revenue_activation_status in {"low_value_deferred", "needs_revision"}:
+        return {
+            "communication_channel_strategy": {
+                "strategy_version": "phase98_v1",
+                "status": "deferred",
+                "channel_scores": {"email": 0.25, "sms": 0.1, "voice": 0.1, "manual_only": 0.45, "no_outreach": 0.35},
+                "governance_posture": {
+                    "governance_status": governance_status,
+                    "governance_routing_outcome": governance_outcome,
+                    "enforcement_status": enforcement_status,
+                },
+                "history_points_considered": len(history),
+            },
+            "recommended_communication_route": "defer_contact",
+            "recommended_communication_channel": "manual_only",
+            "recommended_communication_channel_reason": "Current activation posture is deferred or needs revision.",
+            "communication_channel_priority": "low",
+            "communication_channel_readiness": "operator_ready",
+            "communication_channel_block_reason": "",
+            "communication_channel_fallback": "manual_only",
+            "communication_channel_selection_score": 0.45,
+        }
+
+    if enforcement_status in {"approval_required", "manual_review_required", "hold"}:
+        return {
+            "communication_channel_strategy": {
+                "strategy_version": "phase98_v1",
+                "status": "operator_gated",
+                "channel_scores": {"email": 0.35, "sms": 0.2, "voice": 0.2, "manual_only": 0.85, "no_outreach": 0.1},
+                "governance_posture": {
+                    "governance_status": governance_status,
+                    "governance_routing_outcome": governance_outcome,
+                    "enforcement_status": enforcement_status,
+                },
+                "history_points_considered": len(history),
+            },
+            "recommended_communication_route": "keep_manual_only",
+            "recommended_communication_channel": "manual_only",
+            "recommended_communication_channel_reason": "Enforcement gate requires operator-managed communication only.",
+            "communication_channel_priority": "high",
+            "communication_channel_readiness": "operator_ready",
+            "communication_channel_block_reason": "",
+            "communication_channel_fallback": "manual_only",
+            "communication_channel_selection_score": 0.85,
+        }
+
+    if pipeline_stage in {"closed_lost"}:
+        return {
+            "communication_channel_strategy": {
+                "strategy_version": "phase98_v1",
+                "status": "closed_lost",
+                "channel_scores": {"email": 0.05, "sms": 0.0, "voice": 0.0, "manual_only": 0.2, "no_outreach": 0.9},
+                "governance_posture": {
+                    "governance_status": governance_status,
+                    "governance_routing_outcome": governance_outcome,
+                    "enforcement_status": enforcement_status,
+                },
+                "history_points_considered": len(history),
+            },
+            "recommended_communication_route": "block_outreach",
+            "recommended_communication_channel": "no_outreach",
+            "recommended_communication_channel_reason": "Opportunity is closed_lost and should not be auto-reactivated.",
+            "communication_channel_priority": "low",
+            "communication_channel_readiness": "blocked",
+            "communication_channel_block_reason": "Closed-lost posture blocks outreach.",
+            "communication_channel_fallback": "manual_only",
+            "communication_channel_selection_score": 0.9,
+        }
+
+    if pipeline_stage in {"follow_up", "qualified", "intake"}:
+        scores["email"] += 0.1
+        scores["sms"] += 0.08
+        reason_parts.append("Early-stage engagement favors asynchronous follow-up.")
+    if pipeline_stage in {"proposal_pending", "negotiation"}:
+        scores["voice"] += 0.1
+        scores["email"] += 0.06
+        reason_parts.append("Late pipeline stage can benefit from escalation channels.")
+    if time_sensitivity >= 0.75:
+        scores["sms"] += 0.22
+        scores["voice"] += 0.14
+        scores["email"] -= 0.05
+        reason_parts.append("High urgency increases preference for faster channels.")
+    if opportunity_classification in {"hot", "strategic", "high_margin"}:
+        scores["voice"] += 0.12
+        scores["sms"] += 0.09
+        reason_parts.append("Opportunity classification supports direct escalation.")
+    if revenue_workflow_priority == "high":
+        scores["voice"] += 0.08
+        scores["sms"] += 0.06
+    if drop_off_risk == "high":
+        scores["sms"] += 0.15
+        scores["voice"] += 0.08
+        reason_parts.append("Drop-off risk suggests tighter follow-up windows.")
+    if action_sequence_state in {"stalled", "late_follow_up", "escalation_needed"}:
+        scores["voice"] += 0.1
+        scores["sms"] += 0.08
+        reason_parts.append("Action sequence state indicates escalation pressure.")
+    if highest_value_next_action in {"send follow-up", "prioritize high-value opportunity"}:
+        scores["email"] += 0.04
+
+    email_unsuccessful = 0
+    for item in history:
+        if item.get("channel") == "email" and item.get("outcome") in {"no_reply", "bounce", "undelivered", "failed"}:
+            email_unsuccessful += 1
+    if email_unsuccessful >= 2:
+        scores["email"] -= 0.25
+        scores["sms"] += 0.12
+        scores["voice"] += 0.12
+        reason_parts.append("Recent email history shows low response quality.")
+
+    bounded_scores = {
+        "email": _normalize_revenue_ratio(scores["email"], fallback=0.0),
+        "sms": _normalize_revenue_ratio(scores["sms"], fallback=0.0),
+        "voice": _normalize_revenue_ratio(scores["voice"], fallback=0.0),
+        "manual_only": _normalize_revenue_ratio(scores["manual_only"], fallback=0.0),
+        "no_outreach": 0.0,
+    }
+    recommended = max(("email", "sms", "voice", "manual_only"), key=lambda key: bounded_scores[key])
+    route_map = {
+        "email": "continue_with_email",
+        "sms": "recommend_sms_follow_up",
+        "voice": "recommend_voice_escalation",
+        "manual_only": "keep_manual_only",
+        "no_outreach": "block_outreach",
+    }
+    route = route_map.get(recommended, "keep_manual_only")
+    if route not in COMMUNICATION_ROUTE_RECOMMENDATIONS:
+        route = "keep_manual_only"
+
+    selected_capability = dict(capabilities.get(recommended) or {})
+    readiness = _normalize_communication_readiness(selected_capability.get("readiness"), fallback="future_channel")
+    block_reason = str(selected_capability.get("block_reason") or "")
+    fallback_channel = "manual_only"
+    if recommended in {"sms", "voice"} and not bool(selected_capability.get("send_enabled")):
+        fallback_channel = "email" if bool((capabilities.get("email") or {}).get("available")) else "manual_only"
+        block_reason = block_reason or f"{recommended} is strategically recommended but not operationally ready in this repository."
+    elif recommended == "email" and not bool(selected_capability.get("send_enabled")):
+        fallback_channel = "manual_only"
+        if not block_reason:
+            block_reason = "Email provider-backed sending is not explicitly configured; keep operator-controlled flow."
+
+    if not reason_parts:
+        reason_parts.append("Channel recommendation derived from pipeline stage and activation signals.")
+    if block_reason:
+        reason_parts.append(block_reason)
+    reason = " ".join(reason_parts).strip()
+
+    priority = "medium"
+    if revenue_workflow_priority == "high" or time_sensitivity >= 0.75 or highest_value_next_action_score >= 0.72:
+        priority = "high"
+    elif revenue_workflow_priority == "low" and highest_value_next_action_score < 0.4:
+        priority = "low"
+
+    return {
+        "communication_channel_strategy": {
+            "strategy_version": "phase98_v1",
+            "status": "routed",
+            "channel_scores": bounded_scores,
+            "governance_posture": {
+                "governance_status": governance_status,
+                "governance_routing_outcome": governance_outcome,
+                "enforcement_status": enforcement_status,
+            },
+            "history_points_considered": len(history),
+            "capability_summary": {
+                "email_send_enabled": bool((capabilities.get("email") or {}).get("send_enabled")),
+                "sms_send_enabled": bool((capabilities.get("sms") or {}).get("send_enabled")),
+                "voice_send_enabled": bool((capabilities.get("voice") or {}).get("send_enabled")),
+            },
+        },
+        "recommended_communication_route": route,
+        "recommended_communication_channel": _normalize_communication_channel(recommended),
+        "recommended_communication_channel_reason": reason,
+        "communication_channel_priority": _normalize_communication_priority(priority),
+        "communication_channel_readiness": readiness,
+        "communication_channel_block_reason": block_reason,
+        "communication_channel_fallback": _normalize_communication_channel(fallback_channel),
+        "communication_channel_selection_score": _normalize_revenue_ratio(bounded_scores.get(recommended), fallback=0.0),
+    }
+
+
 def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(package.get("metadata") or {})
     revenue_context = dict(metadata.get("revenue_pipeline_context") or {})
@@ -960,6 +1333,20 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         workflow_status = "needs_revision"
     if workflow_priority not in REVENUE_WORKFLOW_PRIORITIES:
         workflow_priority = "medium"
+    communication_fields = _derive_communication_channel_fields(
+        package=package,
+        metadata=metadata,
+        pipeline_stage=pipeline_stage,
+        time_sensitivity=time_sensitivity,
+        opportunity_classification=opportunity_classification,
+        revenue_workflow_priority=workflow_priority,
+        highest_value_next_action=highest_action,
+        highest_value_next_action_score=highest_action_score,
+        revenue_activation_status=workflow_status,
+        governance_status=governance_status,
+        governance_outcome=governance_outcome,
+        enforcement_status=enforcement_status,
+    )
 
     return {
         "lead_id": lead_id,
@@ -998,6 +1385,7 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
             "classification_reason": opportunity_classification_reason,
             "workflow_status": workflow_status,
         },
+        **communication_fields,
     }
 
 
@@ -1381,6 +1769,30 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "communication_channel_strategy": dict(r.get("communication_channel_strategy") or {}),
+        "recommended_communication_route": str(r.get("recommended_communication_route") or "keep_manual_only"),
+        "recommended_communication_channel": _normalize_communication_channel(
+            r.get("recommended_communication_channel"),
+            fallback="manual_only",
+        ),
+        "recommended_communication_channel_reason": str(r.get("recommended_communication_channel_reason") or ""),
+        "communication_channel_priority": _normalize_communication_priority(
+            r.get("communication_channel_priority"),
+            fallback="medium",
+        ),
+        "communication_channel_readiness": _normalize_communication_readiness(
+            r.get("communication_channel_readiness"),
+            fallback="future_channel",
+        ),
+        "communication_channel_block_reason": str(r.get("communication_channel_block_reason") or ""),
+        "communication_channel_fallback": _normalize_communication_channel(
+            r.get("communication_channel_fallback"),
+            fallback="manual_only",
+        ),
+        "communication_channel_selection_score": _normalize_revenue_ratio(
+            r.get("communication_channel_selection_score"),
+            fallback=0.0,
+        ),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),

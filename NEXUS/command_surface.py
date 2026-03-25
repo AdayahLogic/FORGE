@@ -287,6 +287,14 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "recommended_communication_route": p.get("recommended_communication_route") or "keep_manual_only",
+        "recommended_communication_channel": p.get("recommended_communication_channel") or "manual_only",
+        "recommended_communication_channel_reason": p.get("recommended_communication_channel_reason") or "",
+        "communication_channel_priority": p.get("communication_channel_priority") or "medium",
+        "communication_channel_readiness": p.get("communication_channel_readiness") or "future_channel",
+        "communication_channel_block_reason": p.get("communication_channel_block_reason") or "",
+        "communication_channel_fallback": p.get("communication_channel_fallback") or "manual_only",
+        "communication_channel_selection_score": p.get("communication_channel_selection_score") or 0.0,
     }
 
 
@@ -424,6 +432,13 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "recommended_communication_route": p.get("recommended_communication_route") or "keep_manual_only",
+        "recommended_communication_channel": p.get("recommended_communication_channel") or "manual_only",
+        "recommended_communication_channel_reason": p.get("recommended_communication_channel_reason") or "",
+        "communication_channel_readiness": p.get("communication_channel_readiness") or "future_channel",
+        "communication_channel_block_reason": p.get("communication_channel_block_reason") or "",
+        "communication_channel_fallback": p.get("communication_channel_fallback") or "manual_only",
+        "communication_channel_selection_score": p.get("communication_channel_selection_score") or 0.0,
     }
 
 
@@ -690,6 +705,9 @@ def run_command(
                     "revenue_workflow_block_reason": row.get("revenue_workflow_block_reason") or "Blocked by governance/enforcement posture.",
                     "pipeline_stage": row.get("pipeline_stage"),
                     "highest_value_next_action": row.get("highest_value_next_action"),
+                    "recommended_communication_channel": row.get("recommended_communication_channel"),
+                    "communication_channel_readiness": row.get("communication_channel_readiness"),
+                    "communication_channel_block_reason": row.get("communication_channel_block_reason"),
                 }
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
@@ -713,6 +731,9 @@ def run_command(
                             "highest_value_next_action_score": row.get("highest_value_next_action_score"),
                             "pipeline_stage": row.get("pipeline_stage"),
                             "opportunity_classification": row.get("opportunity_classification"),
+                            "recommended_communication_channel": row.get("recommended_communication_channel"),
+                            "recommended_communication_channel_reason": row.get("recommended_communication_channel_reason"),
+                            "communication_channel_readiness": row.get("communication_channel_readiness"),
                         }
                         for row in ranked_revenue[:5]
                     ],
