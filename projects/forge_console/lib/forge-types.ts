@@ -21,6 +21,42 @@ export type ForgeWorkflowActivity = {
   package_created_at: string;
 };
 
+export type ForgeOperatorGuidance = {
+  guidance_status:
+    | "idle"
+    | "ready_for_review"
+    | "awaiting_input"
+    | "blocked"
+    | "action_recommended";
+  system_posture: "healthy" | "caution" | "blocked" | "needs_attention";
+  next_best_action: string;
+  action_reason: string;
+  blocking_reason: string;
+  recommended_priority: "low" | "medium" | "high";
+  guidance_scope: "project" | "package" | "system";
+  governance_alignment: string;
+  budget_context_note: string;
+  routing_context_note: string;
+  delivery_context_note: string;
+};
+
+export type ForgeLiveOperationActivity = {
+  timestamp: string;
+  activity_type: string;
+  activity_summary: string;
+};
+
+export type ForgeLiveOperationStatus = {
+  operation_status: "idle" | "running" | "awaiting_review" | "blocked" | "completed";
+  current_phase: string;
+  current_step: string;
+  last_action: string;
+  idle_reason: string;
+  active_project: string;
+  active_package_id: string;
+  recent_activity: ForgeLiveOperationActivity[];
+};
+
 export type ForgeQuickActionKind =
   | "navigate"
   | "refresh"
@@ -335,12 +371,14 @@ export type ForgeReviewCenterSnapshot = {
     suggested_next_action: string;
   };
   execution_feedback: ForgeExecutionFeedback;
+  operator_guidance?: ForgeOperatorGuidance;
   model_routing_policy?: ForgeModelRoutingPolicy;
   evaluation_summary: Record<string, unknown>;
   local_analysis_summary: Record<string, unknown>;
   related_attachments: ForgeReviewAttachmentRecord[];
   delivery_summary?: ForgeDeliverySummary;
   client_safe_delivery_summary?: ForgeDeliverySummary;
+  live_operation_status?: ForgeLiveOperationStatus;
   quick_actions?: ForgeQuickActions;
 };
 
@@ -423,6 +461,7 @@ export type ForgeIntakeWorkspace = {
     blocked_use_cases: string[];
   };
   preview: ForgeIntakePreview;
+  operator_guidance?: ForgeOperatorGuidance;
 };
 
 export type ForgeProjectRow = {
@@ -570,6 +609,8 @@ export type ForgeOverviewSnapshot = {
       blocked_or_deferred_count: number;
       budget_note: string;
     };
+    operator_guidance?: ForgeOperatorGuidance;
+    live_operation_status?: ForgeLiveOperationStatus;
     quick_actions?: ForgeQuickActions;
   };
   projects: ForgeProjectRow[];
@@ -624,6 +665,7 @@ export type PackageDetailSnapshot = {
   delivery_summary?: ForgeDeliverySummary;
   timeline: Array<Record<string, unknown>>;
   execution_feedback: ForgeExecutionFeedback;
+  operator_guidance?: ForgeOperatorGuidance;
   model_routing_policy?: ForgeModelRoutingPolicy;
   cost_summary?: {
     operation_cost: ForgeEstimatedCost;
@@ -640,6 +682,7 @@ export type PackageDetailSnapshot = {
     kill_switch_active: boolean;
     budget_reason: string;
   };
+  live_operation_status?: ForgeLiveOperationStatus;
   review_center: ForgeReviewCenterSnapshot;
   quick_actions?: ForgeQuickActions;
 };
@@ -663,6 +706,8 @@ export type ProjectSnapshot = {
   current_package: PackageDetailSnapshot | null;
   system_status: ForgeSystemStatus;
   workflow_activity: ForgeWorkflowActivity;
+  operator_guidance?: ForgeOperatorGuidance;
+  live_operation_status?: ForgeLiveOperationStatus;
   approval_summary: Record<string, unknown>;
   delivery_summary?: ForgeDeliverySummary;
   intake_workspace: ForgeIntakeWorkspace | null;

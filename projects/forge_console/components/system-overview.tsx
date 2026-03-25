@@ -28,11 +28,9 @@ function StatCard({
 }
 
 function QuickActionsCard({
-  title,
   quickActions,
   onQuickAction,
 }: {
-  title: string;
   quickActions: ForgeQuickActions | undefined;
   onQuickAction?: (action: ForgeQuickAction) => void;
 }) {
@@ -41,7 +39,7 @@ function QuickActionsCard({
   }
   return (
     <div className="detail-card" style={{ marginTop: 14 }}>
-      <h4>{title}</h4>
+      <h4>Suggested Quick Actions</h4>
       <div className="chip-row" style={{ marginBottom: 10 }}>
         <span className="chip info">{quickActions.quick_actions_status}</span>
         <span className="chip">{quickActions.quick_actions_reason}</span>
@@ -89,6 +87,8 @@ export function SystemOverview({ overview, onQuickAction }: Props) {
   const costVisibility = data?.cost_visibility;
   const budgetVisibility = data?.budget_visibility;
   const modelRouting = data?.model_routing_visibility;
+  const operatorGuidance = data?.operator_guidance;
+  const liveOperation = data?.live_operation_status;
   const quickActions = data?.quick_actions;
   const systemStatus = data?.system_status;
   const backendOffline = systemStatus?.status === "offline";
@@ -189,9 +189,76 @@ export function SystemOverview({ overview, onQuickAction }: Props) {
           value={Number(modelRouting?.blocked_or_deferred_count ?? 0)}
           subvalue={modelRouting?.policy_output_label ?? "Policy Output (Read-only)"}
         />
+        <StatCard
+          label="Operator Guidance (Suggested, Not Executed)"
+          value={String(operatorGuidance?.guidance_status ?? "idle")}
+          subvalue={operatorGuidance?.next_best_action || "No action is currently required."}
+        />
+      </div>
+      <div className="detail-card-subsection" style={{ marginTop: 12 }}>
+        <div className="stat-label">Operator Guidance (Suggested, Not Executed)</div>
+        <div style={{ marginTop: 8 }}>
+          <strong>Posture:</strong> {String(operatorGuidance?.system_posture ?? "healthy")}
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <strong>Reason:</strong> {operatorGuidance?.action_reason || "No active guidance reason."}
+        </div>
+        <div style={{ marginTop: 6 }}>
+          <strong>Priority:</strong> {String(operatorGuidance?.recommended_priority ?? "low")}
+        </div>
+      </div>
+      <div className="review-grid" style={{ marginTop: 16 }}>
+        <div className="detail-card">
+          <h4>Live Operation Status</h4>
+          <div className="detail-list">
+            <div className="detail-row">
+              <span>Status</span>
+              <strong>{displayState(liveOperation?.operation_status, "idle")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Current Phase</span>
+              <strong>{displayState(liveOperation?.current_phase, "idle")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Current Step</span>
+              <strong>{displayState(liveOperation?.current_step, "Waiting for input")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Active Project</span>
+              <strong>{displayState(liveOperation?.active_project, "No active project")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Active Package</span>
+              <strong className="mono">{displayState(liveOperation?.active_package_id, "No active package")}</strong>
+            </div>
+          </div>
+        </div>
+        <div className="detail-card">
+          <h4>Recent Activity</h4>
+          <div className="detail-list">
+            {(liveOperation?.recent_activity ?? []).length > 0 ? (
+              (liveOperation?.recent_activity ?? []).map((item, index) => (
+                <div className="audit-item" key={`${item.activity_type}-${item.timestamp}-${index}`}>
+                  <div className="chip-row" style={{ marginBottom: 8 }}>
+                    <span className="chip info">{item.activity_type}</span>
+                    <span className="chip mono">{item.timestamp}</span>
+                  </div>
+                  <div>{item.activity_summary}</div>
+                </div>
+              ))
+            ) : (
+              <div className="audit-item muted">No recent governed activity.</div>
+            )}
+          </div>
+          <div className="detail-card-subsection">
+            <div className="stat-label">Idle Reason</div>
+            <div style={{ marginTop: 8 }}>
+              {displayState(liveOperation?.idle_reason, "No idle reason while operation is active.")}
+            </div>
+          </div>
+        </div>
       </div>
       <QuickActionsCard
-        title="Suggested Quick Actions"
         quickActions={quickActions}
         onQuickAction={onQuickAction}
       />

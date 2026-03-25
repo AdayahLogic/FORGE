@@ -22,6 +22,7 @@ from NEXUS.budget_controls import (
 )
 from NEXUS.execution_package_registry import list_execution_package_journal_entries
 from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
+from NEXUS.operator_guidance import build_operator_guidance_safe
 from NEXUS.operator_quick_actions import build_intake_preview_quick_actions
 from NEXUS.path_utils import to_studio_relative_path
 from NEXUS.project_state import ensure_state_folder, load_project_state
@@ -1180,6 +1181,31 @@ def build_intake_workspace(
     }
     lead_intake_profile = _empty_lead_intake_profile()
     request_kind = _resolve_default_request_kind(project_state)
+    preview = preview_intake_request_safe(
+        request_kind=request_kind,
+        project_key=project_key,
+        project_path=project_path,
+        objective="",
+        project_context="",
+        constraints=structured_constraints,
+        requested_artifacts=requested_artifacts,
+        linked_attachment_ids=[],
+        autonomy_mode=autonomy_mode,
+        lead_intake_profile=lead_intake_profile,
+        qualification=_default_lead_qualification(),
+    )
+    operator_guidance = build_operator_guidance_safe(
+        scope="project",
+        project_state=project_state,
+        intake_preview=preview,
+        delivery_summary={},
+        model_routing_policy=dict(preview.get("model_routing_policy") or {}),
+        budget_status=str(preview.get("budget_status") or ""),
+        budget_reason=str(preview.get("budget_reason") or ""),
+        has_active_package=bool(str(project_state.get("execution_package_id") or "").strip()),
+        package={},
+        latest_self_change_entry={},
+    )
     return {
         "project_key": project_key,
         "project_path": project_path,
@@ -1208,19 +1234,8 @@ def build_intake_workspace(
                 "frontend_routing_decision",
             ],
         },
-        "preview": preview_intake_request_safe(
-            request_kind=request_kind,
-            project_key=project_key,
-            project_path=project_path,
-            objective="",
-            project_context="",
-            constraints=structured_constraints,
-            requested_artifacts=requested_artifacts,
-            linked_attachment_ids=[],
-            autonomy_mode=autonomy_mode,
-            lead_intake_profile=lead_intake_profile,
-            qualification=_default_lead_qualification(),
-        ),
+        "preview": preview,
+        "operator_guidance": operator_guidance,
     }
 
 

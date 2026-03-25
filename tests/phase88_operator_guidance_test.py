@@ -1,11 +1,12 @@
 """
-Phase 88 operator guidance tests.
+Phase 88 operator guidance + suggested next actions tests.
 
 Run: python tests/phase88_operator_guidance_test.py
 """
 
 from __future__ import annotations
 
+import json
 import shutil
 import sys
 import uuid
@@ -89,13 +90,16 @@ def _write_state(project_path: Path, package_id: str = ""):
         enforcement_status="approval_required",
         project_lifecycle_status="active",
         autonomy_mode="supervised_build",
+        allowed_actions=["prepare_package", "recommend_next_step"],
+        blocked_actions=["unbounded_loop"],
         run_id="run-phase88",
     )
 
 
-def _write_package(project_path: Path, package_id: str):
+def _write_package(project_path: Path, package: dict) -> str:
     from NEXUS.execution_package_registry import write_execution_package_safe
 
+    package_id = str(package.get("package_id") or f"pkg-{uuid.uuid4().hex[:10]}")
     payload = {
         "package_id": package_id,
         "project_name": "phase88proj",
@@ -106,43 +110,192 @@ def _write_package(project_path: Path, package_id: str):
         "decision_status": "pending",
         "release_status": "pending",
         "execution_status": "pending",
-        "requires_human_approval": True,
-        "expected_outputs": ["implementation_summary"],
-        "runtime_artifacts": [{"artifact_type": "test_report"}],
+        **package,
     }
     assert write_execution_package_safe(str(project_path), payload)
+    return package_id
 
 
-def test_operator_guidance_fields_present_and_read_only():
+def test_idle_state_with_no_active_work():
+    from NEXUS.operator_guidance import build_operator_guidance_safe
+
+    guidance = build_operator_guidance_safe(scope="project")
+    assert guidance["guidance_status"] == "idle"
+    assert guidance["system_posture"] == "healthy"
+    assert guidance["guidance_scope"] == "project"
+
+
+def test_awaiting_input_when_required_fields_are_missing():
+    from NEXUS.operator_guidance import build_operator_guidance_safe
+
+    guidance = build_operator_guidance_safe(
+        scope="project",
+        intake_preview={
+            "request_kind": "lead_intake",
+            "readiness": "needs_input",
+            "composition_status": {
+                "is_complete": False,
+                "missing_fields": ["lead_contact_name", "lead_contact_email"],
+                "warning_count": 0,
+                "stale_preview": False,
+            },
+        },
+    )
+    assert guidance["guidance_status"] == "awaiting_input"
+    assert guidance["recommended_priority"] == "high"
+    assert "Provide missing lead details" in guidance["next_best_action"]
+
+
+def test_ready_for_review_when_output_exists():
+    from NEXUS.operator_guidance import build_operator_guidance_safe
+
+    guidance = build_operator_guidance_safe(
+        scope="package",
+        has_active_package=True,
+        package={"review_status": "review_pending"},
+        delivery_summary={"delivery_progress_state": "delivery_summary_ready"},
+    )
+    assert guidance["guidance_status"] == "ready_for_review"
+    assert "Review" in guidance["next_best_action"]
+
+
+def test_blocked_when_budget_or_governance_blocks_progress():
+    from NEXUS.operator_guidance import build_operator_guidance_safe
+
+    budget_block = build_operator_guidance_safe(
+        scope="project",
+        budget_status="cap_exceeded",
+        budget_reason="Project budget cap exceeded.",
+    )
+    governance_block = build_operator_guidance_safe(
+        scope="project",
+        latest_self_change_entry={
+            "manual_hold_active": True,
+            "hold_reason": "Executive hold is active.",
+        },
+    )
+    assert budget_block["guidance_status"] == "blocked"
+    assert "Resolve budget cap" in budget_block["next_best_action"]
+    assert governance_block["guidance_status"] == "blocked"
+    assert "manual hold" in governance_block["action_reason"].lower()
+
+
+def test_action_recommended_for_normal_progression():
+    from NEXUS.operator_guidance import build_operator_guidance_safe
+
+    guidance = build_operator_guidance_safe(
+        scope="project",
+        intake_preview={
+            "request_kind": "lead_intake",
+            "readiness": "ready_for_governed_request",
+            "composition_status": {
+                "is_complete": True,
+                "missing_fields": [],
+                "warning_count": 0,
+                "stale_preview": False,
+            },
+            "conversion_summary": {"conversion_status": "conversion_ready"},
+        },
+    )
+    assert guidance["guidance_status"] == "action_recommended"
+    assert "Approve project conversion to proceed." == guidance["next_best_action"]
+
+
+def test_next_best_action_is_contextual_not_generic():
+    from NEXUS.operator_guidance import build_operator_guidance_safe
+
+    response_review = build_operator_guidance_safe(
+        scope="project",
+        intake_preview={
+            "request_kind": "lead_intake",
+            "response_summary": {"response_status": "response_ready"},
+        },
+    )
+    checkpoint_block = build_operator_guidance_safe(
+        scope="project",
+        latest_self_change_entry={
+            "checkpoint_required": True,
+            "checkpoint_status": "checkpoint_required",
+        },
+    )
+    assert response_review["next_best_action"] == "Review generated response before client communication."
+    assert checkpoint_block["next_best_action"] == "Complete executive checkpoint approval."
+
+
+def test_no_execution_side_effects_from_guidance_surfaces():
     from NEXUS.registry import PROJECTS
     from ops.forge_console_bridge import build_project_snapshot
 
     with _local_test_dir() as tmp:
-        package_id = "pkg-phase88"
-        _write_package(tmp, package_id)
-        _write_state(tmp, package_id)
+        _write_state(tmp)
+        state_path = tmp / "state" / "project_state.json"
+        before = state_path.read_text(encoding="utf-8")
         project_key = f"phase88_{uuid.uuid4().hex[:8]}"
-        PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 88 temp project"}
+        PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 88 side-effect test"}
         try:
-            state_path = tmp / "state" / "project_state.json"
-            before = state_path.read_text(encoding="utf-8")
             snapshot = build_project_snapshot(project_key)
             after = state_path.read_text(encoding="utf-8")
             assert snapshot["status"] == "ok"
-            payload = snapshot["payload"]
-            assert payload["workflow_activity"]["last_action"]
-            assert payload["workflow_activity"]["current_phase"] in {"planning", "routing", "execution", "review"}
-            quick = payload["quick_actions"]
-            assert quick["quick_actions_status"] in {"none", "available", "blocked"}
-            assert isinstance(quick["available_actions"], list)
+            assert snapshot["payload"]["operator_guidance"]["guidance_scope"] == "project"
             assert before == after
+        finally:
+            PROJECTS.pop(project_key, None)
+
+
+def test_regression_surface_compatibility_for_phases_79_to_87():
+    from NEXUS.registry import PROJECTS
+    from ops.forge_console_bridge import build_package_snapshot, build_project_snapshot
+
+    with _local_test_dir() as tmp:
+        package_id = _write_package(
+            tmp,
+            {
+                "review_status": "reviewed",
+                "decision_status": "approved",
+                "release_status": "released",
+                "execution_status": "succeeded",
+                "expected_outputs": ["implementation_summary"],
+                "runtime_artifacts": [{"artifact_type": "test_report"}],
+                "routing_summary": {"model_lane": "balanced", "routing_policy_version": "phase86"},
+            },
+        )
+        _write_state(tmp, package_id=package_id)
+        project_key = f"phase88_{uuid.uuid4().hex[:8]}"
+        PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 88 regression"}
+        try:
+            project_snapshot = build_project_snapshot(project_key)
+            package_snapshot = build_package_snapshot(package_id, project_key=project_key)
+            assert project_snapshot["status"] == "ok"
+            assert package_snapshot["status"] == "ok"
+            assert project_snapshot["payload"]["intake_workspace"]["preview"]["request_id"] != ""
+            assert project_snapshot["payload"]["cost_summary"]["budget_status"] in {
+                "within_budget",
+                "approaching_cap",
+                "cap_exceeded",
+                "kill_switch_triggered",
+            }
+            assert package_snapshot["payload"]["delivery_summary"]["delivered_artifact_count"] >= 1
+            assert package_snapshot["payload"]["model_routing_policy"]["routing_status"] in {
+                "routed",
+                "blocked_by_budget",
+                "deferred_for_review",
+            }
+            assert package_snapshot["payload"]["operator_guidance"]["guidance_scope"] == "package"
+            assert package_snapshot["payload"]["review_center"]["operator_guidance"]["guidance_scope"] == "package"
         finally:
             PROJECTS.pop(project_key, None)
 
 
 def main():
     tests = [
-        test_operator_guidance_fields_present_and_read_only,
+        test_idle_state_with_no_active_work,
+        test_awaiting_input_when_required_fields_are_missing,
+        test_ready_for_review_when_output_exists,
+        test_blocked_when_budget_or_governance_blocks_progress,
+        test_action_recommended_for_normal_progression,
+        test_next_best_action_is_contextual_not_generic,
+        test_no_execution_side_effects_from_guidance_surfaces,
+        test_regression_surface_compatibility_for_phases_79_to_87,
     ]
     passed = sum(1 for test in tests if _run(test.__name__, test))
     print(f"\n{passed}/{len(tests)} passed")
@@ -151,4 +304,3 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
