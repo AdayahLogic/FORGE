@@ -57,6 +57,11 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_complete_operator_action",
     "execution_package_fail_operator_action",
     "execution_package_ignore_operator_action",
+    "execution_package_advance_action_sequence",
+    "execution_package_pause_action_sequence",
+    "execution_package_complete_action_sequence",
+    "execution_package_abandon_action_sequence",
+    "execution_package_action_sequence_status",
     "execution_package_eligibility_check",
     "execution_package_eligibility_status",
     "execution_package_release_request",
@@ -325,6 +330,28 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "communication_delivery_status": p.get("communication_delivery_status") or "not_sent",
         "follow_up_status": p.get("follow_up_status") or "not_ready",
         "follow_up_due_at": p.get("follow_up_due_at") or "",
+        "action_sequence_id": p.get("action_sequence_id") or "",
+        "action_sequence_type": p.get("action_sequence_type") or "general",
+        "action_sequence_status": p.get("action_sequence_status") or "not_started",
+        "action_sequence_step": p.get("action_sequence_step") or 0,
+        "action_sequence_total_steps": p.get("action_sequence_total_steps") or 1,
+        "action_sequence_next_step": p.get("action_sequence_next_step") or "",
+        "action_sequence_next_step_due_at": p.get("action_sequence_next_step_due_at") or "",
+        "action_sequence_progress_score": p.get("action_sequence_progress_score") or 0.0,
+        "action_sequence_dropoff_detected": bool(p.get("action_sequence_dropoff_detected")),
+        "action_sequence_dropoff_reason": p.get("action_sequence_dropoff_reason") or "",
+        "action_sequence_recovery_recommendation": p.get("action_sequence_recovery_recommendation") or "",
+        "follow_up_intelligence_status": p.get("follow_up_intelligence_status") or "not_applicable",
+        "follow_up_priority": p.get("follow_up_priority") or "medium",
+        "follow_up_recommendation": p.get("follow_up_recommendation") or "wait_for_response",
+        "follow_up_recommendation_reason": p.get("follow_up_recommendation_reason") or "",
+        "follow_up_overdue": bool(p.get("follow_up_overdue")),
+        "follow_up_dropoff_risk": p.get("follow_up_dropoff_risk") or "low",
+        "follow_up_window_status": p.get("follow_up_window_status") or "no_window",
+        "follow_up_response_rate": p.get("follow_up_response_rate") or 0.0,
+        "sequence_completion_rate": p.get("sequence_completion_rate") or 0.0,
+        "second_follow_up_success_rate": p.get("second_follow_up_success_rate") or 0.0,
+        "stalled_sequence_rate": p.get("stalled_sequence_rate") or 0.0,
         "operator_action_id": p.get("operator_action_id") or "",
         "operator_action_status": p.get("operator_action_status") or "pending",
         "operator_action_created_at": p.get("operator_action_created_at") or "",
@@ -491,6 +518,40 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "action_to_reply_rate": p.get("action_to_reply_rate") or 0.0,
             "action_to_conversion_rate": p.get("action_to_conversion_rate") or 0.0,
         },
+        "action_sequence": {
+            "action_sequence_id": p.get("action_sequence_id") or "",
+            "action_sequence_type": p.get("action_sequence_type") or "general",
+            "action_sequence_status": p.get("action_sequence_status") or "not_started",
+            "action_sequence_step": p.get("action_sequence_step") or 0,
+            "action_sequence_total_steps": p.get("action_sequence_total_steps") or 1,
+            "action_sequence_started_at": p.get("action_sequence_started_at") or "",
+            "action_sequence_updated_at": p.get("action_sequence_updated_at") or "",
+            "action_sequence_completed_at": p.get("action_sequence_completed_at") or "",
+            "action_sequence_abandoned_at": p.get("action_sequence_abandoned_at") or "",
+            "action_sequence_next_step": p.get("action_sequence_next_step") or "",
+            "action_sequence_next_step_due_at": p.get("action_sequence_next_step_due_at") or "",
+            "action_sequence_progress_score": p.get("action_sequence_progress_score") or 0.0,
+            "action_sequence_dropoff_detected": bool(p.get("action_sequence_dropoff_detected")),
+            "action_sequence_dropoff_reason": p.get("action_sequence_dropoff_reason") or "",
+            "action_sequence_recovery_recommendation": p.get("action_sequence_recovery_recommendation") or "",
+            "action_sequence_history": list(p.get("action_sequence_history") or []),
+        },
+        "follow_up_intelligence": {
+            "follow_up_intelligence_status": p.get("follow_up_intelligence_status") or "not_applicable",
+            "follow_up_priority": p.get("follow_up_priority") or "medium",
+            "follow_up_recommendation": p.get("follow_up_recommendation") or "wait_for_response",
+            "follow_up_recommendation_reason": p.get("follow_up_recommendation_reason") or "",
+            "follow_up_sequence_step": p.get("follow_up_sequence_step") or 0,
+            "follow_up_overdue": bool(p.get("follow_up_overdue")),
+            "follow_up_dropoff_risk": p.get("follow_up_dropoff_risk") or "low",
+            "follow_up_window_status": p.get("follow_up_window_status") or "no_window",
+        },
+        "follow_up_performance": {
+            "follow_up_response_rate": p.get("follow_up_response_rate") or 0.0,
+            "sequence_completion_rate": p.get("sequence_completion_rate") or 0.0,
+            "second_follow_up_success_rate": p.get("second_follow_up_success_rate") or 0.0,
+            "stalled_sequence_rate": p.get("stalled_sequence_rate") or 0.0,
+        },
         "metadata": dict(p.get("metadata") or {}),
     }
     cursor_bridge_artifacts = list(p.get("cursor_bridge_artifacts") or [])
@@ -569,6 +630,26 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "communication_sent_at": p.get("communication_sent_at") or "",
         "follow_up_status": p.get("follow_up_status") or "not_ready",
         "follow_up_due_at": p.get("follow_up_due_at") or "",
+        "action_sequence_status": p.get("action_sequence_status") or "not_started",
+        "action_sequence_step": p.get("action_sequence_step") or 0,
+        "action_sequence_total_steps": p.get("action_sequence_total_steps") or 1,
+        "action_sequence_next_step": p.get("action_sequence_next_step") or "",
+        "action_sequence_next_step_due_at": p.get("action_sequence_next_step_due_at") or "",
+        "action_sequence_progress_score": p.get("action_sequence_progress_score") or 0.0,
+        "action_sequence_dropoff_detected": bool(p.get("action_sequence_dropoff_detected")),
+        "action_sequence_dropoff_reason": p.get("action_sequence_dropoff_reason") or "",
+        "action_sequence_recovery_recommendation": p.get("action_sequence_recovery_recommendation") or "",
+        "follow_up_intelligence_status": p.get("follow_up_intelligence_status") or "not_applicable",
+        "follow_up_priority": p.get("follow_up_priority") or "medium",
+        "follow_up_recommendation": p.get("follow_up_recommendation") or "wait_for_response",
+        "follow_up_recommendation_reason": p.get("follow_up_recommendation_reason") or "",
+        "follow_up_overdue": bool(p.get("follow_up_overdue")),
+        "follow_up_dropoff_risk": p.get("follow_up_dropoff_risk") or "low",
+        "follow_up_window_status": p.get("follow_up_window_status") or "no_window",
+        "follow_up_response_rate": p.get("follow_up_response_rate") or 0.0,
+        "sequence_completion_rate": p.get("sequence_completion_rate") or 0.0,
+        "second_follow_up_success_rate": p.get("second_follow_up_success_rate") or 0.0,
+        "stalled_sequence_rate": p.get("stalled_sequence_rate") or 0.0,
     }
 
 
@@ -1019,6 +1100,58 @@ def run_command(
                 and str(row.get("communication_status") or "") == "sent"
                 and str(row.get("communication_delivery_status") or "") == "delivery_pending"
             ]
+            overdue_follow_ups = [
+                {
+                    "package_id": row.get("package_id"),
+                    "follow_up_status": row.get("follow_up_status"),
+                    "follow_up_due_at": row.get("follow_up_due_at"),
+                    "follow_up_priority": row.get("follow_up_priority"),
+                    "follow_up_recommendation": row.get("follow_up_recommendation"),
+                    "follow_up_recommendation_reason": row.get("follow_up_recommendation_reason"),
+                }
+                for row in queue_rows
+                if bool(row.get("follow_up_overdue")) or str(row.get("follow_up_window_status") or "") == "overdue"
+            ]
+            stalled_sequences = [
+                {
+                    "package_id": row.get("package_id"),
+                    "action_sequence_status": row.get("action_sequence_status"),
+                    "action_sequence_step": row.get("action_sequence_step"),
+                    "action_sequence_total_steps": row.get("action_sequence_total_steps"),
+                    "action_sequence_next_step": row.get("action_sequence_next_step"),
+                    "action_sequence_next_step_due_at": row.get("action_sequence_next_step_due_at"),
+                    "action_sequence_dropoff_reason": row.get("action_sequence_dropoff_reason"),
+                    "action_sequence_recovery_recommendation": row.get("action_sequence_recovery_recommendation"),
+                }
+                for row in queue_rows
+                if str(row.get("action_sequence_status") or "") == "stalled"
+            ]
+            next_best_follow_up_actions = sorted(
+                [
+                    row
+                    for row in queue_rows
+                    if str(row.get("follow_up_intelligence_status") or "") in {"action_recommended", "overdue_action", "dropoff_risk"}
+                ],
+                key=lambda row: (
+                    3 if str(row.get("follow_up_priority") or "") == "critical" else 2 if str(row.get("follow_up_priority") or "") == "high" else 1,
+                    1 if bool(row.get("follow_up_overdue")) else 0,
+                    1 if bool(row.get("action_sequence_dropoff_detected")) else 0,
+                ),
+                reverse=True,
+            )
+            recovery_needed_opportunities = [
+                {
+                    "package_id": row.get("package_id"),
+                    "action_sequence_status": row.get("action_sequence_status"),
+                    "action_sequence_dropoff_reason": row.get("action_sequence_dropoff_reason"),
+                    "action_sequence_recovery_recommendation": row.get("action_sequence_recovery_recommendation"),
+                    "follow_up_recommendation": row.get("follow_up_recommendation"),
+                    "follow_up_recommendation_reason": row.get("follow_up_recommendation_reason"),
+                }
+                for row in queue_rows
+                if bool(row.get("action_sequence_dropoff_detected"))
+                or str(row.get("action_sequence_status") or "") == "stalled"
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -1069,6 +1202,21 @@ def run_command(
                     "communication_sent_items": communication_sent[:10],
                     "communication_blocked_items": communication_blocked[:10],
                     "communication_pending_delivery_items": communication_pending_delivery[:10],
+                    "overdue_follow_ups": overdue_follow_ups[:10],
+                    "stalled_sequences": stalled_sequences[:10],
+                    "next_best_follow_up_actions": [
+                        {
+                            "package_id": row.get("package_id"),
+                            "follow_up_priority": row.get("follow_up_priority"),
+                            "follow_up_recommendation": row.get("follow_up_recommendation"),
+                            "follow_up_recommendation_reason": row.get("follow_up_recommendation_reason"),
+                            "action_sequence_status": row.get("action_sequence_status"),
+                            "action_sequence_step": row.get("action_sequence_step"),
+                            "action_sequence_total_steps": row.get("action_sequence_total_steps"),
+                        }
+                        for row in next_best_follow_up_actions[:10]
+                    ],
+                    "recovery_needed_opportunities": recovery_needed_opportunities[:10],
                 },
             )
         except Exception as e:
@@ -1383,6 +1531,196 @@ def run_command(
                         "action_follow_through_rate": package.get("action_follow_through_rate"),
                         "action_to_reply_rate": package.get("action_to_reply_rate"),
                         "action_to_conversion_rate": package.get("action_to_conversion_rate"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd in {
+        "execution_package_advance_action_sequence",
+        "execution_package_pause_action_sequence",
+        "execution_package_complete_action_sequence",
+        "execution_package_abandon_action_sequence",
+    }:
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        actor_field = {
+            "execution_package_advance_action_sequence": "advance_actor",
+            "execution_package_pause_action_sequence": "pause_actor",
+            "execution_package_complete_action_sequence": "completion_actor",
+            "execution_package_abandon_action_sequence": "abandon_actor",
+        }.get(cmd, "sequence_actor")
+        notes_field = {
+            "execution_package_advance_action_sequence": "advance_notes",
+            "execution_package_pause_action_sequence": "pause_notes",
+            "execution_package_complete_action_sequence": "completion_notes",
+            "execution_package_abandon_action_sequence": "abandon_notes",
+        }.get(cmd, "sequence_notes")
+        sequence_action = {
+            "execution_package_advance_action_sequence": "advance",
+            "execution_package_pause_action_sequence": "pause",
+            "execution_package_complete_action_sequence": "complete",
+            "execution_package_abandon_action_sequence": "abandon",
+        }.get(cmd, "")
+        sequence_actor = str(kwargs.get(actor_field) or kwargs.get("sequence_actor") or "").strip()
+        sequence_notes = str(kwargs.get(notes_field) or kwargs.get("sequence_notes") or "")
+        sequence_step_increment = int(kwargs.get("sequence_step_increment") or 1)
+        next_step_due_at = str(kwargs.get("next_step_due_at") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not sequence_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=f"{actor_field} required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_action_sequence_update_safe
+
+            result = record_execution_package_action_sequence_update_safe(
+                project_path=path,
+                package_id=package_id,
+                sequence_action=sequence_action,
+                sequence_actor=sequence_actor,
+                sequence_notes=sequence_notes,
+                sequence_step_increment=sequence_step_increment,
+                next_step_due_at=next_step_due_at,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to update action sequence."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            action_sequence = {
+                "action_sequence_id": package.get("action_sequence_id"),
+                "action_sequence_type": package.get("action_sequence_type"),
+                "action_sequence_status": package.get("action_sequence_status"),
+                "action_sequence_step": package.get("action_sequence_step"),
+                "action_sequence_total_steps": package.get("action_sequence_total_steps"),
+                "action_sequence_started_at": package.get("action_sequence_started_at"),
+                "action_sequence_updated_at": package.get("action_sequence_updated_at"),
+                "action_sequence_completed_at": package.get("action_sequence_completed_at"),
+                "action_sequence_abandoned_at": package.get("action_sequence_abandoned_at"),
+                "action_sequence_next_step": package.get("action_sequence_next_step"),
+                "action_sequence_next_step_due_at": package.get("action_sequence_next_step_due_at"),
+                "action_sequence_progress_score": package.get("action_sequence_progress_score"),
+                "action_sequence_dropoff_detected": package.get("action_sequence_dropoff_detected"),
+                "action_sequence_dropoff_reason": package.get("action_sequence_dropoff_reason"),
+                "action_sequence_recovery_recommendation": package.get("action_sequence_recovery_recommendation"),
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; action_sequence_status={action_sequence.get('action_sequence_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package action sequence updated.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "action_sequence": action_sequence,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_action_sequence_status":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; action_sequence_status={package.get('action_sequence_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package action sequence status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "action_sequence": {
+                        "action_sequence_id": package.get("action_sequence_id"),
+                        "action_sequence_type": package.get("action_sequence_type"),
+                        "action_sequence_status": package.get("action_sequence_status"),
+                        "action_sequence_step": package.get("action_sequence_step"),
+                        "action_sequence_total_steps": package.get("action_sequence_total_steps"),
+                        "action_sequence_started_at": package.get("action_sequence_started_at"),
+                        "action_sequence_updated_at": package.get("action_sequence_updated_at"),
+                        "action_sequence_completed_at": package.get("action_sequence_completed_at"),
+                        "action_sequence_abandoned_at": package.get("action_sequence_abandoned_at"),
+                        "action_sequence_next_step": package.get("action_sequence_next_step"),
+                        "action_sequence_next_step_due_at": package.get("action_sequence_next_step_due_at"),
+                        "action_sequence_progress_score": package.get("action_sequence_progress_score"),
+                        "action_sequence_dropoff_detected": package.get("action_sequence_dropoff_detected"),
+                        "action_sequence_dropoff_reason": package.get("action_sequence_dropoff_reason"),
+                        "action_sequence_recovery_recommendation": package.get("action_sequence_recovery_recommendation"),
+                    },
+                    "follow_up_intelligence": {
+                        "follow_up_intelligence_status": package.get("follow_up_intelligence_status"),
+                        "follow_up_priority": package.get("follow_up_priority"),
+                        "follow_up_recommendation": package.get("follow_up_recommendation"),
+                        "follow_up_recommendation_reason": package.get("follow_up_recommendation_reason"),
+                        "follow_up_overdue": package.get("follow_up_overdue"),
+                        "follow_up_dropoff_risk": package.get("follow_up_dropoff_risk"),
+                        "follow_up_window_status": package.get("follow_up_window_status"),
                     },
                 },
             )

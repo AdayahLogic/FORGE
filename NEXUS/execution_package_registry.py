@@ -131,6 +131,27 @@ COMMUNICATION_STATUSES = {
 COMMUNICATION_APPROVAL_STATUSES = {"not_required", "pending", "approved", "denied"}
 COMMUNICATION_DELIVERY_STATUSES = {"not_sent", "delivery_pending", "delivered", "failed"}
 FOLLOW_UP_STATUSES = {"not_ready", "follow_up_due", "follow_up_scheduled", "follow_up_not_needed"}
+ACTION_SEQUENCE_STATUSES = {"not_started", "active", "waiting", "completed", "abandoned", "stalled"}
+ACTION_SEQUENCE_TYPES = {"follow_up", "proposal", "negotiation", "onboarding", "general"}
+FOLLOW_UP_INTELLIGENCE_STATUSES = {
+    "not_applicable",
+    "pending_send",
+    "waiting_response",
+    "action_recommended",
+    "overdue_action",
+    "dropoff_risk",
+}
+FOLLOW_UP_PRIORITIES = {"low", "medium", "high", "critical"}
+FOLLOW_UP_RECOMMENDATION_TYPES = {
+    "send_second_follow_up",
+    "escalate_to_human_review",
+    "wait_for_response",
+    "prepare_offer",
+    "schedule_final_attempt",
+    "defer_low_value_follow_up",
+}
+FOLLOW_UP_WINDOW_STATUSES = {"no_window", "upcoming", "due_now", "overdue"}
+FOLLOW_UP_DROPOFF_RISKS = {"low", "medium", "high"}
 
 
 def _utc_now_iso() -> str:
@@ -394,6 +415,32 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "follow_up_status": str(normalized.get("follow_up_status") or "not_ready"),
         "follow_up_reason": str(normalized.get("follow_up_reason") or ""),
         "follow_up_sequence_step": int(normalized.get("follow_up_sequence_step") or 0),
+        "action_sequence_id": str(normalized.get("action_sequence_id") or ""),
+        "action_sequence_type": str(normalized.get("action_sequence_type") or "general"),
+        "action_sequence_step": int(normalized.get("action_sequence_step") or 0),
+        "action_sequence_total_steps": int(normalized.get("action_sequence_total_steps") or 1),
+        "action_sequence_status": str(normalized.get("action_sequence_status") or "not_started"),
+        "action_sequence_started_at": str(normalized.get("action_sequence_started_at") or ""),
+        "action_sequence_updated_at": str(normalized.get("action_sequence_updated_at") or ""),
+        "action_sequence_completed_at": str(normalized.get("action_sequence_completed_at") or ""),
+        "action_sequence_abandoned_at": str(normalized.get("action_sequence_abandoned_at") or ""),
+        "action_sequence_next_step": str(normalized.get("action_sequence_next_step") or ""),
+        "action_sequence_next_step_due_at": str(normalized.get("action_sequence_next_step_due_at") or ""),
+        "action_sequence_progress_score": _normalize_revenue_ratio(normalized.get("action_sequence_progress_score"), fallback=0.0),
+        "action_sequence_dropoff_detected": bool(normalized.get("action_sequence_dropoff_detected")),
+        "action_sequence_dropoff_reason": str(normalized.get("action_sequence_dropoff_reason") or ""),
+        "action_sequence_recovery_recommendation": str(normalized.get("action_sequence_recovery_recommendation") or ""),
+        "follow_up_intelligence_status": str(normalized.get("follow_up_intelligence_status") or "not_applicable"),
+        "follow_up_priority": str(normalized.get("follow_up_priority") or "medium"),
+        "follow_up_recommendation": str(normalized.get("follow_up_recommendation") or "wait_for_response"),
+        "follow_up_recommendation_reason": str(normalized.get("follow_up_recommendation_reason") or ""),
+        "follow_up_overdue": bool(normalized.get("follow_up_overdue")),
+        "follow_up_dropoff_risk": str(normalized.get("follow_up_dropoff_risk") or "low"),
+        "follow_up_window_status": str(normalized.get("follow_up_window_status") or "no_window"),
+        "follow_up_response_rate": _normalize_revenue_ratio(normalized.get("follow_up_response_rate"), fallback=0.0),
+        "sequence_completion_rate": _normalize_revenue_ratio(normalized.get("sequence_completion_rate"), fallback=0.0),
+        "second_follow_up_success_rate": _normalize_revenue_ratio(normalized.get("second_follow_up_success_rate"), fallback=0.0),
+        "stalled_sequence_rate": _normalize_revenue_ratio(normalized.get("stalled_sequence_rate"), fallback=0.0),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -1177,6 +1224,55 @@ def _normalize_follow_up_status(value: Any) -> str:
     return normalized
 
 
+def _normalize_action_sequence_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in ACTION_SEQUENCE_STATUSES:
+        return "not_started"
+    return normalized
+
+
+def _normalize_action_sequence_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in ACTION_SEQUENCE_TYPES:
+        return "general"
+    return normalized
+
+
+def _normalize_follow_up_intelligence_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in FOLLOW_UP_INTELLIGENCE_STATUSES:
+        return "not_applicable"
+    return normalized
+
+
+def _normalize_follow_up_priority(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in FOLLOW_UP_PRIORITIES:
+        return "medium"
+    return normalized
+
+
+def _normalize_follow_up_recommendation(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in FOLLOW_UP_RECOMMENDATION_TYPES:
+        return "wait_for_response"
+    return normalized
+
+
+def _normalize_follow_up_window_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in FOLLOW_UP_WINDOW_STATUSES:
+        return "no_window"
+    return normalized
+
+
+def _normalize_follow_up_dropoff_risk(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in FOLLOW_UP_DROPOFF_RISKS:
+        return "low"
+    return normalized
+
+
 def _normalize_operator_action_lifecycle_status(value: Any) -> str:
     normalized = str(value or "").strip().lower()
     if normalized not in OPERATOR_ACTION_LIFECYCLE_STATUSES:
@@ -1231,6 +1327,28 @@ def _normalize_operator_action_history(value: Any) -> list[dict[str, Any]]:
                 "linked_communication_delivery_status": _normalize_communication_delivery_status(item.get("linked_communication_delivery_status")),
                 "operator_action_effect_on_revenue": _normalize_operator_action_revenue_effect(item.get("operator_action_effect_on_revenue")),
                 "operator_action_effect_reason": str(item.get("operator_action_effect_reason") or ""),
+            }
+        )
+    return normalized[-50:]
+
+
+def _normalize_action_sequence_history(value: Any) -> list[dict[str, Any]]:
+    history = value if isinstance(value, list) else []
+    normalized: list[dict[str, Any]] = []
+    for item in history[-100:]:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "event_at": str(item.get("event_at") or item.get("at") or ""),
+                "event_type": str(item.get("event_type") or "sequence_update").strip().lower(),
+                "action_sequence_status": _normalize_action_sequence_status(item.get("action_sequence_status")),
+                "action_sequence_step": max(0, int(item.get("action_sequence_step") or 0)),
+                "action_sequence_total_steps": max(1, int(item.get("action_sequence_total_steps") or 1)),
+                "action_sequence_next_step": str(item.get("action_sequence_next_step") or ""),
+                "action_sequence_next_step_due_at": str(item.get("action_sequence_next_step_due_at") or ""),
+                "action_sequence_actor": str(item.get("action_sequence_actor") or item.get("actor") or "").strip(),
+                "action_sequence_notes": str(item.get("action_sequence_notes") or item.get("notes") or ""),
             }
         )
     return normalized[-50:]
@@ -1555,6 +1673,331 @@ def _derive_follow_up_foundation(
     }
 
 
+def _derive_action_sequence_total_steps(pipeline_stage: str) -> int:
+    if pipeline_stage in {"proposal_pending", "negotiation"}:
+        return 4
+    if pipeline_stage in {"follow_up", "qualified", "intake"}:
+        return 3
+    if pipeline_stage == "onboarding":
+        return 2
+    return 3
+
+
+def _derive_action_sequence_fields(
+    *,
+    package: dict[str, Any],
+    pipeline_stage: str,
+    follow_up_fields: dict[str, Any],
+    operator_action_memory_fields: dict[str, Any],
+) -> dict[str, Any]:
+    now_iso = _utc_now_iso()
+    conversion_result = str(operator_action_memory_fields.get("linked_conversion_result") or "").strip().lower()
+    operator_action_status = _normalize_operator_action_lifecycle_status(operator_action_memory_fields.get("operator_action_status"))
+    follow_up_status = _normalize_follow_up_status(follow_up_fields.get("follow_up_status"))
+    follow_up_due_at = str(follow_up_fields.get("follow_up_due_at") or "").strip()
+
+    sequence_id = str(package.get("action_sequence_id") or "").strip() or f"aseq-{str(package.get('package_id') or uuid.uuid4().hex[:12])}"
+    sequence_type_map = {
+        "proposal_pending": "proposal",
+        "negotiation": "negotiation",
+        "onboarding": "onboarding",
+        "follow_up": "follow_up",
+        "qualified": "follow_up",
+        "intake": "follow_up",
+    }
+    sequence_type = _normalize_action_sequence_type(
+        package.get("action_sequence_type") or sequence_type_map.get(pipeline_stage, "general")
+    )
+    total_steps = max(1, int(package.get("action_sequence_total_steps") or _derive_action_sequence_total_steps(pipeline_stage)))
+    step = max(
+        0,
+        int(
+            package.get("action_sequence_step")
+            or follow_up_fields.get("follow_up_sequence_step")
+            or 0
+        ),
+    )
+
+    explicit_status = _normalize_action_sequence_status(package.get("action_sequence_status"))
+    derived_status = "not_started"
+    converted = conversion_result in {"converted", "closed_won", "won", "success"}
+    if converted or operator_action_status == "completed":
+        derived_status = "completed"
+    elif operator_action_status in {"ignored", "cancelled"}:
+        derived_status = "abandoned"
+    elif follow_up_status == "follow_up_due" and follow_up_due_at and _parse_iso_datetime(follow_up_due_at):
+        parsed_due = _parse_iso_datetime(follow_up_due_at)
+        if parsed_due and parsed_due.tzinfo is not None and parsed_due < datetime.now(timezone.utc):
+            derived_status = "stalled"
+        else:
+            derived_status = "active"
+    elif follow_up_status == "follow_up_scheduled":
+        derived_status = "waiting"
+    elif operator_action_status in {"pending", "acknowledged", "in_progress"} or bool(follow_up_fields.get("follow_up_recommended")):
+        derived_status = "active"
+    status = explicit_status if explicit_status != "not_started" else derived_status
+    if status in {"completed", "abandoned"}:
+        status = status
+    elif derived_status in {"completed", "abandoned", "stalled"}:
+        status = derived_status
+
+    if status in {"active", "waiting", "stalled"} and step <= 0:
+        step = 1
+    if status == "completed":
+        step = max(step, total_steps)
+
+    next_step = str(package.get("action_sequence_next_step") or "").strip()
+    if status in {"completed", "abandoned"}:
+        next_step = ""
+    elif not next_step:
+        next_step = f"follow_up_step_{min(step + 1, total_steps)}"
+
+    next_step_due_at = str(package.get("action_sequence_next_step_due_at") or follow_up_due_at or "").strip()
+    if status in {"completed", "abandoned"}:
+        next_step_due_at = ""
+
+    started_at = str(package.get("action_sequence_started_at") or "")
+    if not started_at and status in {"active", "waiting", "stalled", "completed", "abandoned"}:
+        started_at = now_iso
+    completed_at = str(package.get("action_sequence_completed_at") or "")
+    abandoned_at = str(package.get("action_sequence_abandoned_at") or "")
+    if status == "completed" and not completed_at:
+        completed_at = now_iso
+    if status == "abandoned" and not abandoned_at:
+        abandoned_at = now_iso
+
+    base_progress = round(min(1.0, max(0.0, step / max(total_steps, 1))), 4)
+    if status == "completed":
+        progress_score = 1.0
+    elif status == "abandoned":
+        progress_score = round(min(1.0, base_progress * 0.5), 4)
+    elif status == "stalled":
+        progress_score = round(min(1.0, base_progress * 0.75), 4)
+    else:
+        progress_score = base_progress
+
+    history = _normalize_action_sequence_history(
+        package.get("action_sequence_history")
+        or (dict(package.get("metadata") or {}).get("action_sequence_history"))
+    )
+
+    return {
+        "action_sequence_id": sequence_id,
+        "action_sequence_type": sequence_type,
+        "action_sequence_step": step,
+        "action_sequence_total_steps": total_steps,
+        "action_sequence_status": status,
+        "action_sequence_started_at": started_at,
+        "action_sequence_updated_at": now_iso,
+        "action_sequence_completed_at": completed_at if status == "completed" else "",
+        "action_sequence_abandoned_at": abandoned_at if status == "abandoned" else "",
+        "action_sequence_next_step": next_step,
+        "action_sequence_next_step_due_at": next_step_due_at,
+        "action_sequence_progress_score": progress_score,
+        "action_sequence_history": history,
+    }
+
+
+def _derive_action_sequence_dropoff_fields(
+    *,
+    package: dict[str, Any],
+    action_sequence_fields: dict[str, Any],
+    follow_up_fields: dict[str, Any],
+    operator_action_memory_fields: dict[str, Any],
+    conversion_probability: float,
+    roi_estimate: float,
+) -> dict[str, Any]:
+    sequence_status = _normalize_action_sequence_status(action_sequence_fields.get("action_sequence_status"))
+    sequence_step = max(0, int(action_sequence_fields.get("action_sequence_step") or 0))
+    follow_up_due_at = str(follow_up_fields.get("follow_up_due_at") or "").strip()
+    follow_up_status = _normalize_follow_up_status(follow_up_fields.get("follow_up_status"))
+    communication_sent_at = str(package.get("communication_sent_at") or "").strip()
+    operator_overdue = bool(operator_action_memory_fields.get("operator_action_overdue"))
+    action_to_reply_rate = _normalize_revenue_ratio(operator_action_memory_fields.get("action_to_reply_rate"), fallback=0.0)
+    action_to_conversion_rate = _normalize_revenue_ratio(operator_action_memory_fields.get("action_to_conversion_rate"), fallback=0.0)
+    converted = str(operator_action_memory_fields.get("linked_conversion_result") or "").strip().lower() in {
+        "converted",
+        "closed_won",
+        "won",
+        "success",
+    }
+
+    reason = ""
+    recovery = "wait_for_response"
+    detected = False
+
+    due_dt = _parse_iso_datetime(follow_up_due_at)
+    overdue_follow_up = bool(due_dt and due_dt.tzinfo is not None and due_dt < datetime.now(timezone.utc))
+
+    if sequence_status == "stalled":
+        detected = True
+        reason = "sequence_stalled"
+        recovery = "escalate_to_human_review"
+    elif communication_sent_at and overdue_follow_up and not converted:
+        detected = True
+        reason = "no_response_window_elapsed"
+        recovery = "send_second_follow_up" if sequence_step <= 1 else "schedule_final_attempt"
+    elif (conversion_probability >= 0.6 or roi_estimate >= 0.6) and operator_overdue:
+        detected = True
+        reason = "high_value_no_operator_follow_through"
+        recovery = "escalate_to_human_review"
+    elif sequence_step >= 2 and action_to_reply_rate < 0.2 and action_to_conversion_rate < 0.1 and not converted:
+        detected = True
+        reason = "repeated_follow_up_no_progress"
+        recovery = "defer_low_value_follow_up"
+
+    if not detected and follow_up_status == "follow_up_not_needed":
+        recovery = "wait_for_response"
+
+    return {
+        "action_sequence_dropoff_detected": bool(detected),
+        "action_sequence_dropoff_reason": reason,
+        "action_sequence_recovery_recommendation": _normalize_follow_up_recommendation(recovery),
+    }
+
+
+def _derive_follow_up_intelligence_fields(
+    *,
+    package: dict[str, Any],
+    action_sequence_fields: dict[str, Any],
+    follow_up_fields: dict[str, Any],
+    dropoff_fields: dict[str, Any],
+    conversion_probability: float,
+    roi_estimate: float,
+    time_sensitivity: float,
+    opportunity_classification: str,
+) -> dict[str, Any]:
+    status = _normalize_action_sequence_status(action_sequence_fields.get("action_sequence_status"))
+    due_at = str(follow_up_fields.get("follow_up_due_at") or "").strip()
+    due_dt = _parse_iso_datetime(due_at)
+    now = datetime.now(timezone.utc)
+    overdue = bool(due_dt and due_dt.tzinfo is not None and due_dt < now)
+    window_status = "no_window"
+    if due_dt and due_dt.tzinfo is not None:
+        if due_dt < now:
+            window_status = "overdue"
+        elif (due_dt - now).total_seconds() <= 12 * 3600:
+            window_status = "due_now"
+        else:
+            window_status = "upcoming"
+
+    recommendation = "wait_for_response"
+    recommendation_reason = "Awaiting next governed follow-up checkpoint."
+    intelligence_status = "not_applicable"
+    priority = "medium"
+    dropoff_risk = "low"
+
+    if status in {"completed", "abandoned"}:
+        intelligence_status = "not_applicable"
+        recommendation = "wait_for_response"
+        recommendation_reason = "Action sequence is in a terminal state."
+        priority = "low"
+    elif bool(dropoff_fields.get("action_sequence_dropoff_detected")):
+        intelligence_status = "dropoff_risk"
+        recommendation = str(dropoff_fields.get("action_sequence_recovery_recommendation") or "escalate_to_human_review")
+        recommendation_reason = str(dropoff_fields.get("action_sequence_dropoff_reason") or "Drop-off risk detected.")
+        priority = "critical" if (conversion_probability >= 0.6 or roi_estimate >= 0.6) else "high"
+        dropoff_risk = "high"
+    elif str(package.get("communication_status") or "").strip().lower() != "sent":
+        intelligence_status = "pending_send"
+        recommendation = "prepare_offer" if str(package.get("pipeline_stage") or "").strip().lower() == "proposal_pending" else "wait_for_response"
+        recommendation_reason = "Follow-up sequence is gated until governed communication send occurs."
+        priority = "high" if time_sensitivity >= 0.7 else "medium"
+        dropoff_risk = "medium" if time_sensitivity >= 0.7 else "low"
+    elif overdue:
+        intelligence_status = "overdue_action"
+        recommendation = "send_second_follow_up" if int(action_sequence_fields.get("action_sequence_step") or 0) <= 1 else "schedule_final_attempt"
+        recommendation_reason = "Follow-up window is overdue for this sequence step."
+        priority = "high" if conversion_probability >= 0.5 else "medium"
+        dropoff_risk = "high" if conversion_probability >= 0.5 else "medium"
+    elif str(package.get("communication_delivery_status") or "").strip().lower() in {"delivery_pending", "delivered"}:
+        intelligence_status = "waiting_response"
+        recommendation = "wait_for_response"
+        recommendation_reason = "Communication is sent; waiting within governed response window."
+        priority = "medium"
+        dropoff_risk = "medium" if opportunity_classification in {"strategic", "hot"} else "low"
+    else:
+        intelligence_status = "action_recommended"
+        recommendation = "send_second_follow_up"
+        recommendation_reason = "Next governed follow-up action is recommended."
+        priority = "high" if (roi_estimate >= 0.6 or time_sensitivity >= 0.7) else "medium"
+        dropoff_risk = "medium"
+
+    return {
+        "follow_up_intelligence_status": _normalize_follow_up_intelligence_status(intelligence_status),
+        "follow_up_priority": _normalize_follow_up_priority(priority),
+        "follow_up_recommendation": _normalize_follow_up_recommendation(recommendation),
+        "follow_up_recommendation_reason": str(recommendation_reason or ""),
+        "follow_up_sequence_step": max(0, int(action_sequence_fields.get("action_sequence_step") or 0)),
+        "follow_up_overdue": bool(overdue),
+        "follow_up_dropoff_risk": _normalize_follow_up_dropoff_risk(dropoff_risk),
+        "follow_up_window_status": _normalize_follow_up_window_status(window_status),
+    }
+
+
+def _derive_follow_up_performance_signals(
+    *,
+    operator_action_history: list[dict[str, Any]],
+    action_sequence_history: list[dict[str, Any]],
+    action_sequence_status: str,
+    action_sequence_step: int,
+) -> dict[str, Any]:
+    action_events = [item for item in operator_action_history if isinstance(item, dict)]
+    sequence_events = [item for item in action_sequence_history if isinstance(item, dict)]
+
+    follow_up_attempts = max(
+        1,
+        sum(
+            1
+            for item in action_events
+            if str(item.get("operator_action_status") or "").strip().lower() in {"acknowledged", "in_progress", "completed", "failed", "ignored"}
+        ),
+    )
+    follow_up_responses = sum(
+        1
+        for item in action_events
+        if str(item.get("linked_conversion_result") or "").strip().lower() in {"replied", "converted", "closed_won", "won", "success"}
+    )
+
+    sequence_started = max(
+        1,
+        sum(
+            1
+            for item in sequence_events
+            if str(item.get("action_sequence_status") or "").strip().lower() in {"active", "waiting", "stalled", "completed", "abandoned"}
+        )
+        or (1 if action_sequence_step > 0 or action_sequence_status != "not_started" else 0),
+    )
+    sequence_completed = sum(
+        1
+        for item in sequence_events
+        if str(item.get("action_sequence_status") or "").strip().lower() == "completed"
+    ) or (1 if action_sequence_status == "completed" else 0)
+    stalled_sequences = sum(
+        1
+        for item in sequence_events
+        if str(item.get("action_sequence_status") or "").strip().lower() == "stalled"
+    ) or (1 if action_sequence_status == "stalled" else 0)
+
+    second_follow_up_attempts = sum(
+        1
+        for item in sequence_events
+        if int(item.get("action_sequence_step") or 0) >= 2
+    ) or (1 if action_sequence_step >= 2 else 0)
+    second_follow_up_successes = sum(
+        1
+        for item in action_events
+        if str(item.get("linked_conversion_result") or "").strip().lower() in {"converted", "closed_won", "won", "success"}
+    )
+
+    return {
+        "follow_up_response_rate": round(min(1.0, follow_up_responses / max(1, follow_up_attempts)), 4),
+        "sequence_completion_rate": round(min(1.0, sequence_completed / max(1, sequence_started)), 4),
+        "second_follow_up_success_rate": round(min(1.0, second_follow_up_successes / max(1, second_follow_up_attempts)), 4),
+        "stalled_sequence_rate": round(min(1.0, stalled_sequences / max(1, sequence_started)), 4),
+    }
+
+
 def _derive_communication_fields(
     *,
     package: dict[str, Any],
@@ -1818,6 +2261,36 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         communication_fields=communication_fields,
         revenue_candidate_status=revenue_candidate_status,
     )
+    action_sequence_fields = _derive_action_sequence_fields(
+        package=package,
+        pipeline_stage=pipeline_stage,
+        follow_up_fields=communication_fields,
+        operator_action_memory_fields=operator_action_memory_fields,
+    )
+    dropoff_fields = _derive_action_sequence_dropoff_fields(
+        package=package,
+        action_sequence_fields=action_sequence_fields,
+        follow_up_fields=communication_fields,
+        operator_action_memory_fields=operator_action_memory_fields,
+        conversion_probability=conversion_probability,
+        roi_estimate=roi_estimate,
+    )
+    follow_up_intelligence_fields = _derive_follow_up_intelligence_fields(
+        package=package,
+        action_sequence_fields=action_sequence_fields,
+        follow_up_fields=communication_fields,
+        dropoff_fields=dropoff_fields,
+        conversion_probability=conversion_probability,
+        roi_estimate=roi_estimate,
+        time_sensitivity=time_sensitivity,
+        opportunity_classification=opportunity_classification,
+    )
+    follow_up_performance_fields = _derive_follow_up_performance_signals(
+        operator_action_history=list(operator_action_memory_fields.get("operator_action_history") or []),
+        action_sequence_history=list(action_sequence_fields.get("action_sequence_history") or []),
+        action_sequence_status=str(action_sequence_fields.get("action_sequence_status") or "not_started"),
+        action_sequence_step=int(action_sequence_fields.get("action_sequence_step") or 0),
+    )
 
     return {
         "lead_id": lead_id,
@@ -1847,6 +2320,10 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         **operator_action_fields,
         **communication_fields,
         **operator_action_memory_fields,
+        **action_sequence_fields,
+        **dropoff_fields,
+        **follow_up_intelligence_fields,
+        **follow_up_performance_fields,
         "revenue_activation_trace": {
             "signals": {
                 "execution_score": execution_score,
@@ -1877,6 +2354,20 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
             "communication_status": communication_fields.get("communication_status"),
             "communication_send_eligible": communication_fields.get("communication_send_eligible"),
             "communication_approval_status": communication_fields.get("communication_approval_status"),
+            "action_sequence_status": action_sequence_fields.get("action_sequence_status"),
+            "action_sequence_step": action_sequence_fields.get("action_sequence_step"),
+            "action_sequence_total_steps": action_sequence_fields.get("action_sequence_total_steps"),
+            "action_sequence_progress_score": action_sequence_fields.get("action_sequence_progress_score"),
+            "follow_up_intelligence_status": follow_up_intelligence_fields.get("follow_up_intelligence_status"),
+            "follow_up_recommendation": follow_up_intelligence_fields.get("follow_up_recommendation"),
+            "follow_up_priority": follow_up_intelligence_fields.get("follow_up_priority"),
+            "follow_up_window_status": follow_up_intelligence_fields.get("follow_up_window_status"),
+            "action_sequence_dropoff_detected": dropoff_fields.get("action_sequence_dropoff_detected"),
+            "action_sequence_recovery_recommendation": dropoff_fields.get("action_sequence_recovery_recommendation"),
+            "follow_up_response_rate": follow_up_performance_fields.get("follow_up_response_rate"),
+            "sequence_completion_rate": follow_up_performance_fields.get("sequence_completion_rate"),
+            "second_follow_up_success_rate": follow_up_performance_fields.get("second_follow_up_success_rate"),
+            "stalled_sequence_rate": follow_up_performance_fields.get("stalled_sequence_rate"),
         },
     }
 
@@ -2315,6 +2806,32 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "follow_up_status": _normalize_follow_up_status(r.get("follow_up_status")),
         "follow_up_reason": str(r.get("follow_up_reason") or ""),
         "follow_up_sequence_step": max(0, int(r.get("follow_up_sequence_step") or 0)),
+        "action_sequence_id": str(r.get("action_sequence_id") or ""),
+        "action_sequence_type": _normalize_action_sequence_type(r.get("action_sequence_type")),
+        "action_sequence_step": max(0, int(r.get("action_sequence_step") or 0)),
+        "action_sequence_total_steps": max(1, int(r.get("action_sequence_total_steps") or 1)),
+        "action_sequence_status": _normalize_action_sequence_status(r.get("action_sequence_status")),
+        "action_sequence_started_at": str(r.get("action_sequence_started_at") or ""),
+        "action_sequence_updated_at": str(r.get("action_sequence_updated_at") or ""),
+        "action_sequence_completed_at": str(r.get("action_sequence_completed_at") or ""),
+        "action_sequence_abandoned_at": str(r.get("action_sequence_abandoned_at") or ""),
+        "action_sequence_next_step": str(r.get("action_sequence_next_step") or ""),
+        "action_sequence_next_step_due_at": str(r.get("action_sequence_next_step_due_at") or ""),
+        "action_sequence_progress_score": _normalize_revenue_ratio(r.get("action_sequence_progress_score"), fallback=0.0),
+        "action_sequence_dropoff_detected": bool(r.get("action_sequence_dropoff_detected")),
+        "action_sequence_dropoff_reason": str(r.get("action_sequence_dropoff_reason") or ""),
+        "action_sequence_recovery_recommendation": _normalize_follow_up_recommendation(r.get("action_sequence_recovery_recommendation")),
+        "follow_up_intelligence_status": _normalize_follow_up_intelligence_status(r.get("follow_up_intelligence_status")),
+        "follow_up_priority": _normalize_follow_up_priority(r.get("follow_up_priority")),
+        "follow_up_recommendation": _normalize_follow_up_recommendation(r.get("follow_up_recommendation")),
+        "follow_up_recommendation_reason": str(r.get("follow_up_recommendation_reason") or ""),
+        "follow_up_overdue": bool(r.get("follow_up_overdue")),
+        "follow_up_dropoff_risk": _normalize_follow_up_dropoff_risk(r.get("follow_up_dropoff_risk")),
+        "follow_up_window_status": _normalize_follow_up_window_status(r.get("follow_up_window_status")),
+        "follow_up_response_rate": _normalize_revenue_ratio(r.get("follow_up_response_rate"), fallback=0.0),
+        "sequence_completion_rate": _normalize_revenue_ratio(r.get("sequence_completion_rate"), fallback=0.0),
+        "second_follow_up_success_rate": _normalize_revenue_ratio(r.get("second_follow_up_success_rate"), fallback=0.0),
+        "stalled_sequence_rate": _normalize_revenue_ratio(r.get("stalled_sequence_rate"), fallback=0.0),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -4162,6 +4679,37 @@ def _append_operator_action_history_event(
     return p
 
 
+def _append_action_sequence_history_event(
+    package: dict[str, Any],
+    *,
+    event_type: str,
+    action_sequence_status: str,
+    action_sequence_step: int,
+    action_sequence_total_steps: int,
+    action_sequence_next_step: str = "",
+    action_sequence_next_step_due_at: str = "",
+    action_sequence_actor: str = "",
+    action_sequence_notes: str = "",
+) -> dict[str, Any]:
+    p = dict(package or {})
+    history = _normalize_action_sequence_history(p.get("action_sequence_history"))
+    history.append(
+        {
+            "event_at": _utc_now_iso(),
+            "event_type": str(event_type or "sequence_update").strip().lower(),
+            "action_sequence_status": _normalize_action_sequence_status(action_sequence_status),
+            "action_sequence_step": max(0, int(action_sequence_step or 0)),
+            "action_sequence_total_steps": max(1, int(action_sequence_total_steps or 1)),
+            "action_sequence_next_step": str(action_sequence_next_step or ""),
+            "action_sequence_next_step_due_at": str(action_sequence_next_step_due_at or ""),
+            "action_sequence_actor": str(action_sequence_actor or "").strip(),
+            "action_sequence_notes": str(action_sequence_notes or ""),
+        }
+    )
+    p["action_sequence_history"] = history[-50:]
+    return p
+
+
 def record_execution_package_operator_action_lifecycle(
     *,
     project_path: str | None,
@@ -4259,6 +4807,18 @@ def record_execution_package_operator_action_lifecycle(
         operator_action_effect_on_revenue=str(package.get("operator_action_effect_on_revenue") or "unknown"),
         operator_action_effect_reason=str(package.get("operator_action_effect_reason") or ""),
     )
+    normalized_for_sequence = normalize_execution_package(package)
+    package = _append_action_sequence_history_event(
+        package,
+        event_type=f"operator_action_{next_status}",
+        action_sequence_status=str(normalized_for_sequence.get("action_sequence_status") or "not_started"),
+        action_sequence_step=int(normalized_for_sequence.get("action_sequence_step") or 0),
+        action_sequence_total_steps=int(normalized_for_sequence.get("action_sequence_total_steps") or 1),
+        action_sequence_next_step=str(normalized_for_sequence.get("action_sequence_next_step") or ""),
+        action_sequence_next_step_due_at=str(normalized_for_sequence.get("action_sequence_next_step_due_at") or ""),
+        action_sequence_actor=actor,
+        action_sequence_notes=str(operator_action_notes or ""),
+    )
 
     return _persist_package_update(
         project_path=project_path,
@@ -4275,6 +4835,107 @@ def record_execution_package_operator_action_lifecycle_safe(**kwargs: Any) -> di
         return record_execution_package_operator_action_lifecycle(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to update execution package operator action lifecycle.", "package": None}
+
+
+def record_execution_package_action_sequence_update(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    sequence_action: str,
+    sequence_actor: str,
+    sequence_notes: str = "",
+    sequence_step_increment: int = 1,
+    next_step_due_at: str = "",
+) -> dict[str, Any]:
+    actor = str(sequence_actor or "").strip()
+    action = str(sequence_action or "").strip().lower()
+    if not actor:
+        return {"status": "error", "reason": "sequence_actor required.", "package": None}
+    if action not in {"advance", "pause", "complete", "abandon"}:
+        return {"status": "error", "reason": "sequence_action must be one of advance, pause, complete, abandon.", "package": None}
+
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+
+    normalized = normalize_execution_package(package)
+    current_status = _normalize_action_sequence_status(normalized.get("action_sequence_status"))
+    step = max(0, int(normalized.get("action_sequence_step") or 0))
+    total = max(1, int(normalized.get("action_sequence_total_steps") or 1))
+    now_iso = _utc_now_iso()
+
+    if current_status in {"completed", "abandoned"} and action in {"advance", "pause"}:
+        return {
+            "status": "error",
+            "reason": f"Cannot {action} a terminal sequence ({current_status}).",
+            "package": normalized,
+        }
+
+    if action == "advance":
+        increment = max(1, int(sequence_step_increment or 1))
+        step = min(total, max(1, step) + increment - 1)
+        next_status = "completed" if step >= total else "active"
+        next_step = "" if next_status == "completed" else f"follow_up_step_{min(step + 1, total)}"
+    elif action == "pause":
+        next_status = "waiting"
+        next_step = str(normalized.get("action_sequence_next_step") or f"follow_up_step_{min(max(step, 1), total)}")
+        if step <= 0:
+            step = 1
+    elif action == "complete":
+        next_status = "completed"
+        step = max(step, total)
+        next_step = ""
+    else:
+        next_status = "abandoned"
+        if step <= 0:
+            step = 1
+        next_step = ""
+
+    package["action_sequence_status"] = next_status
+    package["action_sequence_step"] = step
+    package["action_sequence_total_steps"] = total
+    package["action_sequence_updated_at"] = now_iso
+    package["action_sequence_started_at"] = str(normalized.get("action_sequence_started_at") or now_iso)
+    package["action_sequence_completed_at"] = now_iso if next_status == "completed" else ""
+    package["action_sequence_abandoned_at"] = now_iso if next_status == "abandoned" else ""
+    package["action_sequence_next_step"] = next_step
+    package["action_sequence_next_step_due_at"] = str(next_step_due_at or normalized.get("action_sequence_next_step_due_at") or "")
+    package["follow_up_sequence_step"] = step
+    if next_status == "completed":
+        package["follow_up_status"] = "follow_up_not_needed"
+    elif next_status == "waiting":
+        package["follow_up_status"] = "follow_up_scheduled"
+    elif next_status == "abandoned":
+        package["follow_up_status"] = "follow_up_not_needed"
+    else:
+        package["follow_up_status"] = str(normalized.get("follow_up_status") or "follow_up_due")
+
+    package = _append_action_sequence_history_event(
+        package,
+        event_type=f"manual_{action}",
+        action_sequence_status=next_status,
+        action_sequence_step=step,
+        action_sequence_total_steps=total,
+        action_sequence_next_step=next_step,
+        action_sequence_next_step_due_at=str(package.get("action_sequence_next_step_due_at") or ""),
+        action_sequence_actor=actor,
+        action_sequence_notes=str(sequence_notes or ""),
+    )
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason=f"Execution package action sequence {action} recorded.",
+    )
+
+
+def record_execution_package_action_sequence_update_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_action_sequence_update(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to update execution package action sequence.", "package": None}
 
 
 def record_execution_package_communication_approval(
