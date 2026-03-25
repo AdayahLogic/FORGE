@@ -285,6 +285,15 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_activation_status": p.get("revenue_activation_status") or "needs_revision",
         "revenue_workflow_ready": bool(p.get("revenue_workflow_ready")),
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
+        "revenue_candidate_status": p.get("revenue_candidate_status") or "review_required",
+        "revenue_candidate_rank": p.get("revenue_candidate_rank") or 0,
+        "revenue_candidate_reason": p.get("revenue_candidate_reason") or "",
+        "operator_action_queue_status": p.get("operator_action_queue_status") or "review_required_operator_action",
+        "operator_action_queue_rank": p.get("operator_action_queue_rank") or 0,
+        "operator_action_type": p.get("operator_action_type") or "send_human_follow_up",
+        "operator_action_reason": p.get("operator_action_reason") or "",
+        "operator_action_deadline": p.get("operator_action_deadline") or "",
+        "operator_action_priority": p.get("operator_action_priority") or "medium",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
     }
@@ -423,6 +432,15 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_activation_status": p.get("revenue_activation_status") or "needs_revision",
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
+        "revenue_candidate_status": p.get("revenue_candidate_status") or "review_required",
+        "revenue_candidate_rank": p.get("revenue_candidate_rank") or 0,
+        "revenue_candidate_reason": p.get("revenue_candidate_reason") or "",
+        "operator_action_queue_status": p.get("operator_action_queue_status") or "review_required_operator_action",
+        "operator_action_queue_rank": p.get("operator_action_queue_rank") or 0,
+        "operator_action_type": p.get("operator_action_type") or "send_human_follow_up",
+        "operator_action_reason": p.get("operator_action_reason") or "",
+        "operator_action_deadline": p.get("operator_action_deadline") or "",
+        "operator_action_priority": p.get("operator_action_priority") or "medium",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
     }
 
@@ -694,6 +712,86 @@ def run_command(
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
             ]
+            deferred_revenue = [
+                {
+                    "package_id": row.get("package_id"),
+                    "revenue_activation_status": row.get("revenue_activation_status"),
+                    "revenue_candidate_reason": row.get("revenue_candidate_reason") or "Deferred due to low value signal.",
+                    "pipeline_stage": row.get("pipeline_stage"),
+                    "operator_action_type": row.get("operator_action_type"),
+                }
+                for row in queue_rows
+                if str(row.get("revenue_activation_status") or "") == "low_value_deferred"
+            ]
+            review_required_revenue = [
+                {
+                    "package_id": row.get("package_id"),
+                    "revenue_activation_status": row.get("revenue_activation_status"),
+                    "revenue_candidate_reason": row.get("revenue_candidate_reason") or row.get("revenue_workflow_block_reason") or "Operator review required.",
+                    "pipeline_stage": row.get("pipeline_stage"),
+                    "operator_action_type": row.get("operator_action_type"),
+                }
+                for row in queue_rows
+                if str(row.get("revenue_activation_status") or "") in ("needs_operator_review", "needs_revision")
+            ]
+            ranked_operator_actions = sorted(
+                [
+                    row
+                    for row in queue_rows
+                    if str(row.get("operator_action_queue_status") or "") == "ready_operator_action"
+                ],
+                key=lambda row: (
+                    float(row.get("operator_action_queue_rank") or 0.0),
+                    float(row.get("highest_value_next_action_score") or 0.0),
+                ),
+                reverse=True,
+            )
+            ready_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_queue_rank": row.get("operator_action_queue_rank"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_reason": row.get("operator_action_reason"),
+                    "operator_action_deadline": row.get("operator_action_deadline"),
+                    "operator_action_priority": row.get("operator_action_priority"),
+                    "pipeline_stage": row.get("pipeline_stage"),
+                    "opportunity_classification": row.get("opportunity_classification"),
+                }
+                for row in ranked_operator_actions[:5]
+            ]
+            blocked_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_queue_status": row.get("operator_action_queue_status"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_reason": row.get("operator_action_reason") or row.get("revenue_workflow_block_reason"),
+                    "operator_action_priority": row.get("operator_action_priority"),
+                }
+                for row in queue_rows
+                if str(row.get("operator_action_queue_status") or "") == "blocked_operator_action"
+            ]
+            deferred_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_queue_status": row.get("operator_action_queue_status"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_reason": row.get("operator_action_reason"),
+                    "operator_action_priority": row.get("operator_action_priority"),
+                }
+                for row in queue_rows
+                if str(row.get("operator_action_queue_status") or "") == "deferred_operator_action"
+            ]
+            review_required_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_queue_status": row.get("operator_action_queue_status"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_reason": row.get("operator_action_reason"),
+                    "operator_action_priority": row.get("operator_action_priority"),
+                }
+                for row in queue_rows
+                if str(row.get("operator_action_queue_status") or "") == "review_required_operator_action"
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -717,6 +815,12 @@ def run_command(
                         for row in ranked_revenue[:5]
                     ],
                     "blocked_revenue_candidates": blocked_revenue[:5],
+                    "deferred_revenue_candidates": deferred_revenue[:5],
+                    "review_required_revenue_candidates": review_required_revenue[:5],
+                    "top_operator_actions": ready_operator_actions,
+                    "blocked_operator_actions": blocked_operator_actions[:5],
+                    "deferred_operator_actions": deferred_operator_actions[:5],
+                    "review_required_operator_actions": review_required_operator_actions[:5],
                 },
             )
         except Exception as e:

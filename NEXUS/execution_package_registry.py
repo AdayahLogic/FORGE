@@ -83,6 +83,23 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+REVENUE_CANDIDATE_STATUSES = {"ready", "blocked", "deferred", "review_required"}
+OPERATOR_ACTION_QUEUE_STATUSES = {
+    "ready_operator_action",
+    "blocked_operator_action",
+    "deferred_operator_action",
+    "review_required_operator_action",
+}
+OPERATOR_ACTION_TYPES = {
+    "review_high_value_lead",
+    "approve_proposal_generation",
+    "send_human_follow_up",
+    "review_blocked_opportunity",
+    "request_missing_onboarding_details",
+    "escalate_negotiation",
+    "defer_low_value_opportunity",
+}
+OPERATOR_ACTION_PRIORITIES = {"low", "medium", "high"}
 
 
 def _utc_now_iso() -> str:
@@ -290,6 +307,15 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "revenue_workflow_block_reason": str(normalized.get("revenue_workflow_block_reason") or ""),
         "revenue_workflow_priority": str(normalized.get("revenue_workflow_priority") or "medium"),
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
+        "revenue_candidate_status": str(normalized.get("revenue_candidate_status") or "review_required"),
+        "revenue_candidate_rank": int(normalized.get("revenue_candidate_rank") or 0),
+        "revenue_candidate_reason": str(normalized.get("revenue_candidate_reason") or ""),
+        "operator_action_queue_status": str(normalized.get("operator_action_queue_status") or "review_required_operator_action"),
+        "operator_action_queue_rank": int(normalized.get("operator_action_queue_rank") or 0),
+        "operator_action_type": str(normalized.get("operator_action_type") or "send_human_follow_up"),
+        "operator_action_reason": str(normalized.get("operator_action_reason") or ""),
+        "operator_action_deadline": str(normalized.get("operator_action_deadline") or ""),
+        "operator_action_priority": str(normalized.get("operator_action_priority") or "medium"),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
@@ -885,6 +911,154 @@ def _derive_revenue_workflow_readiness(
     return ("ready_for_revenue_action", True, "", priority, False)
 
 
+def _derive_revenue_candidate_status(workflow_status: str) -> str:
+    status = str(workflow_status or "").strip().lower()
+    mapped = {
+        "ready_for_revenue_action": "ready",
+        "blocked_for_revenue_action": "blocked",
+        "low_value_deferred": "deferred",
+        "needs_operator_review": "review_required",
+        "needs_revision": "review_required",
+    }.get(status, "review_required")
+    if mapped not in REVENUE_CANDIDATE_STATUSES:
+        return "review_required"
+    return mapped
+
+
+def _derive_rank_from_score(score: float) -> int:
+    bounded = _normalize_revenue_ratio(score, fallback=0.0)
+    return int(round(bounded * 100.0))
+
+
+def _normalize_operator_action_type(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in OPERATOR_ACTION_TYPES:
+        return "send_human_follow_up"
+    return normalized
+
+
+def _normalize_operator_action_priority(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in OPERATOR_ACTION_PRIORITIES:
+        return "medium"
+    return normalized
+
+
+def _derive_operator_action_deadline_days(
+    *,
+    queue_status: str,
+    time_sensitivity: float,
+    pipeline_stage: str,
+) -> int:
+    if queue_status == "blocked_operator_action":
+        return 1
+    if queue_status == "deferred_operator_action":
+        return 14
+    if queue_status == "review_required_operator_action":
+        return 3
+    if pipeline_stage in {"proposal_pending", "negotiation"} and time_sensitivity >= 0.6:
+        return 1
+    if time_sensitivity >= 0.75:
+        return 1
+    if time_sensitivity >= 0.5:
+        return 3
+    return 7
+
+
+def _derive_operator_action_queue_fields(
+    *,
+    revenue_candidate_status: str,
+    revenue_candidate_reason: str,
+    pipeline_stage: str,
+    execution_score: float,
+    roi_estimate: float,
+    conversion_probability: float,
+    time_sensitivity: float,
+    revenue_workflow_ready: bool,
+    governance_status: str,
+    governance_outcome: str,
+    enforcement_status: str,
+    highest_value_next_action_score: float,
+) -> dict[str, Any]:
+    if revenue_candidate_status == "blocked":
+        queue_status = "blocked_operator_action"
+        action_type = "review_blocked_opportunity"
+        action_reason = revenue_candidate_reason or "Hard governance or enforcement block is active."
+        action_priority = "high"
+    elif revenue_candidate_status == "deferred":
+        queue_status = "deferred_operator_action"
+        action_type = "defer_low_value_opportunity"
+        action_reason = revenue_candidate_reason or "Revenue signal is below activation thresholds."
+        action_priority = "low"
+    elif revenue_candidate_status == "review_required" or not revenue_workflow_ready:
+        queue_status = "review_required_operator_action"
+        action_type = "send_human_follow_up"
+        action_reason = revenue_candidate_reason or "Operator review is required before safe progression."
+        action_priority = "high" if highest_value_next_action_score >= 0.6 else "medium"
+    else:
+        queue_status = "ready_operator_action"
+        if pipeline_stage == "negotiation":
+            action_type = "escalate_negotiation"
+            action_reason = "Opportunity is in negotiation with strong readiness."
+        elif pipeline_stage == "proposal_pending":
+            action_type = "approve_proposal_generation"
+            action_reason = "Proposal-ready opportunity should move through operator approval."
+        elif pipeline_stage == "onboarding":
+            action_type = "request_missing_onboarding_details"
+            action_reason = "Onboarding-stage opportunity requires details to progress safely."
+        elif conversion_probability >= 0.72 and roi_estimate >= 0.7:
+            action_type = "review_high_value_lead"
+            action_reason = "Combined conversion and ROI indicate a high-value lead."
+        else:
+            action_type = "send_human_follow_up"
+            action_reason = "Opportunity is ready for governed human follow-up."
+        action_priority = "high" if (highest_value_next_action_score >= 0.72 or time_sensitivity >= 0.75) else "medium"
+
+    queue_status = (
+        queue_status
+        if queue_status in OPERATOR_ACTION_QUEUE_STATUSES
+        else "review_required_operator_action"
+    )
+    normalized_action_type = _normalize_operator_action_type(action_type)
+    normalized_action_priority = _normalize_operator_action_priority(action_priority)
+
+    from datetime import timedelta
+
+    deadline_days = _derive_operator_action_deadline_days(
+        queue_status=queue_status,
+        time_sensitivity=time_sensitivity,
+        pipeline_stage=pipeline_stage,
+    )
+    deadline = datetime.now(timezone.utc) + timedelta(days=deadline_days)
+    queue_rank = _derive_rank_from_score(highest_value_next_action_score)
+    if queue_status == "blocked_operator_action":
+        queue_rank = min(queue_rank, 25)
+    elif queue_status == "deferred_operator_action":
+        queue_rank = min(queue_rank, 20)
+    elif queue_status == "review_required_operator_action":
+        queue_rank = min(queue_rank, 65)
+
+    return {
+        "operator_action_queue_status": queue_status,
+        "operator_action_queue_rank": queue_rank,
+        "operator_action_type": normalized_action_type,
+        "operator_action_reason": str(action_reason or "").strip(),
+        "operator_action_deadline": deadline.replace(microsecond=0).isoformat(),
+        "operator_action_priority": normalized_action_priority,
+        "operator_action_trace": {
+            "governance_status": governance_status,
+            "governance_routing_outcome": governance_outcome,
+            "enforcement_status": enforcement_status,
+            "pipeline_stage": pipeline_stage,
+            "execution_score": execution_score,
+            "roi_estimate": roi_estimate,
+            "conversion_probability": conversion_probability,
+            "time_sensitivity": time_sensitivity,
+            "highest_value_next_action_score": highest_value_next_action_score,
+        },
+    }
+
+
 def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(package.get("metadata") or {})
     revenue_context = dict(metadata.get("revenue_pipeline_context") or {})
@@ -960,6 +1134,30 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         workflow_status = "needs_revision"
     if workflow_priority not in REVENUE_WORKFLOW_PRIORITIES:
         workflow_priority = "medium"
+    revenue_candidate_status = _derive_revenue_candidate_status(workflow_status)
+    revenue_candidate_rank = _derive_rank_from_score(highest_action_score)
+    if revenue_candidate_status == "blocked":
+        revenue_candidate_reason = "Governance or enforcement posture blocks this revenue candidate."
+    elif revenue_candidate_status == "deferred":
+        revenue_candidate_reason = "Value and conversion signals are below governed activation thresholds."
+    elif revenue_candidate_status == "review_required":
+        revenue_candidate_reason = workflow_block_reason or "Operator review is required before routing this candidate."
+    else:
+        revenue_candidate_reason = "Candidate is eligible for governed operator action routing."
+    operator_action_fields = _derive_operator_action_queue_fields(
+        revenue_candidate_status=revenue_candidate_status,
+        revenue_candidate_reason=revenue_candidate_reason,
+        pipeline_stage=pipeline_stage,
+        execution_score=execution_score,
+        roi_estimate=roi_estimate,
+        conversion_probability=conversion_probability,
+        time_sensitivity=time_sensitivity,
+        revenue_workflow_ready=workflow_ready,
+        governance_status=governance_status,
+        governance_outcome=governance_outcome,
+        enforcement_status=enforcement_status,
+        highest_value_next_action_score=highest_action_score,
+    )
 
     return {
         "lead_id": lead_id,
@@ -981,8 +1179,12 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         "revenue_workflow_block_reason": workflow_block_reason,
         "revenue_workflow_priority": workflow_priority,
         "operator_revenue_review_required": operator_review,
+        "revenue_candidate_status": revenue_candidate_status,
+        "revenue_candidate_rank": revenue_candidate_rank,
+        "revenue_candidate_reason": revenue_candidate_reason,
         "opportunity_classification": opportunity_classification,
         "opportunity_classification_reason": opportunity_classification_reason,
+        **operator_action_fields,
         "revenue_activation_trace": {
             "signals": {
                 "execution_score": execution_score,
@@ -997,6 +1199,12 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
             },
             "classification_reason": opportunity_classification_reason,
             "workflow_status": workflow_status,
+            "revenue_candidate_status": revenue_candidate_status,
+            "revenue_candidate_rank": revenue_candidate_rank,
+            "operator_action_queue_status": operator_action_fields.get("operator_action_queue_status"),
+            "operator_action_queue_rank": operator_action_fields.get("operator_action_queue_rank"),
+            "operator_action_type": operator_action_fields.get("operator_action_type"),
+            "operator_action_priority": operator_action_fields.get("operator_action_priority"),
         },
     }
 
@@ -1379,6 +1587,15 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "revenue_workflow_block_reason": str(r.get("revenue_workflow_block_reason") or ""),
         "revenue_workflow_priority": str(r.get("revenue_workflow_priority") or "medium"),
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
+        "revenue_candidate_status": str(r.get("revenue_candidate_status") or "review_required"),
+        "revenue_candidate_rank": max(0, int(r.get("revenue_candidate_rank") or 0)),
+        "revenue_candidate_reason": str(r.get("revenue_candidate_reason") or ""),
+        "operator_action_queue_status": str(r.get("operator_action_queue_status") or "review_required_operator_action"),
+        "operator_action_queue_rank": max(0, int(r.get("operator_action_queue_rank") or 0)),
+        "operator_action_type": _normalize_operator_action_type(r.get("operator_action_type")),
+        "operator_action_reason": str(r.get("operator_action_reason") or ""),
+        "operator_action_deadline": str(r.get("operator_action_deadline") or ""),
+        "operator_action_priority": _normalize_operator_action_priority(r.get("operator_action_priority")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
