@@ -83,6 +83,29 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+STRATEGY_EXECUTION_POLICY_STATUSES = {"allowed", "allowed_with_review", "blocked", "deferred"}
+STRATEGY_EXPERIMENTATION_STATUSES = {
+    "enabled_bounded",
+    "enabled_review_required",
+    "disabled_policy_block",
+    "disabled_low_maturity",
+    "disabled_conservative_mode",
+}
+STRATEGY_VARIANT_TYPES = {
+    "conservative_follow_up_variant",
+    "timing_variant_a",
+    "channel_mix_variant_b",
+    "manual_high_touch_variant",
+    "none",
+}
+STRATEGY_VARIANT_GUARDRAIL_STATUSES = {
+    "bounded",
+    "operator_review_required",
+    "conservative_only",
+    "hard_block",
+    "disabled",
+}
+STRATEGY_COMPARISON_STATUSES = {"active_tracking", "baseline_only", "not_enabled"}
 
 
 def _utc_now_iso() -> str:
@@ -292,6 +315,26 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "strategy_execution_policy": str(normalized.get("strategy_execution_policy") or "conservative_defer_policy"),
+        "strategy_execution_policy_status": str(normalized.get("strategy_execution_policy_status") or "deferred"),
+        "strategy_execution_policy_reason": str(normalized.get("strategy_execution_policy_reason") or ""),
+        "strategy_execution_allowed": bool(normalized.get("strategy_execution_allowed")),
+        "strategy_execution_block_reason": str(normalized.get("strategy_execution_block_reason") or ""),
+        "strategy_execution_requires_operator_review": bool(normalized.get("strategy_execution_requires_operator_review")),
+        "strategy_experimentation_enabled": bool(normalized.get("strategy_experimentation_enabled")),
+        "strategy_experimentation_status": str(normalized.get("strategy_experimentation_status") or "disabled_conservative_mode"),
+        "strategy_variant_id": str(normalized.get("strategy_variant_id") or ""),
+        "strategy_variant_type": str(normalized.get("strategy_variant_type") or "none"),
+        "strategy_variant_reason": str(normalized.get("strategy_variant_reason") or ""),
+        "strategy_variant_confidence": _normalize_revenue_ratio(normalized.get("strategy_variant_confidence"), fallback=0.0),
+        "strategy_variant_guardrail_status": str(normalized.get("strategy_variant_guardrail_status") or "disabled"),
+        "strategy_variant_guardrail_reason": str(normalized.get("strategy_variant_guardrail_reason") or ""),
+        "strategy_comparison_group": str(normalized.get("strategy_comparison_group") or ""),
+        "strategy_comparison_status": str(normalized.get("strategy_comparison_status") or "not_enabled"),
+        "strategy_comparison_reason": str(normalized.get("strategy_comparison_reason") or ""),
+        "strategy_baseline_reference": str(normalized.get("strategy_baseline_reference") or ""),
+        "strategy_variant_reference": str(normalized.get("strategy_variant_reference") or ""),
+        "strategy_comparison_outcome_signal": str(normalized.get("strategy_comparison_outcome_signal") or "not_tracking"),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -615,6 +658,22 @@ def _delivery_progress_state_for_package(package: dict[str, Any]) -> str:
 
 def _normalize_revenue_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _normalize_slug(value: Any) -> str:
+    raw = str(value or "").strip().lower()
+    if not raw:
+        return "unknown"
+    out: list[str] = []
+    for ch in raw:
+        if ("a" <= ch <= "z") or ("0" <= ch <= "9"):
+            out.append(ch)
+        elif ch in {" ", "-", "_", "/", "."}:
+            out.append("_")
+    slug = "".join(out).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "unknown"
 
 
 def _normalize_revenue_ratio(value: Any, *, fallback: float = 0.0) -> float:
@@ -1001,6 +1060,201 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
     }
 
 
+def _derive_strategy_execution_policy_fields(package: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(package.get("metadata") or {})
+    governance_status, governance_outcome, enforcement_status = _derive_governance_enforcement_posture(package)
+    revenue_activation_status = str(package.get("revenue_activation_status") or "").strip().lower()
+    opportunity_classification = str(package.get("opportunity_classification") or "cold").strip().lower()
+    pipeline_stage = _normalize_pipeline_stage(package.get("pipeline_stage"))
+    highest_value_next_action_score = _normalize_revenue_ratio(package.get("highest_value_next_action_score"), fallback=0.0)
+    conversion_probability = _normalize_revenue_ratio(package.get("conversion_probability"), fallback=0.0)
+    roi_estimate = _normalize_revenue_ratio(package.get("roi_estimate"), fallback=0.0)
+    time_sensitivity = _normalize_revenue_ratio(package.get("time_sensitivity"), fallback=0.0)
+
+    strategy_confidence_level = str(package.get("strategy_confidence_level") or "").strip().lower()
+    if strategy_confidence_level not in {"low", "medium", "high"}:
+        if highest_value_next_action_score >= 0.72:
+            strategy_confidence_level = "high"
+        elif highest_value_next_action_score >= 0.45:
+            strategy_confidence_level = "medium"
+        else:
+            strategy_confidence_level = "low"
+
+    data_maturity_level = str(package.get("data_maturity_level") or "").strip().lower()
+    if data_maturity_level not in {"low", "medium", "high"}:
+        inferred_data_points = len(list(metadata.get("revenue_recent_outcomes") or []))
+        if inferred_data_points >= 12:
+            data_maturity_level = "high"
+        elif inferred_data_points >= 5:
+            data_maturity_level = "medium"
+        else:
+            data_maturity_level = "low"
+
+    hard_blocked = (
+        governance_status == "blocked"
+        or governance_outcome == "stop"
+        or enforcement_status in {"blocked", "hold"}
+        or revenue_activation_status == "blocked_for_revenue_action"
+    )
+    operator_gate = enforcement_status in {"approval_required", "manual_review_required"}
+    low_signal = strategy_confidence_level == "low" or data_maturity_level == "low"
+    value_weak = conversion_probability < 0.25 and roi_estimate < 0.3
+
+    if hard_blocked:
+        policy_status = "blocked"
+        policy_name = "hard_governance_block"
+        policy_reason = "Execution policy blocks strategy due to governance/enforcement hard-block posture."
+        allowed = False
+        requires_operator_review = False
+        block_reason = "Hard block state cannot be converted into executable strategy behavior."
+    elif operator_gate or revenue_activation_status == "needs_operator_review":
+        policy_status = "allowed_with_review"
+        policy_name = "operator_gated_execution"
+        policy_reason = "Execution policy permits only operator-reviewed strategy progression."
+        allowed = True
+        requires_operator_review = True
+        block_reason = ""
+    elif low_signal or value_weak or revenue_activation_status in {"low_value_deferred", "needs_revision"}:
+        policy_status = "deferred"
+        policy_name = "conservative_defer_policy"
+        policy_reason = "Execution policy defers action pending stronger confidence, maturity, or value evidence."
+        allowed = False
+        requires_operator_review = False
+        block_reason = "Deferred until confidence/data maturity conditions improve."
+    else:
+        policy_status = "allowed"
+        policy_name = "bounded_execution_allowed"
+        policy_reason = "Execution policy allows governed progression under current confidence and value posture."
+        allowed = True
+        requires_operator_review = False
+        block_reason = ""
+
+    experimentation_enabled = False
+    experimentation_status = "disabled_conservative_mode"
+    variant_type = "none"
+    variant_reason = "No strategy variant suggested."
+    variant_confidence = _normalize_revenue_ratio(
+        (highest_value_next_action_score * 0.6) + (conversion_probability * 0.4),
+        fallback=0.0,
+    )
+    variant_guardrail_status = "disabled"
+    variant_guardrail_reason = "Experimentation is disabled."
+
+    if hard_blocked:
+        experimentation_status = "disabled_policy_block"
+        variant_guardrail_status = "hard_block"
+        variant_guardrail_reason = "Hard-blocked opportunities are never eligible for strategy experiments."
+    elif policy_status == "allowed_with_review":
+        experimentation_enabled = True
+        experimentation_status = "enabled_review_required"
+        variant_guardrail_status = "operator_review_required"
+        variant_guardrail_reason = "Variant tests require explicit operator review before action."
+    elif policy_status == "allowed" and data_maturity_level in {"medium", "high"} and strategy_confidence_level in {"medium", "high"}:
+        experimentation_enabled = True
+        experimentation_status = "enabled_bounded"
+        variant_guardrail_status = "bounded"
+        variant_guardrail_reason = "Only bounded strategy variants are permitted in governed mode."
+    elif data_maturity_level == "low" or strategy_confidence_level == "low":
+        experimentation_status = "disabled_low_maturity"
+        variant_guardrail_status = "conservative_only"
+        variant_guardrail_reason = "Low maturity/confidence keeps strategy in conservative non-experimental mode."
+
+    if experimentation_enabled:
+        if time_sensitivity >= 0.7:
+            variant_type = "timing_variant_a"
+            variant_reason = "Urgency signal supports bounded timing variation."
+        elif opportunity_classification in {"strategic", "high_margin"}:
+            variant_type = "manual_high_touch_variant"
+            variant_reason = "Strategic/high-margin context favors manual high-touch bounded variant."
+        elif pipeline_stage in {"intake", "qualified", "follow_up"}:
+            variant_type = "channel_mix_variant_b"
+            variant_reason = "Early pipeline stage can safely compare a bounded channel-mix variant."
+        else:
+            variant_type = "conservative_follow_up_variant"
+            variant_reason = "Fallback conservative follow-up variant supports low-risk experimentation."
+    elif policy_status in {"deferred", "blocked"}:
+        variant_type = "conservative_follow_up_variant"
+        variant_reason = "Conservative baseline variant retained for rationale visibility only."
+
+    if variant_type not in STRATEGY_VARIANT_TYPES:
+        variant_type = "none"
+    if policy_status not in STRATEGY_EXECUTION_POLICY_STATUSES:
+        policy_status = "deferred"
+    if experimentation_status not in STRATEGY_EXPERIMENTATION_STATUSES:
+        experimentation_status = "disabled_conservative_mode"
+    if variant_guardrail_status not in STRATEGY_VARIANT_GUARDRAIL_STATUSES:
+        variant_guardrail_status = "disabled"
+
+    package_id = str(package.get("package_id") or "unknown").strip().lower()
+    policy_seed = f"{package_id}:{policy_name}:{variant_type}:{policy_status}"
+    variant_id = f"var-{uuid.uuid5(uuid.NAMESPACE_URL, policy_seed).hex[:12]}" if variant_type != "none" else ""
+
+    comparison_group = ""
+    comparison_status = "not_enabled"
+    comparison_reason = "No active strategy comparison group."
+    baseline_reference = f"baseline:{str(package.get('highest_value_next_action') or 'none').strip().lower().replace(' ', '_')}"
+    variant_reference = f"{variant_type}:{variant_id}" if variant_id else ""
+    comparison_outcome_signal = "pending_outcome_signal" if experimentation_enabled else "not_tracking"
+    if experimentation_enabled:
+        comparison_group = (
+            f"cmp-{_normalize_slug(pipeline_stage)}-"
+            f"{_normalize_slug(opportunity_classification)}-"
+            f"{_normalize_slug(policy_status)}"
+        )
+        comparison_status = "active_tracking"
+        comparison_reason = "Bounded comparison tracks baseline versus governed strategy variant outcomes."
+    elif policy_status in {"allowed", "allowed_with_review", "deferred"}:
+        comparison_status = "baseline_only"
+        comparison_reason = "Comparison remains baseline-only because experimentation is disabled."
+
+    if comparison_status not in STRATEGY_COMPARISON_STATUSES:
+        comparison_status = "not_enabled"
+
+    return {
+        "strategy_execution_policy": policy_name,
+        "strategy_execution_policy_status": policy_status,
+        "strategy_execution_policy_reason": policy_reason,
+        "strategy_execution_allowed": bool(allowed),
+        "strategy_execution_block_reason": block_reason,
+        "strategy_execution_requires_operator_review": bool(requires_operator_review),
+        "strategy_experimentation_enabled": bool(experimentation_enabled),
+        "strategy_experimentation_status": experimentation_status,
+        "strategy_variant_id": variant_id,
+        "strategy_variant_type": variant_type,
+        "strategy_variant_reason": variant_reason,
+        "strategy_variant_confidence": variant_confidence,
+        "strategy_variant_guardrail_status": variant_guardrail_status,
+        "strategy_variant_guardrail_reason": variant_guardrail_reason,
+        "strategy_comparison_group": comparison_group,
+        "strategy_comparison_status": comparison_status,
+        "strategy_comparison_reason": comparison_reason,
+        "strategy_baseline_reference": baseline_reference,
+        "strategy_variant_reference": variant_reference,
+        "strategy_comparison_outcome_signal": comparison_outcome_signal,
+        "strategy_policy_trace": {
+            "governance_posture": {
+                "governance_status": governance_status,
+                "governance_routing_outcome": governance_outcome,
+                "enforcement_status": enforcement_status,
+            },
+            "policy_inputs": {
+                "revenue_activation_status": revenue_activation_status,
+                "strategy_confidence_level": strategy_confidence_level,
+                "data_maturity_level": data_maturity_level,
+                "opportunity_classification": opportunity_classification,
+                "roi_estimate": roi_estimate,
+                "conversion_probability": conversion_probability,
+                "time_sensitivity": time_sensitivity,
+            },
+            "operator_visibility": {
+                "policy_status": policy_status,
+                "experimentation_status": experimentation_status,
+                "comparison_status": comparison_status,
+            },
+        },
+    }
+
+
 def build_delivery_summary_contract(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Build a governed delivery-summary and packaging contract from package state.
@@ -1159,6 +1413,13 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
         }
     )
+    strategy_policy_fields = _derive_strategy_execution_policy_fields(
+        {
+            **p,
+            "metadata": metadata,
+            **revenue_fields,
+        }
+    )
 
     return {
         "package_id": package_id,
@@ -1265,6 +1526,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "budget_control": budget_control,
         **budget_fields,
         **revenue_fields,
+        **strategy_policy_fields,
         "delivery_summary": build_delivery_summary_contract(
             {
                 **p,
@@ -1381,6 +1643,26 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "strategy_execution_policy": str(r.get("strategy_execution_policy") or "conservative_defer_policy"),
+        "strategy_execution_policy_status": str(r.get("strategy_execution_policy_status") or "deferred"),
+        "strategy_execution_policy_reason": str(r.get("strategy_execution_policy_reason") or ""),
+        "strategy_execution_allowed": bool(r.get("strategy_execution_allowed")),
+        "strategy_execution_block_reason": str(r.get("strategy_execution_block_reason") or ""),
+        "strategy_execution_requires_operator_review": bool(r.get("strategy_execution_requires_operator_review")),
+        "strategy_experimentation_enabled": bool(r.get("strategy_experimentation_enabled")),
+        "strategy_experimentation_status": str(r.get("strategy_experimentation_status") or "disabled_conservative_mode"),
+        "strategy_variant_id": str(r.get("strategy_variant_id") or ""),
+        "strategy_variant_type": str(r.get("strategy_variant_type") or "none"),
+        "strategy_variant_reason": str(r.get("strategy_variant_reason") or ""),
+        "strategy_variant_confidence": _normalize_revenue_ratio(r.get("strategy_variant_confidence"), fallback=0.0),
+        "strategy_variant_guardrail_status": str(r.get("strategy_variant_guardrail_status") or "disabled"),
+        "strategy_variant_guardrail_reason": str(r.get("strategy_variant_guardrail_reason") or ""),
+        "strategy_comparison_group": str(r.get("strategy_comparison_group") or ""),
+        "strategy_comparison_status": str(r.get("strategy_comparison_status") or "not_enabled"),
+        "strategy_comparison_reason": str(r.get("strategy_comparison_reason") or ""),
+        "strategy_baseline_reference": str(r.get("strategy_baseline_reference") or ""),
+        "strategy_variant_reference": str(r.get("strategy_variant_reference") or ""),
+        "strategy_comparison_outcome_signal": str(r.get("strategy_comparison_outcome_signal") or "not_tracking"),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),

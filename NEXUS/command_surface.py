@@ -287,6 +287,26 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "strategy_execution_policy": p.get("strategy_execution_policy") or "conservative_defer_policy",
+        "strategy_execution_policy_status": p.get("strategy_execution_policy_status") or "deferred",
+        "strategy_execution_policy_reason": p.get("strategy_execution_policy_reason") or "",
+        "strategy_execution_allowed": bool(p.get("strategy_execution_allowed")),
+        "strategy_execution_block_reason": p.get("strategy_execution_block_reason") or "",
+        "strategy_execution_requires_operator_review": bool(p.get("strategy_execution_requires_operator_review")),
+        "strategy_experimentation_enabled": bool(p.get("strategy_experimentation_enabled")),
+        "strategy_experimentation_status": p.get("strategy_experimentation_status") or "disabled_conservative_mode",
+        "strategy_variant_id": p.get("strategy_variant_id") or "",
+        "strategy_variant_type": p.get("strategy_variant_type") or "none",
+        "strategy_variant_reason": p.get("strategy_variant_reason") or "",
+        "strategy_variant_confidence": p.get("strategy_variant_confidence") or 0.0,
+        "strategy_variant_guardrail_status": p.get("strategy_variant_guardrail_status") or "disabled",
+        "strategy_variant_guardrail_reason": p.get("strategy_variant_guardrail_reason") or "",
+        "strategy_comparison_group": p.get("strategy_comparison_group") or "",
+        "strategy_comparison_status": p.get("strategy_comparison_status") or "not_enabled",
+        "strategy_comparison_reason": p.get("strategy_comparison_reason") or "",
+        "strategy_baseline_reference": p.get("strategy_baseline_reference") or "",
+        "strategy_variant_reference": p.get("strategy_variant_reference") or "",
+        "strategy_comparison_outcome_signal": p.get("strategy_comparison_outcome_signal") or "not_tracking",
     }
 
 
@@ -301,6 +321,32 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "dispatch_plan_summary": dict(p.get("dispatch_plan_summary") or {}),
             "routing_summary": dict(p.get("routing_summary") or {}),
             "execution_summary": dict(p.get("execution_summary") or {}),
+            "strategy_execution_policy": {
+                "strategy_execution_policy": p.get("strategy_execution_policy") or "conservative_defer_policy",
+                "strategy_execution_policy_status": p.get("strategy_execution_policy_status") or "deferred",
+                "strategy_execution_policy_reason": p.get("strategy_execution_policy_reason") or "",
+                "strategy_execution_allowed": bool(p.get("strategy_execution_allowed")),
+                "strategy_execution_block_reason": p.get("strategy_execution_block_reason") or "",
+                "strategy_execution_requires_operator_review": bool(p.get("strategy_execution_requires_operator_review")),
+            },
+            "strategy_experimentation": {
+                "strategy_experimentation_enabled": bool(p.get("strategy_experimentation_enabled")),
+                "strategy_experimentation_status": p.get("strategy_experimentation_status") or "disabled_conservative_mode",
+                "strategy_variant_id": p.get("strategy_variant_id") or "",
+                "strategy_variant_type": p.get("strategy_variant_type") or "none",
+                "strategy_variant_reason": p.get("strategy_variant_reason") or "",
+                "strategy_variant_confidence": p.get("strategy_variant_confidence") or 0.0,
+                "strategy_variant_guardrail_status": p.get("strategy_variant_guardrail_status") or "disabled",
+                "strategy_variant_guardrail_reason": p.get("strategy_variant_guardrail_reason") or "",
+            },
+            "strategy_comparison": {
+                "strategy_comparison_group": p.get("strategy_comparison_group") or "",
+                "strategy_comparison_status": p.get("strategy_comparison_status") or "not_enabled",
+                "strategy_comparison_reason": p.get("strategy_comparison_reason") or "",
+                "strategy_baseline_reference": p.get("strategy_baseline_reference") or "",
+                "strategy_variant_reference": p.get("strategy_variant_reference") or "",
+                "strategy_comparison_outcome_signal": p.get("strategy_comparison_outcome_signal") or "not_tracking",
+            },
         },
         "approval": {
             "requires_human_approval": bool(p.get("requires_human_approval")),
@@ -424,6 +470,14 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "strategy_execution_policy_status": p.get("strategy_execution_policy_status") or "deferred",
+        "strategy_execution_allowed": bool(p.get("strategy_execution_allowed")),
+        "strategy_execution_requires_operator_review": bool(p.get("strategy_execution_requires_operator_review")),
+        "strategy_experimentation_enabled": bool(p.get("strategy_experimentation_enabled")),
+        "strategy_experimentation_status": p.get("strategy_experimentation_status") or "disabled_conservative_mode",
+        "strategy_variant_type": p.get("strategy_variant_type") or "none",
+        "strategy_variant_guardrail_status": p.get("strategy_variant_guardrail_status") or "disabled",
+        "strategy_comparison_status": p.get("strategy_comparison_status") or "not_enabled",
     }
 
 
@@ -690,6 +744,8 @@ def run_command(
                     "revenue_workflow_block_reason": row.get("revenue_workflow_block_reason") or "Blocked by governance/enforcement posture.",
                     "pipeline_stage": row.get("pipeline_stage"),
                     "highest_value_next_action": row.get("highest_value_next_action"),
+                    "strategy_execution_policy_status": row.get("strategy_execution_policy_status"),
+                    "strategy_experimentation_status": row.get("strategy_experimentation_status"),
                 }
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
@@ -713,6 +769,10 @@ def run_command(
                             "highest_value_next_action_score": row.get("highest_value_next_action_score"),
                             "pipeline_stage": row.get("pipeline_stage"),
                             "opportunity_classification": row.get("opportunity_classification"),
+                            "strategy_execution_policy_status": row.get("strategy_execution_policy_status"),
+                            "strategy_execution_allowed": row.get("strategy_execution_allowed"),
+                            "strategy_experimentation_enabled": row.get("strategy_experimentation_enabled"),
+                            "strategy_variant_type": row.get("strategy_variant_type"),
                         }
                         for row in ranked_revenue[:5]
                     ],
