@@ -49,6 +49,9 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_details",
     "execution_package_decide",
     "execution_package_decision_status",
+    "execution_package_approve_email_draft",
+    "execution_package_deny_email_draft",
+    "execution_package_mark_email_sent",
     "execution_package_eligibility_check",
     "execution_package_eligibility_status",
     "execution_package_release_request",
@@ -296,6 +299,16 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "operator_action_priority": p.get("operator_action_priority") or "medium",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "communication_channel": p.get("communication_channel") or "none",
+        "communication_intent": p.get("communication_intent") or "none",
+        "communication_status": p.get("communication_status") or "not_prepared",
+        "communication_approval_status": p.get("communication_approval_status") or "pending",
+        "draft_message_preview": p.get("draft_message_preview") or "",
+        "communication_send_eligible": bool(p.get("communication_send_eligible")),
+        "communication_block_reason": p.get("communication_block_reason") or "",
+        "communication_delivery_status": p.get("communication_delivery_status") or "not_sent",
+        "follow_up_status": p.get("follow_up_status") or "not_ready",
+        "follow_up_due_at": p.get("follow_up_due_at") or "",
     }
 
 
@@ -385,6 +398,28 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "rollback_repair": dict(p.get("rollback_repair") or {}),
             "integrity_verification": dict(p.get("integrity_verification") or {}),
         },
+        "communication": {
+            "communication_channel": p.get("communication_channel") or "none",
+            "communication_intent": p.get("communication_intent") or "none",
+            "communication_status": p.get("communication_status") or "not_prepared",
+            "draft_message_subject": p.get("draft_message_subject") or "",
+            "draft_message_body": p.get("draft_message_body") or "",
+            "draft_message_preview": p.get("draft_message_preview") or "",
+            "communication_requires_approval": bool(p.get("communication_requires_approval")),
+            "communication_approval_status": p.get("communication_approval_status") or "pending",
+            "communication_approved_at": p.get("communication_approved_at") or "",
+            "communication_denied_reason": p.get("communication_denied_reason") or "",
+            "communication_sent_at": p.get("communication_sent_at") or "",
+            "communication_delivery_status": p.get("communication_delivery_status") or "not_sent",
+            "communication_send_eligible": bool(p.get("communication_send_eligible")),
+            "communication_block_reason": p.get("communication_block_reason") or "",
+            "operator_review_required_for_send": bool(p.get("operator_review_required_for_send")),
+            "follow_up_recommended": bool(p.get("follow_up_recommended")),
+            "follow_up_due_at": p.get("follow_up_due_at") or "",
+            "follow_up_status": p.get("follow_up_status") or "not_ready",
+            "follow_up_reason": p.get("follow_up_reason") or "",
+            "follow_up_sequence_step": p.get("follow_up_sequence_step") or 0,
+        },
         "metadata": dict(p.get("metadata") or {}),
     }
     cursor_bridge_artifacts = list(p.get("cursor_bridge_artifacts") or [])
@@ -442,6 +477,16 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "operator_action_deadline": p.get("operator_action_deadline") or "",
         "operator_action_priority": p.get("operator_action_priority") or "medium",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "communication_channel": p.get("communication_channel") or "none",
+        "communication_status": p.get("communication_status") or "not_prepared",
+        "communication_approval_status": p.get("communication_approval_status") or "pending",
+        "draft_message_preview": p.get("draft_message_preview") or "",
+        "communication_send_eligible": bool(p.get("communication_send_eligible")),
+        "communication_block_reason": p.get("communication_block_reason") or "",
+        "communication_delivery_status": p.get("communication_delivery_status") or "not_sent",
+        "communication_sent_at": p.get("communication_sent_at") or "",
+        "follow_up_status": p.get("follow_up_status") or "not_ready",
+        "follow_up_due_at": p.get("follow_up_due_at") or "",
     }
 
 
@@ -792,6 +837,56 @@ def run_command(
                 for row in queue_rows
                 if str(row.get("operator_action_queue_status") or "") == "review_required_operator_action"
             ]
+            awaiting_communication_approval = [
+                {
+                    "package_id": row.get("package_id"),
+                    "communication_status": row.get("communication_status"),
+                    "communication_approval_status": row.get("communication_approval_status"),
+                    "draft_message_preview": row.get("draft_message_preview") or "",
+                    "communication_block_reason": row.get("communication_block_reason") or "",
+                }
+                for row in queue_rows
+                if str(row.get("communication_channel") or "") == "email"
+                and str(row.get("communication_approval_status") or "") in {"pending"}
+            ]
+            communication_sent = [
+                {
+                    "package_id": row.get("package_id"),
+                    "communication_status": row.get("communication_status"),
+                    "communication_sent_at": row.get("communication_sent_at"),
+                    "communication_delivery_status": row.get("communication_delivery_status"),
+                    "follow_up_status": row.get("follow_up_status"),
+                    "follow_up_due_at": row.get("follow_up_due_at"),
+                }
+                for row in queue_rows
+                if str(row.get("communication_status") or "") == "sent"
+            ]
+            communication_blocked = [
+                {
+                    "package_id": row.get("package_id"),
+                    "communication_status": row.get("communication_status"),
+                    "communication_approval_status": row.get("communication_approval_status"),
+                    "communication_block_reason": row.get("communication_block_reason"),
+                }
+                for row in queue_rows
+                if str(row.get("communication_channel") or "") == "email"
+                and (
+                    str(row.get("communication_status") or "") == "denied"
+                    or not bool(row.get("communication_send_eligible"))
+                )
+            ]
+            communication_pending_delivery = [
+                {
+                    "package_id": row.get("package_id"),
+                    "communication_status": row.get("communication_status"),
+                    "communication_sent_at": row.get("communication_sent_at"),
+                    "communication_delivery_status": row.get("communication_delivery_status"),
+                }
+                for row in queue_rows
+                if str(row.get("communication_channel") or "") == "email"
+                and str(row.get("communication_status") or "") == "sent"
+                and str(row.get("communication_delivery_status") or "") == "delivery_pending"
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -821,6 +916,10 @@ def run_command(
                     "blocked_operator_actions": blocked_operator_actions[:5],
                     "deferred_operator_actions": deferred_operator_actions[:5],
                     "review_required_operator_actions": review_required_operator_actions[:5],
+                    "awaiting_communication_approval": awaiting_communication_approval[:10],
+                    "communication_sent_items": communication_sent[:10],
+                    "communication_blocked_items": communication_blocked[:10],
+                    "communication_pending_delivery_items": communication_pending_delivery[:10],
                 },
             )
         except Exception as e:
@@ -1019,6 +1118,231 @@ def run_command(
                         "decision_actor": package.get("decision_actor"),
                         "decision_notes": package.get("decision_notes"),
                         "decision_id": package.get("decision_id"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_approve_email_draft":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        approval_actor = str(kwargs.get("approval_actor") or "").strip()
+        approval_notes = str(kwargs.get("approval_notes") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not approval_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="approval_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_communication_approval_safe
+
+            result = record_execution_package_communication_approval_safe(
+                project_path=path,
+                package_id=package_id,
+                approval_actor=approval_actor,
+                approval_notes=approval_notes,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to approve email draft."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; communication_approval_status={package.get('communication_approval_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package email draft approved.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "communication": {
+                        "communication_status": package.get("communication_status"),
+                        "communication_approval_status": package.get("communication_approval_status"),
+                        "communication_approved_at": package.get("communication_approved_at"),
+                        "communication_send_eligible": package.get("communication_send_eligible"),
+                        "communication_block_reason": package.get("communication_block_reason"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_deny_email_draft":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        denial_actor = str(kwargs.get("denial_actor") or "").strip()
+        denial_reason = str(kwargs.get("denial_reason") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not denial_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="denial_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_communication_denial_safe
+
+            result = record_execution_package_communication_denial_safe(
+                project_path=path,
+                package_id=package_id,
+                denial_actor=denial_actor,
+                denial_reason=denial_reason,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to deny email draft."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; communication_approval_status={package.get('communication_approval_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package email draft denied.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "communication": {
+                        "communication_status": package.get("communication_status"),
+                        "communication_approval_status": package.get("communication_approval_status"),
+                        "communication_denied_reason": package.get("communication_denied_reason"),
+                        "communication_send_eligible": package.get("communication_send_eligible"),
+                        "communication_block_reason": package.get("communication_block_reason"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "execution_package_mark_email_sent":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        send_actor = str(kwargs.get("send_actor") or "").strip()
+        delivery_status = str(kwargs.get("delivery_status") or "delivery_pending")
+        send_notes = str(kwargs.get("send_notes") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not send_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="send_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_communication_sent_safe
+
+            result = record_execution_package_communication_sent_safe(
+                project_path=path,
+                package_id=package_id,
+                send_actor=send_actor,
+                delivery_status=delivery_status,
+                send_notes=send_notes,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to mark email as sent."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; communication_status={package.get('communication_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package email marked as sent.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "communication": {
+                        "communication_status": package.get("communication_status"),
+                        "communication_sent_at": package.get("communication_sent_at"),
+                        "communication_delivery_status": package.get("communication_delivery_status"),
+                        "follow_up_recommended": package.get("follow_up_recommended"),
+                        "follow_up_due_at": package.get("follow_up_due_at"),
+                        "follow_up_status": package.get("follow_up_status"),
                     },
                 },
             )

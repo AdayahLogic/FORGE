@@ -100,6 +100,26 @@ OPERATOR_ACTION_TYPES = {
     "defer_low_value_opportunity",
 }
 OPERATOR_ACTION_PRIORITIES = {"low", "medium", "high"}
+COMMUNICATION_CHANNELS = {"none", "email"}
+COMMUNICATION_INTENTS = {
+    "none",
+    "revenue_follow_up",
+    "proposal_nudge",
+    "negotiation_checkpoint",
+    "onboarding_request",
+    "reactivation_touchpoint",
+}
+COMMUNICATION_STATUSES = {
+    "not_prepared",
+    "draft_ready",
+    "awaiting_approval",
+    "approved",
+    "denied",
+    "sent",
+}
+COMMUNICATION_APPROVAL_STATUSES = {"not_required", "pending", "approved", "denied"}
+COMMUNICATION_DELIVERY_STATUSES = {"not_sent", "delivery_pending", "delivered", "failed"}
+FOLLOW_UP_STATUSES = {"not_ready", "follow_up_due", "follow_up_scheduled", "follow_up_not_needed"}
 
 
 def _utc_now_iso() -> str:
@@ -318,6 +338,26 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_action_priority": str(normalized.get("operator_action_priority") or "medium"),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "communication_channel": str(normalized.get("communication_channel") or "none"),
+        "communication_intent": str(normalized.get("communication_intent") or "none"),
+        "communication_status": str(normalized.get("communication_status") or "not_prepared"),
+        "draft_message_subject": str(normalized.get("draft_message_subject") or ""),
+        "draft_message_body": str(normalized.get("draft_message_body") or ""),
+        "draft_message_preview": str(normalized.get("draft_message_preview") or ""),
+        "communication_requires_approval": bool(normalized.get("communication_requires_approval")),
+        "communication_approval_status": str(normalized.get("communication_approval_status") or "pending"),
+        "communication_approved_at": str(normalized.get("communication_approved_at") or ""),
+        "communication_denied_reason": str(normalized.get("communication_denied_reason") or ""),
+        "communication_sent_at": str(normalized.get("communication_sent_at") or ""),
+        "communication_delivery_status": str(normalized.get("communication_delivery_status") or "not_sent"),
+        "communication_send_eligible": bool(normalized.get("communication_send_eligible")),
+        "communication_block_reason": str(normalized.get("communication_block_reason") or ""),
+        "operator_review_required_for_send": bool(normalized.get("operator_review_required_for_send")),
+        "follow_up_recommended": bool(normalized.get("follow_up_recommended")),
+        "follow_up_due_at": str(normalized.get("follow_up_due_at") or ""),
+        "follow_up_status": str(normalized.get("follow_up_status") or "not_ready"),
+        "follow_up_reason": str(normalized.get("follow_up_reason") or ""),
+        "follow_up_sequence_step": int(normalized.get("follow_up_sequence_step") or 0),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -1059,6 +1099,326 @@ def _derive_operator_action_queue_fields(
     }
 
 
+def _normalize_communication_channel(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in COMMUNICATION_CHANNELS:
+        return "none"
+    return normalized
+
+
+def _normalize_communication_intent(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in COMMUNICATION_INTENTS:
+        return "none"
+    return normalized
+
+
+def _normalize_communication_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in COMMUNICATION_STATUSES:
+        return "not_prepared"
+    return normalized
+
+
+def _normalize_communication_approval_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in COMMUNICATION_APPROVAL_STATUSES:
+        return "pending"
+    return normalized
+
+
+def _normalize_communication_delivery_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in COMMUNICATION_DELIVERY_STATUSES:
+        return "not_sent"
+    return normalized
+
+
+def _normalize_follow_up_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in FOLLOW_UP_STATUSES:
+        return "not_ready"
+    return normalized
+
+
+def _derive_communication_intent(pipeline_stage: str, operator_action_type: str) -> str:
+    if pipeline_stage == "proposal_pending":
+        return "proposal_nudge"
+    if pipeline_stage == "negotiation":
+        return "negotiation_checkpoint"
+    if pipeline_stage == "onboarding":
+        return "onboarding_request"
+    if operator_action_type == "send_human_follow_up":
+        return "revenue_follow_up"
+    if pipeline_stage in {"follow_up", "qualified", "intake"}:
+        return "reactivation_touchpoint"
+    return "revenue_follow_up"
+
+
+def _derive_email_subject(
+    *,
+    pipeline_stage: str,
+    intent: str,
+    business_function: str,
+    opportunity_id: str,
+    client_id: str,
+) -> str:
+    scope = opportunity_id or client_id or "opportunity"
+    function_tag = business_function.replace("_", " ").strip() or "business"
+    if intent == "proposal_nudge":
+        return f"Proposal alignment for {scope}"
+    if intent == "negotiation_checkpoint":
+        return f"Negotiation checkpoint for {scope}"
+    if intent == "onboarding_request":
+        return f"Onboarding details needed for {scope}"
+    if pipeline_stage == "follow_up":
+        return f"Follow-up on {scope} next steps"
+    return f"{function_tag.title()} update for {scope}"
+
+
+def _derive_email_body(
+    *,
+    subject: str,
+    pipeline_stage: str,
+    intent: str,
+    highest_value_next_action: str,
+    operator_action_type: str,
+    opportunity_id: str,
+    client_id: str,
+) -> str:
+    reference = opportunity_id or client_id or "this opportunity"
+    intent_note = {
+        "proposal_nudge": "confirm proposal scope and timing",
+        "negotiation_checkpoint": "align on open negotiation points",
+        "onboarding_request": "collect onboarding details",
+        "revenue_follow_up": "move next steps forward",
+        "reactivation_touchpoint": "re-engage on the opportunity",
+    }.get(intent, "progress revenue planning")
+    lines = [
+        f"Subject context: {subject}",
+        "",
+        f"Hello, this is a governed outreach draft regarding {reference}.",
+        f"We are currently at pipeline stage '{pipeline_stage}'.",
+        f"Recommended intent is to {intent_note}.",
+        f"Suggested next action: {highest_value_next_action or operator_action_type or 'review next best action'}.",
+        "",
+        "If this direction looks right, please confirm a preferred time for a short follow-up.",
+        "",
+        "Best regards,",
+        "FORGE Operator Team",
+    ]
+    return "\n".join(lines).strip()
+
+
+def _derive_email_preview(subject: str, body: str) -> str:
+    first_line = ""
+    for line in str(body or "").splitlines():
+        text = str(line or "").strip()
+        if text:
+            first_line = text
+            break
+    preview = f"{subject} | {first_line}" if first_line else subject
+    return preview[:280]
+
+
+def _derive_follow_up_foundation(
+    *,
+    communication_status: str,
+    communication_delivery_status: str,
+    communication_sent_at: str,
+    pipeline_stage: str,
+    time_sensitivity: float,
+    follow_up_due_at: str,
+    follow_up_status: str,
+    follow_up_reason: str,
+    follow_up_sequence_step: int,
+) -> dict[str, Any]:
+    sent = bool(str(communication_sent_at or "").strip())
+    delivered = communication_delivery_status == "delivered"
+    failed = communication_delivery_status == "failed"
+    recommended = sent and (delivered or communication_delivery_status == "delivery_pending")
+    if failed:
+        recommended = True
+    reason = str(follow_up_reason or "").strip()
+    if not reason:
+        if failed:
+            reason = "Prior send attempt failed and needs operator follow-up decision."
+        elif communication_status == "sent":
+            reason = "Sent communication should be reviewed for governed follow-up timing."
+        elif not sent:
+            reason = "Follow-up is not ready until communication is sent."
+        else:
+            reason = "Follow-up should be scheduled based on delivery outcome."
+    normalized_due_at = str(follow_up_due_at or "").strip()
+    normalized_status = _normalize_follow_up_status(follow_up_status)
+    if not recommended:
+        normalized_status = "not_ready"
+        normalized_due_at = ""
+    elif normalized_status == "not_ready":
+        normalized_status = "follow_up_due"
+    if time_sensitivity >= 0.75 and normalized_status == "follow_up_due" and not normalized_due_at:
+        from datetime import timedelta
+
+        normalized_due_at = (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0).isoformat()
+    elif normalized_status == "follow_up_due" and not normalized_due_at:
+        from datetime import timedelta
+
+        days = 3 if pipeline_stage in {"proposal_pending", "negotiation"} else 5
+        normalized_due_at = (datetime.now(timezone.utc) + timedelta(days=days)).replace(microsecond=0).isoformat()
+    sequence_step = max(0, int(follow_up_sequence_step or 0))
+    if recommended and sequence_step <= 0:
+        sequence_step = 1
+    return {
+        "follow_up_recommended": bool(recommended),
+        "follow_up_due_at": normalized_due_at,
+        "follow_up_status": normalized_status,
+        "follow_up_reason": reason,
+        "follow_up_sequence_step": sequence_step,
+    }
+
+
+def _derive_communication_fields(
+    *,
+    package: dict[str, Any],
+    pipeline_stage: str,
+    business_function: str,
+    opportunity_id: str,
+    client_id: str,
+    highest_value_next_action: str,
+    time_sensitivity: float,
+    governance_status: str,
+    governance_outcome: str,
+    enforcement_status: str,
+    revenue_workflow_ready: bool,
+    revenue_candidate_status: str,
+    operator_action_queue_status: str,
+    operator_action_type: str,
+) -> dict[str, Any]:
+    hard_blocked = (
+        governance_status == "blocked"
+        or governance_outcome == "stop"
+        or enforcement_status == "blocked"
+        or revenue_candidate_status == "blocked"
+        or operator_action_queue_status == "blocked_operator_action"
+    )
+    channel = _normalize_communication_channel(package.get("communication_channel") or ("none" if hard_blocked else "email"))
+    intent = _normalize_communication_intent(
+        package.get("communication_intent")
+        or (
+            _derive_communication_intent(pipeline_stage, operator_action_type)
+            if channel == "email"
+            else "none"
+        )
+    )
+    derived_subject = ""
+    derived_body = ""
+    derived_preview = ""
+    if channel == "email" and not hard_blocked:
+        derived_subject = _derive_email_subject(
+            pipeline_stage=pipeline_stage,
+            intent=intent,
+            business_function=business_function,
+            opportunity_id=opportunity_id,
+            client_id=client_id,
+        )
+        derived_body = _derive_email_body(
+            subject=derived_subject,
+            pipeline_stage=pipeline_stage,
+            intent=intent,
+            highest_value_next_action=highest_value_next_action,
+            operator_action_type=operator_action_type,
+            opportunity_id=opportunity_id,
+            client_id=client_id,
+        )
+        derived_preview = _derive_email_preview(derived_subject, derived_body)
+
+    draft_subject = str(package.get("draft_message_subject") or derived_subject)
+    draft_body = str(package.get("draft_message_body") or derived_body)
+    draft_preview = str(package.get("draft_message_preview") or derived_preview or _derive_email_preview(draft_subject, draft_body))
+    has_draft = bool(draft_subject.strip() and draft_body.strip())
+
+    requires_approval = bool(package.get("communication_requires_approval", channel == "email"))
+    approval_status = _normalize_communication_approval_status(
+        package.get("communication_approval_status")
+        or ("pending" if requires_approval and has_draft else "not_required")
+    )
+    approved_at = str(package.get("communication_approved_at") or "")
+    denied_reason = str(package.get("communication_denied_reason") or "")
+    sent_at = str(package.get("communication_sent_at") or "")
+    delivery_status = _normalize_communication_delivery_status(
+        package.get("communication_delivery_status") or ("delivery_pending" if sent_at else "not_sent")
+    )
+    if approval_status == "denied" and not denied_reason:
+        denied_reason = "Denied by operator decision."
+
+    default_status = "not_prepared"
+    if has_draft:
+        default_status = "draft_ready"
+        if approval_status == "pending":
+            default_status = "awaiting_approval"
+        if approval_status == "approved":
+            default_status = "approved"
+        if approval_status == "denied":
+            default_status = "denied"
+        if sent_at:
+            default_status = "sent"
+    communication_status = _normalize_communication_status(package.get("communication_status") or default_status)
+    if not has_draft:
+        communication_status = "not_prepared"
+        if not sent_at:
+            delivery_status = "not_sent"
+
+    operator_review_required_for_send = bool(
+        operator_action_queue_status in {"blocked_operator_action", "review_required_operator_action"}
+        or not revenue_workflow_ready
+        or enforcement_status in {"manual_review_required", "approval_required", "hold"}
+    )
+    block_reason = ""
+    if hard_blocked:
+        block_reason = "Governance or enforcement posture hard-blocks outbound communication."
+    elif channel != "email":
+        block_reason = "Communication channel is not configured for governed email."
+    elif not has_draft:
+        block_reason = "No email draft is prepared."
+    elif approval_status != "approved":
+        block_reason = "Email draft requires explicit approval before send."
+    elif operator_review_required_for_send:
+        block_reason = "Operator review gate must clear before send eligibility."
+    elif sent_at:
+        block_reason = "Email has already been sent."
+
+    send_eligible = not bool(block_reason)
+    follow_up = _derive_follow_up_foundation(
+        communication_status=communication_status,
+        communication_delivery_status=delivery_status,
+        communication_sent_at=sent_at,
+        pipeline_stage=pipeline_stage,
+        time_sensitivity=time_sensitivity,
+        follow_up_due_at=str(package.get("follow_up_due_at") or ""),
+        follow_up_status=str(package.get("follow_up_status") or ""),
+        follow_up_reason=str(package.get("follow_up_reason") or ""),
+        follow_up_sequence_step=max(0, int(package.get("follow_up_sequence_step") or 0)),
+    )
+    return {
+        "communication_channel": channel,
+        "communication_intent": intent,
+        "communication_status": communication_status,
+        "draft_message_subject": draft_subject,
+        "draft_message_body": draft_body,
+        "draft_message_preview": draft_preview,
+        "communication_requires_approval": requires_approval,
+        "communication_approval_status": approval_status,
+        "communication_approved_at": approved_at,
+        "communication_denied_reason": denied_reason,
+        "communication_sent_at": sent_at,
+        "communication_delivery_status": delivery_status,
+        "communication_send_eligible": bool(send_eligible),
+        "communication_block_reason": str(block_reason or ""),
+        "operator_review_required_for_send": operator_review_required_for_send,
+        **follow_up,
+    }
+
+
 def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]:
     metadata = dict(package.get("metadata") or {})
     revenue_context = dict(metadata.get("revenue_pipeline_context") or {})
@@ -1158,6 +1518,22 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         enforcement_status=enforcement_status,
         highest_value_next_action_score=highest_action_score,
     )
+    communication_fields = _derive_communication_fields(
+        package=package,
+        pipeline_stage=pipeline_stage,
+        business_function=business_function,
+        opportunity_id=opportunity_id,
+        client_id=client_id,
+        highest_value_next_action=highest_action,
+        time_sensitivity=time_sensitivity,
+        governance_status=governance_status,
+        governance_outcome=governance_outcome,
+        enforcement_status=enforcement_status,
+        revenue_workflow_ready=workflow_ready,
+        revenue_candidate_status=revenue_candidate_status,
+        operator_action_queue_status=str(operator_action_fields.get("operator_action_queue_status") or ""),
+        operator_action_type=str(operator_action_fields.get("operator_action_type") or ""),
+    )
 
     return {
         "lead_id": lead_id,
@@ -1185,6 +1561,7 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         "opportunity_classification": opportunity_classification,
         "opportunity_classification_reason": opportunity_classification_reason,
         **operator_action_fields,
+        **communication_fields,
         "revenue_activation_trace": {
             "signals": {
                 "execution_score": execution_score,
@@ -1205,6 +1582,9 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
             "operator_action_queue_rank": operator_action_fields.get("operator_action_queue_rank"),
             "operator_action_type": operator_action_fields.get("operator_action_type"),
             "operator_action_priority": operator_action_fields.get("operator_action_priority"),
+            "communication_status": communication_fields.get("communication_status"),
+            "communication_send_eligible": communication_fields.get("communication_send_eligible"),
+            "communication_approval_status": communication_fields.get("communication_approval_status"),
         },
     }
 
@@ -1598,6 +1978,26 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_action_priority": _normalize_operator_action_priority(r.get("operator_action_priority")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "communication_channel": _normalize_communication_channel(r.get("communication_channel")),
+        "communication_intent": _normalize_communication_intent(r.get("communication_intent")),
+        "communication_status": _normalize_communication_status(r.get("communication_status")),
+        "draft_message_subject": str(r.get("draft_message_subject") or ""),
+        "draft_message_body": str(r.get("draft_message_body") or ""),
+        "draft_message_preview": str(r.get("draft_message_preview") or ""),
+        "communication_requires_approval": bool(r.get("communication_requires_approval")),
+        "communication_approval_status": _normalize_communication_approval_status(r.get("communication_approval_status")),
+        "communication_approved_at": str(r.get("communication_approved_at") or ""),
+        "communication_denied_reason": str(r.get("communication_denied_reason") or ""),
+        "communication_sent_at": str(r.get("communication_sent_at") or ""),
+        "communication_delivery_status": _normalize_communication_delivery_status(r.get("communication_delivery_status")),
+        "communication_send_eligible": bool(r.get("communication_send_eligible")),
+        "communication_block_reason": str(r.get("communication_block_reason") or ""),
+        "operator_review_required_for_send": bool(r.get("operator_review_required_for_send")),
+        "follow_up_recommended": bool(r.get("follow_up_recommended")),
+        "follow_up_due_at": str(r.get("follow_up_due_at") or ""),
+        "follow_up_status": _normalize_follow_up_status(r.get("follow_up_status")),
+        "follow_up_reason": str(r.get("follow_up_reason") or ""),
+        "follow_up_sequence_step": max(0, int(r.get("follow_up_sequence_step") or 0)),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -3385,3 +3785,182 @@ def record_execution_package_revenue_activation_safe(**kwargs: Any) -> dict[str,
         return record_execution_package_revenue_activation(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package revenue activation metadata.", "package": None}
+
+
+def _append_communication_audit_event(
+    package: dict[str, Any],
+    *,
+    action: str,
+    actor: str,
+    notes: str = "",
+) -> dict[str, Any]:
+    p = dict(package or {})
+    metadata = dict(p.get("metadata") or {})
+    audit = [item for item in list(metadata.get("communication_audit") or []) if isinstance(item, dict)]
+    audit.append(
+        {
+            "at": _utc_now_iso(),
+            "action": str(action or "").strip().lower(),
+            "actor": str(actor or "").strip(),
+            "notes": str(notes or ""),
+        }
+    )
+    metadata["communication_audit"] = audit[-50:]
+    p["metadata"] = metadata
+    return p
+
+
+def record_execution_package_communication_approval(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    approval_actor: str,
+    approval_notes: str = "",
+) -> dict[str, Any]:
+    actor = str(approval_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "approval_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    normalized = normalize_execution_package(package)
+    if str(normalized.get("communication_channel") or "") != "email":
+        return {"status": "error", "reason": "Communication channel is not email.", "package": normalized}
+    if not str(normalized.get("draft_message_subject") or "").strip() or not str(normalized.get("draft_message_body") or "").strip():
+        return {"status": "error", "reason": "Email draft is not prepared.", "package": normalized}
+    if not bool(normalized.get("communication_requires_approval", True)):
+        return {"status": "error", "reason": "Communication approval is not required for this package.", "package": normalized}
+    if str(normalized.get("communication_sent_at") or "").strip():
+        return {"status": "error", "reason": "Email already marked as sent.", "package": normalized}
+    if str(normalized.get("communication_approval_status") or "").strip().lower() == "approved":
+        return {"status": "error", "reason": "Email draft is already approved.", "package": normalized}
+    if str(normalized.get("revenue_activation_status") or "").strip().lower() == "blocked_for_revenue_action":
+        return {"status": "error", "reason": "Governance/enforcement block prevents communication approval.", "package": normalized}
+    package["communication_requires_approval"] = True
+    package["communication_approval_status"] = "approved"
+    package["communication_approved_at"] = _utc_now_iso()
+    package["communication_denied_reason"] = ""
+    package["communication_status"] = "approved"
+    package = _append_communication_audit_event(
+        package,
+        action="approved",
+        actor=actor,
+        notes=approval_notes or "Email draft approved by operator.",
+    )
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package email draft approved.",
+    )
+
+
+def record_execution_package_communication_approval_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_communication_approval(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to approve execution package email draft.", "package": None}
+
+
+def record_execution_package_communication_denial(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    denial_actor: str,
+    denial_reason: str = "",
+) -> dict[str, Any]:
+    actor = str(denial_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "denial_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    normalized = normalize_execution_package(package)
+    if str(normalized.get("communication_channel") or "") != "email":
+        return {"status": "error", "reason": "Communication channel is not email.", "package": normalized}
+    if str(normalized.get("communication_sent_at") or "").strip():
+        return {"status": "error", "reason": "Email already marked as sent.", "package": normalized}
+    reason = str(denial_reason or "").strip() or "Denied by operator."
+    package["communication_requires_approval"] = True
+    package["communication_approval_status"] = "denied"
+    package["communication_denied_reason"] = reason
+    package["communication_status"] = "denied"
+    package = _append_communication_audit_event(
+        package,
+        action="denied",
+        actor=actor,
+        notes=reason,
+    )
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package email draft denied.",
+    )
+
+
+def record_execution_package_communication_denial_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_communication_denial(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to deny execution package email draft.", "package": None}
+
+
+def record_execution_package_communication_sent(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    send_actor: str,
+    delivery_status: str = "delivery_pending",
+    send_notes: str = "",
+) -> dict[str, Any]:
+    actor = str(send_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "send_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    normalized = normalize_execution_package(package)
+    if str(normalized.get("communication_channel") or "") != "email":
+        return {"status": "error", "reason": "Communication channel is not email.", "package": normalized}
+    if str(normalized.get("communication_approval_status") or "").strip().lower() != "approved":
+        return {"status": "error", "reason": "Email send requires explicit approved communication_approval_status.", "package": normalized}
+    if not bool(normalized.get("communication_send_eligible")):
+        return {
+            "status": "error",
+            "reason": str(normalized.get("communication_block_reason") or "Email send is not currently eligible."),
+            "package": normalized,
+        }
+    if str(normalized.get("communication_sent_at") or "").strip():
+        return {"status": "error", "reason": "Email already marked as sent.", "package": normalized}
+    normalized_delivery = _normalize_communication_delivery_status(delivery_status)
+    if normalized_delivery == "not_sent":
+        normalized_delivery = "delivery_pending"
+    package["communication_sent_at"] = _utc_now_iso()
+    package["communication_delivery_status"] = normalized_delivery
+    package["communication_status"] = "sent"
+    package = _append_communication_audit_event(
+        package,
+        action="sent",
+        actor=actor,
+        notes=send_notes or "Email marked as sent through governed command path.",
+    )
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package email marked as sent.",
+    )
+
+
+def record_execution_package_communication_sent_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_communication_sent(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to mark execution package email as sent.", "package": None}
