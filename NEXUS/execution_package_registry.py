@@ -63,6 +63,26 @@ EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
 EXECUTION_PACKAGE_DIRNAME = "execution_packages"
 MAX_EXECUTION_PACKAGE_LIST_LIMIT = 50
 SELF_CHANGE_AUDIT_FILENAME = "self_change_audit.jsonl"
+REVENUE_PIPELINE_STAGES = {
+    "intake",
+    "qualified",
+    "proposal_pending",
+    "follow_up",
+    "negotiation",
+    "onboarding",
+    "delivery",
+    "closed_won",
+    "closed_lost",
+}
+REVENUE_WORKFLOW_STATUSES = {
+    "ready_for_revenue_action",
+    "blocked_for_revenue_action",
+    "needs_operator_review",
+    "needs_revision",
+    "low_value_deferred",
+}
+REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
+OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
 
 
 def _utc_now_iso() -> str:
@@ -251,6 +271,27 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "governance_conflict_type": governance_conflict.get("conflict_type"),
         "governance_resolution_state": metadata.get("governance_resolution_state"),
         "governance_routing_outcome": metadata.get("governance_routing_outcome"),
+        "lead_id": str(normalized.get("lead_id") or ""),
+        "opportunity_id": str(normalized.get("opportunity_id") or ""),
+        "client_id": str(normalized.get("client_id") or ""),
+        "business_function": str(normalized.get("business_function") or ""),
+        "pipeline_stage": str(normalized.get("pipeline_stage") or "intake"),
+        "next_revenue_action": str(normalized.get("next_revenue_action") or ""),
+        "revenue_action_reason": str(normalized.get("revenue_action_reason") or ""),
+        "execution_score": _normalize_revenue_ratio(normalized.get("execution_score"), fallback=0.0),
+        "roi_estimate": _normalize_revenue_ratio(normalized.get("roi_estimate"), fallback=0.0),
+        "conversion_probability": _normalize_revenue_ratio(normalized.get("conversion_probability"), fallback=0.0),
+        "time_sensitivity": _normalize_revenue_ratio(normalized.get("time_sensitivity"), fallback=0.0),
+        "highest_value_next_action": str(normalized.get("highest_value_next_action") or ""),
+        "highest_value_next_action_score": _normalize_revenue_ratio(normalized.get("highest_value_next_action_score"), fallback=0.0),
+        "highest_value_next_action_reason": str(normalized.get("highest_value_next_action_reason") or ""),
+        "revenue_activation_status": str(normalized.get("revenue_activation_status") or "needs_revision"),
+        "revenue_workflow_ready": bool(normalized.get("revenue_workflow_ready")),
+        "revenue_workflow_block_reason": str(normalized.get("revenue_workflow_block_reason") or ""),
+        "revenue_workflow_priority": str(normalized.get("revenue_workflow_priority") or "medium"),
+        "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
+        "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
+        "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -572,6 +613,394 @@ def _delivery_progress_state_for_package(package: dict[str, Any]) -> str:
     return "delivery_summary_ready"
 
 
+def _normalize_revenue_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _normalize_revenue_ratio(value: Any, *, fallback: float = 0.0) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = fallback
+    if parsed < 0.0:
+        parsed = 0.0
+    if parsed > 1.0:
+        parsed = 1.0
+    return round(parsed, 4)
+
+
+def _normalize_pipeline_stage(value: Any) -> str:
+    stage = str(value or "").strip().lower()
+    if stage in REVENUE_PIPELINE_STAGES:
+        return stage
+    return "intake"
+
+
+def _derive_pipeline_stage_from_preview(preview: dict[str, Any]) -> str:
+    conversion_status = str((preview.get("conversion_summary") or {}).get("conversion_status") or "").strip().lower()
+    offer_status = str((preview.get("offer_summary") or {}).get("offer_status") or "").strip().lower()
+    response_status = str((preview.get("response_summary") or {}).get("response_status") or "").strip().lower()
+    qualification_status = str((preview.get("qualification_summary") or {}).get("qualification_status") or "").strip().lower()
+    if conversion_status in {"conversion_ready", "high_touch_conversion_required"}:
+        return "proposal_pending"
+    if response_status in {"response_ready", "high_touch_required"}:
+        return "follow_up"
+    if offer_status in {"offer_ready", "high_touch_review_recommended"}:
+        return "proposal_pending"
+    if qualification_status in {"qualified", "high_priority"}:
+        return "qualified"
+    return "intake"
+
+
+def _derive_conversion_probability(*, preview: dict[str, Any], package: dict[str, Any]) -> float:
+    explicit = package.get("conversion_probability")
+    if explicit is not None:
+        return _normalize_revenue_ratio(explicit, fallback=0.0)
+    qualification_status = str((preview.get("qualification_summary") or {}).get("qualification_status") or "").strip().lower()
+    offer_status = str((preview.get("offer_summary") or {}).get("offer_status") or "").strip().lower()
+    response_status = str((preview.get("response_summary") or {}).get("response_status") or "").strip().lower()
+    conversion_status = str((preview.get("conversion_summary") or {}).get("conversion_status") or "").strip().lower()
+    base = {
+        "needs_more_info": 0.22,
+        "underqualified": 0.32,
+        "qualified": 0.64,
+        "high_priority": 0.82,
+    }.get(qualification_status, 0.35)
+    if offer_status == "offer_ready":
+        base += 0.08
+    if response_status == "response_ready":
+        base += 0.07
+    if conversion_status == "conversion_ready":
+        base += 0.09
+    if offer_status in {"offer_needs_more_info", "no_offer_yet"}:
+        base -= 0.1
+    if response_status in {"no_response", "needs_more_info"}:
+        base -= 0.08
+    return _normalize_revenue_ratio(base, fallback=0.35)
+
+
+def _derive_time_sensitivity(*, preview: dict[str, Any], package: dict[str, Any], pipeline_stage: str) -> float:
+    explicit = package.get("time_sensitivity")
+    if explicit is not None:
+        return _normalize_revenue_ratio(explicit, fallback=0.0)
+    urgency = str(((preview.get("qualification_summary") or {}).get("qualification_signals") or {}).get("urgency") or "").strip().lower()
+    urgency_score = {"critical": 1.0, "high": 0.82, "medium": 0.58, "low": 0.3}.get(urgency, 0.45)
+    if pipeline_stage in {"proposal_pending", "negotiation"}:
+        urgency_score += 0.08
+    if pipeline_stage in {"closed_won", "closed_lost"}:
+        urgency_score = 0.05
+    return _normalize_revenue_ratio(urgency_score, fallback=0.45)
+
+
+def _derive_roi_estimate(
+    *,
+    preview: dict[str, Any],
+    package: dict[str, Any],
+    conversion_probability: float,
+    cost_tracking: dict[str, Any],
+) -> float:
+    explicit = package.get("roi_estimate")
+    if explicit is not None:
+        return _normalize_revenue_ratio(explicit, fallback=0.0)
+    budget_band = str(((preview.get("qualification_summary") or {}).get("qualification_signals") or {}).get("budget_band") or "").strip().lower()
+    offer_tier = str((preview.get("offer_summary") or {}).get("recommended_package_tier") or "").strip().lower()
+    base = {
+        "none": 0.18,
+        "unknown": 0.22,
+        "low": 0.28,
+        "medium": 0.55,
+        "high": 0.73,
+        "enterprise": 0.82,
+    }.get(budget_band, 0.45)
+    if offer_tier in {"scale", "enterprise"}:
+        base += 0.06
+    estimated_cost = float(cost_tracking.get("cost_estimate") or 0.0)
+    if estimated_cost >= 0.1:
+        base -= 0.05
+    elif estimated_cost <= 0.01 and estimated_cost > 0:
+        base += 0.03
+    # ROI should remain bounded by demand signal quality.
+    roi = (base * 0.65) + (conversion_probability * 0.35)
+    return _normalize_revenue_ratio(roi, fallback=0.45)
+
+
+def _derive_execution_score(package: dict[str, Any]) -> float:
+    explicit = package.get("execution_score")
+    if explicit is not None:
+        return _normalize_revenue_ratio(explicit, fallback=0.0)
+    evaluation = dict(package.get("evaluation_summary") or {})
+    local_analysis = dict(package.get("local_analysis_summary") or {})
+    quality = _normalize_revenue_ratio((evaluation.get("execution_quality_score") or 0) / 100.0, fallback=0.0)
+    confidence = _normalize_revenue_ratio((local_analysis.get("confidence_score") or 0) / 100.0, fallback=0.0)
+    if quality <= 0.0 and confidence <= 0.0:
+        execution_status = str(package.get("execution_status") or "").strip().lower()
+        if execution_status in {"succeeded", "completed"}:
+            return 0.72
+        if execution_status in {"failed", "blocked", "rolled_back"}:
+            return 0.2
+        return 0.45
+    return _normalize_revenue_ratio((quality * 0.7) + (confidence * 0.3), fallback=0.45)
+
+
+def _derive_governance_enforcement_posture(package: dict[str, Any]) -> tuple[str, str, str]:
+    metadata = dict(package.get("metadata") or {})
+    governance_status = str(
+        metadata.get("governance_status")
+        or package.get("governance_status")
+        or ""
+    ).strip().lower()
+    governance_outcome = str(
+        metadata.get("governance_routing_outcome")
+        or package.get("governance_routing_outcome")
+        or ""
+    ).strip().lower()
+    enforcement_status = str(
+        metadata.get("enforcement_status")
+        or package.get("enforcement_status")
+        or ""
+    ).strip().lower()
+    return governance_status, governance_outcome, enforcement_status
+
+
+def _derive_opportunity_classification(
+    *,
+    roi_estimate: float,
+    conversion_probability: float,
+    time_sensitivity: float,
+    pipeline_stage: str,
+    governance_blocked: bool,
+) -> tuple[str, str]:
+    if governance_blocked:
+        return ("cold", "Governance or enforcement posture blocks progression.")
+    if roi_estimate >= 0.82:
+        return ("high_margin", "ROI estimate indicates strong value margin.")
+    if roi_estimate <= 0.3:
+        return ("low_margin", "ROI estimate indicates limited value margin.")
+    if pipeline_stage in {"negotiation", "proposal_pending"} and roi_estimate >= 0.7:
+        return ("strategic", "Late-stage pipeline with strong ROI signal.")
+    if conversion_probability >= 0.75 and time_sensitivity >= 0.65:
+        return ("hot", "High conversion probability and urgency indicate immediate revenue potential.")
+    if conversion_probability >= 0.5:
+        return ("warm", "Moderate conversion probability suggests near-term value.")
+    return ("cold", "Low conversion confidence keeps this opportunity in a cold posture.")
+
+
+def _derive_highest_value_next_action(
+    *,
+    governance_status: str,
+    governance_outcome: str,
+    enforcement_status: str,
+    pipeline_stage: str,
+    execution_score: float,
+    roi_estimate: float,
+    conversion_probability: float,
+    time_sensitivity: float,
+    recent_outcome_adjustment: float,
+) -> tuple[str, float, str]:
+    if governance_status == "blocked" or governance_outcome == "stop":
+        return ("escalate human review", 0.18, "Hard governance block requires operator escalation.")
+    if enforcement_status in {"approval_required", "manual_review_required", "hold", "blocked"}:
+        return ("escalate human review", 0.24, "Enforcement gates require explicit operator handling.")
+    if conversion_probability <= 0.25 or roi_estimate <= 0.25:
+        return ("delay low-value opportunity", 0.2, "Low conversion and ROI signal suggest deferral.")
+
+    base_score = (
+        (execution_score * 0.25)
+        + (roi_estimate * 0.3)
+        + (conversion_probability * 0.25)
+        + (time_sensitivity * 0.2)
+        + recent_outcome_adjustment
+    )
+    base_score = _normalize_revenue_ratio(base_score, fallback=0.0)
+
+    if pipeline_stage in {"intake", "qualified", "follow_up"}:
+        action = "send follow-up"
+        reason = "Opportunity is in an early engagement stage and benefits from active follow-up."
+    elif pipeline_stage in {"proposal_pending", "negotiation"}:
+        action = "generate offer"
+        reason = "Pipeline stage indicates proposal shaping is the highest-value governed next step."
+    elif pipeline_stage == "onboarding":
+        action = "request onboarding info"
+        reason = "Opportunity is near delivery and needs onboarding details to convert safely."
+    elif pipeline_stage == "delivery":
+        action = "prioritize high-value opportunity" if base_score >= 0.6 else "delay low-value opportunity"
+        reason = "Delivery-stage opportunities are prioritized by combined revenue activation score."
+    elif pipeline_stage in {"closed_won", "closed_lost"}:
+        action = "delay low-value opportunity"
+        reason = "Closed opportunities should not be reactivated automatically."
+        base_score = min(base_score, 0.15)
+    else:
+        action = "escalate human review"
+        reason = "Pipeline posture is unclear and requires operator judgment."
+        base_score = min(base_score, 0.3)
+
+    if base_score >= 0.72 and conversion_probability >= 0.7:
+        action = "prioritize high-value opportunity"
+        reason = "Combined execution, ROI, conversion, and urgency signals indicate high value."
+    return (action, base_score, reason)
+
+
+def _derive_revenue_workflow_readiness(
+    *,
+    governance_status: str,
+    governance_outcome: str,
+    enforcement_status: str,
+    highest_value_next_action_score: float,
+    conversion_probability: float,
+    roi_estimate: float,
+) -> tuple[str, bool, str, str, bool]:
+    if governance_status == "blocked" or governance_outcome == "stop" or enforcement_status == "blocked":
+        return (
+            "blocked_for_revenue_action",
+            False,
+            "Governance/enforcement hard block is active.",
+            "high",
+            True,
+        )
+    if enforcement_status in {"approval_required", "manual_review_required", "hold"}:
+        return (
+            "needs_operator_review",
+            False,
+            "Workflow is gated by approval or manual review policy.",
+            "high",
+            True,
+        )
+    if conversion_probability < 0.2 and roi_estimate < 0.25:
+        return (
+            "low_value_deferred",
+            False,
+            "Opportunity value signal is below activation threshold.",
+            "low",
+            False,
+        )
+    if highest_value_next_action_score < 0.28:
+        return (
+            "needs_revision",
+            False,
+            "Revenue action confidence is too weak; revise package context.",
+            "medium",
+            True,
+        )
+    priority = "high" if highest_value_next_action_score >= 0.72 else "medium"
+    return ("ready_for_revenue_action", True, "", priority, False)
+
+
+def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(package.get("metadata") or {})
+    revenue_context = dict(metadata.get("revenue_pipeline_context") or {})
+    revenue_preview = dict(metadata.get("revenue_preview") or {})
+    cost_tracking = _normalize_cost_tracking(package.get("cost_tracking"), fallback_source="composed_operation")
+
+    lead_id = _normalize_revenue_text(package.get("lead_id") or revenue_context.get("lead_id"))
+    opportunity_id = _normalize_revenue_text(package.get("opportunity_id") or revenue_context.get("opportunity_id"))
+    client_id = _normalize_revenue_text(package.get("client_id") or revenue_context.get("client_id"))
+    business_function = _normalize_revenue_text(
+        package.get("business_function") or revenue_context.get("business_function") or "general"
+    ).lower()
+
+    raw_pipeline_stage = (
+        package.get("pipeline_stage")
+        or revenue_context.get("pipeline_stage")
+        or _derive_pipeline_stage_from_preview(revenue_preview)
+    )
+    pipeline_stage = _normalize_pipeline_stage(raw_pipeline_stage)
+
+    conversion_probability = _derive_conversion_probability(preview=revenue_preview, package=package)
+    time_sensitivity = _derive_time_sensitivity(preview=revenue_preview, package=package, pipeline_stage=pipeline_stage)
+    roi_estimate = _derive_roi_estimate(
+        preview=revenue_preview,
+        package=package,
+        conversion_probability=conversion_probability,
+        cost_tracking=cost_tracking,
+    )
+    execution_score = _derive_execution_score(package)
+
+    governance_status, governance_outcome, enforcement_status = _derive_governance_enforcement_posture(package)
+    recent_outcomes = list(metadata.get("revenue_recent_outcomes") or [])
+    won_count = sum(1 for item in recent_outcomes if str((item or {}).get("status") or "").strip().lower() == "closed_won")
+    lost_count = sum(1 for item in recent_outcomes if str((item or {}).get("status") or "").strip().lower() == "closed_lost")
+    recent_outcome_adjustment = _normalize_revenue_ratio((won_count - lost_count) * 0.02, fallback=0.0)
+
+    highest_action, highest_action_score, highest_action_reason = _derive_highest_value_next_action(
+        governance_status=governance_status,
+        governance_outcome=governance_outcome,
+        enforcement_status=enforcement_status,
+        pipeline_stage=pipeline_stage,
+        execution_score=execution_score,
+        roi_estimate=roi_estimate,
+        conversion_probability=conversion_probability,
+        time_sensitivity=time_sensitivity,
+        recent_outcome_adjustment=recent_outcome_adjustment,
+    )
+    next_revenue_action = _normalize_revenue_text(
+        package.get("next_revenue_action") or revenue_context.get("next_revenue_action") or highest_action
+    )
+    revenue_action_reason = _normalize_revenue_text(
+        package.get("revenue_action_reason") or revenue_context.get("revenue_action_reason") or highest_action_reason
+    )
+
+    workflow_status, workflow_ready, workflow_block_reason, workflow_priority, operator_review = _derive_revenue_workflow_readiness(
+        governance_status=governance_status,
+        governance_outcome=governance_outcome,
+        enforcement_status=enforcement_status,
+        highest_value_next_action_score=highest_action_score,
+        conversion_probability=conversion_probability,
+        roi_estimate=roi_estimate,
+    )
+    opportunity_classification, opportunity_classification_reason = _derive_opportunity_classification(
+        roi_estimate=roi_estimate,
+        conversion_probability=conversion_probability,
+        time_sensitivity=time_sensitivity,
+        pipeline_stage=pipeline_stage,
+        governance_blocked=(workflow_status == "blocked_for_revenue_action"),
+    )
+    if opportunity_classification not in OPPORTUNITY_CLASSIFICATIONS:
+        opportunity_classification = "cold"
+    if workflow_status not in REVENUE_WORKFLOW_STATUSES:
+        workflow_status = "needs_revision"
+    if workflow_priority not in REVENUE_WORKFLOW_PRIORITIES:
+        workflow_priority = "medium"
+
+    return {
+        "lead_id": lead_id,
+        "opportunity_id": opportunity_id,
+        "client_id": client_id,
+        "business_function": business_function,
+        "pipeline_stage": pipeline_stage,
+        "next_revenue_action": next_revenue_action,
+        "revenue_action_reason": revenue_action_reason,
+        "execution_score": execution_score,
+        "roi_estimate": roi_estimate,
+        "conversion_probability": conversion_probability,
+        "time_sensitivity": time_sensitivity,
+        "highest_value_next_action": highest_action,
+        "highest_value_next_action_score": highest_action_score,
+        "highest_value_next_action_reason": highest_action_reason,
+        "revenue_activation_status": workflow_status,
+        "revenue_workflow_ready": workflow_ready,
+        "revenue_workflow_block_reason": workflow_block_reason,
+        "revenue_workflow_priority": workflow_priority,
+        "operator_revenue_review_required": operator_review,
+        "opportunity_classification": opportunity_classification,
+        "opportunity_classification_reason": opportunity_classification_reason,
+        "revenue_activation_trace": {
+            "signals": {
+                "execution_score": execution_score,
+                "roi_estimate": roi_estimate,
+                "conversion_probability": conversion_probability,
+                "time_sensitivity": time_sensitivity,
+                "pipeline_stage": pipeline_stage,
+                "governance_status": governance_status,
+                "governance_routing_outcome": governance_outcome,
+                "enforcement_status": enforcement_status,
+                "recent_outcome_adjustment": recent_outcome_adjustment,
+            },
+            "classification_reason": opportunity_classification_reason,
+            "workflow_status": workflow_status,
+        },
+    }
+
+
 def build_delivery_summary_contract(package: dict[str, Any] | None) -> dict[str, Any]:
     """
     Build a governed delivery-summary and packaging contract from package state.
@@ -721,6 +1150,15 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             current_session_cost=operation_cost,
         )
     budget_fields = _budget_fields_from_control(budget_control)
+    revenue_fields = _derive_revenue_activation_fields(
+        {
+            **p,
+            "metadata": metadata,
+            "cost_tracking": normalized_cost_tracking,
+            "evaluation_summary": normalize_evaluation_summary(p.get("evaluation_summary")),
+            "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
+        }
+    )
 
     return {
         "package_id": package_id,
@@ -826,6 +1264,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "budget_caps": budget_caps,
         "budget_control": budget_control,
         **budget_fields,
+        **revenue_fields,
         "delivery_summary": build_delivery_summary_contract(
             {
                 **p,
@@ -921,6 +1360,27 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "governance_conflict_type": str(r.get("governance_conflict_type") or ""),
         "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
         "governance_routing_outcome": str(r.get("governance_routing_outcome") or ""),
+        "lead_id": str(r.get("lead_id") or ""),
+        "opportunity_id": str(r.get("opportunity_id") or ""),
+        "client_id": str(r.get("client_id") or ""),
+        "business_function": str(r.get("business_function") or ""),
+        "pipeline_stage": _normalize_pipeline_stage(r.get("pipeline_stage")),
+        "next_revenue_action": str(r.get("next_revenue_action") or ""),
+        "revenue_action_reason": str(r.get("revenue_action_reason") or ""),
+        "execution_score": _normalize_revenue_ratio(r.get("execution_score"), fallback=0.0),
+        "roi_estimate": _normalize_revenue_ratio(r.get("roi_estimate"), fallback=0.0),
+        "conversion_probability": _normalize_revenue_ratio(r.get("conversion_probability"), fallback=0.0),
+        "time_sensitivity": _normalize_revenue_ratio(r.get("time_sensitivity"), fallback=0.0),
+        "highest_value_next_action": str(r.get("highest_value_next_action") or ""),
+        "highest_value_next_action_score": _normalize_revenue_ratio(r.get("highest_value_next_action_score"), fallback=0.0),
+        "highest_value_next_action_reason": str(r.get("highest_value_next_action_reason") or ""),
+        "revenue_activation_status": str(r.get("revenue_activation_status") or "needs_revision"),
+        "revenue_workflow_ready": bool(r.get("revenue_workflow_ready")),
+        "revenue_workflow_block_reason": str(r.get("revenue_workflow_block_reason") or ""),
+        "revenue_workflow_priority": str(r.get("revenue_workflow_priority") or "medium"),
+        "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
+        "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
+        "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -2656,3 +3116,55 @@ def record_execution_package_governance_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_governance(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package governance metadata.", "package": None}
+
+
+def record_execution_package_revenue_activation(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    governance_result: dict[str, Any] | None = None,
+    enforcement_result: dict[str, Any] | None = None,
+    project_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Persist governance/enforcement-backed revenue activation context for a package.
+
+    This function is evaluation-only metadata persistence. It never triggers
+    workflow transitions, outbound communication, or any execution side effects.
+    """
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+
+    gr = governance_result if isinstance(governance_result, dict) else {}
+    er = enforcement_result if isinstance(enforcement_result, dict) else {}
+    ps = project_state if isinstance(project_state, dict) else {}
+    metadata = dict(package.get("metadata") or {})
+    metadata["governance_status"] = str(gr.get("governance_status") or metadata.get("governance_status") or "")
+    metadata["governance_routing_outcome"] = str(gr.get("routing_outcome") or metadata.get("governance_routing_outcome") or "")
+    metadata["enforcement_status"] = str(er.get("enforcement_status") or metadata.get("enforcement_status") or "")
+    metadata["revenue_recent_outcomes"] = [
+        {
+            "status": str((item or {}).get("status") or ""),
+            "at": str((item or {}).get("at") or ""),
+            "reason": str((item or {}).get("reason") or ""),
+        }
+        for item in list(ps.get("revenue_recent_outcomes") or metadata.get("revenue_recent_outcomes") or [])
+        if isinstance(item, dict)
+    ][:20]
+    package["metadata"] = metadata
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package revenue activation metadata recorded.",
+    )
+
+
+def record_execution_package_revenue_activation_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_revenue_activation(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package revenue activation metadata.", "package": None}

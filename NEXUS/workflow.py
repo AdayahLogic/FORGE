@@ -469,6 +469,24 @@ def enforcement_layer_node(state: StudioState):
     )
     state.enforcement_result = result
     state.enforcement_status = result.get("enforcement_status")
+    if state.project_path and state.execution_package_id:
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_revenue_activation_safe
+
+            record_execution_package_revenue_activation_safe(
+                project_path=state.project_path,
+                package_id=state.execution_package_id,
+                governance_result=state.governance_result,
+                enforcement_result=state.enforcement_result,
+                project_state={
+                    "dispatch_status": state.dispatch_status,
+                    "runtime_execution_status": state.runtime_execution_status,
+                    "workflow_route_status": state.workflow_route_status,
+                    "review_queue_entry": state.review_queue_entry,
+                },
+            )
+        except Exception:
+            pass
 
     # Phase 15: outcome-learning after governance + enforcement evaluation.
     try:

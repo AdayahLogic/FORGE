@@ -278,13 +278,22 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "cursor_bridge_artifact_count": cursor_bridge.get("artifact_count"),
         "cursor_bridge_latest_artifact_type": cursor_bridge.get("latest_artifact_type"),
         "cursor_bridge_latest_validation_status": cursor_bridge.get("latest_validation_status"),
+        "pipeline_stage": p.get("pipeline_stage") or "intake",
+        "highest_value_next_action": p.get("highest_value_next_action") or "",
+        "highest_value_next_action_score": p.get("highest_value_next_action_score") or 0.0,
+        "highest_value_next_action_reason": p.get("highest_value_next_action_reason") or "",
+        "revenue_activation_status": p.get("revenue_activation_status") or "needs_revision",
+        "revenue_workflow_ready": bool(p.get("revenue_workflow_ready")),
+        "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
+        "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
     }
 
 
 def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[str, Any]:
     p = package or {}
     cursor_bridge = dict(p.get("cursor_bridge_summary") or {})
-    return {
+    sections = {
         "command_request": dict(p.get("command_request") or {}),
         "scope": {
             "candidate_paths": list(p.get("candidate_paths") or []),
@@ -307,10 +316,6 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
         },
         "rollback": {
             "rollback_notes": list(p.get("rollback_notes") or []),
-        },
-        "cursor_bridge": {
-            "summary": cursor_bridge,
-            "artifacts": list(p.get("cursor_bridge_artifacts") or []),
         },
         "decision": {
             "decision_status": p.get("decision_status") or "pending",
@@ -373,6 +378,13 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
         },
         "metadata": dict(p.get("metadata") or {}),
     }
+    cursor_bridge_artifacts = list(p.get("cursor_bridge_artifacts") or [])
+    if cursor_bridge or cursor_bridge_artifacts:
+        sections["cursor_bridge"] = {
+            "summary": cursor_bridge,
+            "artifacts": cursor_bridge_artifacts,
+        }
+    return sections
 
 
 def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[str, Any]:
@@ -405,6 +417,13 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "cursor_bridge_status": cursor_bridge.get("bridge_status"),
         "cursor_bridge_artifact_count": cursor_bridge.get("artifact_count"),
         "cursor_bridge_latest_validation_status": cursor_bridge.get("latest_validation_status"),
+        "pipeline_stage": p.get("pipeline_stage") or "intake",
+        "highest_value_next_action": p.get("highest_value_next_action") or "",
+        "highest_value_next_action_score": p.get("highest_value_next_action_score") or 0.0,
+        "revenue_activation_status": p.get("revenue_activation_status") or "needs_revision",
+        "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
+        "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
+        "opportunity_classification": p.get("opportunity_classification") or "cold",
     }
 
 
@@ -655,6 +674,26 @@ def run_command(
                 if str(pkg.get("review_status") or "") in ("pending", "review_pending")
                 or str(pkg.get("package_status") or "") in ("pending", "review_pending")
             )
+            ranked_revenue = sorted(
+                [
+                    row
+                    for row in queue_rows
+                    if str(row.get("revenue_activation_status") or "") == "ready_for_revenue_action"
+                ],
+                key=lambda row: float(row.get("highest_value_next_action_score") or 0.0),
+                reverse=True,
+            )
+            blocked_revenue = [
+                {
+                    "package_id": row.get("package_id"),
+                    "revenue_activation_status": row.get("revenue_activation_status"),
+                    "revenue_workflow_block_reason": row.get("revenue_workflow_block_reason") or "Blocked by governance/enforcement posture.",
+                    "pipeline_stage": row.get("pipeline_stage"),
+                    "highest_value_next_action": row.get("highest_value_next_action"),
+                }
+                for row in queue_rows
+                if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -667,6 +706,17 @@ def run_command(
                     "count": len(packages),
                     "pending_count": pending_count,
                     "packages": queue_rows,
+                    "top_revenue_candidates": [
+                        {
+                            "package_id": row.get("package_id"),
+                            "highest_value_next_action": row.get("highest_value_next_action"),
+                            "highest_value_next_action_score": row.get("highest_value_next_action_score"),
+                            "pipeline_stage": row.get("pipeline_stage"),
+                            "opportunity_classification": row.get("opportunity_classification"),
+                        }
+                        for row in ranked_revenue[:5]
+                    ],
+                    "blocked_revenue_candidates": blocked_revenue[:5],
                 },
             )
         except Exception as e:
