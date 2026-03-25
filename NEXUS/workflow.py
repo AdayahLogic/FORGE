@@ -539,6 +539,18 @@ def _set_workflow_route_and_save(state: StudioState, route_status: str, route_re
     return state
 
 
+def _load_top_execution_candidates(project_path: str | None) -> list[dict[str, object]]:
+    if not project_path:
+        return []
+    try:
+        from NEXUS.execution_package_registry import build_execution_queue_intelligence_safe
+
+        result = build_execution_queue_intelligence_safe(project_path=project_path, n=5)
+        return [dict(x) for x in list(result.get("top_execution_candidates") or [])[:5] if isinstance(x, dict)]
+    except Exception:
+        return []
+
+
 def manual_review_hold_node(state: StudioState):
     """Hold node: manual review required; no external actions; then save and END."""
     er = state.enforcement_result or {}
@@ -552,6 +564,7 @@ def manual_review_hold_node(state: StudioState):
         workflow_route_reason=state.workflow_route_reason,
         governance_status=state.governance_status,
         project_lifecycle_status=state.project_lifecycle_status,
+        top_execution_candidates=_load_top_execution_candidates(state.project_path),
     )
     return state
 
@@ -569,6 +582,7 @@ def approval_hold_node(state: StudioState):
         workflow_route_reason=state.workflow_route_reason,
         governance_status=state.governance_status,
         project_lifecycle_status=state.project_lifecycle_status,
+        top_execution_candidates=_load_top_execution_candidates(state.project_path),
     )
     return state
 
@@ -586,6 +600,7 @@ def hold_state_node(state: StudioState):
         workflow_route_reason=state.workflow_route_reason,
         governance_status=state.governance_status,
         project_lifecycle_status=state.project_lifecycle_status,
+        top_execution_candidates=_load_top_execution_candidates(state.project_path),
     )
     return state
 
@@ -603,6 +618,7 @@ def blocked_stop_node(state: StudioState):
         workflow_route_reason=state.workflow_route_reason,
         governance_status=state.governance_status,
         project_lifecycle_status=state.project_lifecycle_status,
+        top_execution_candidates=_load_top_execution_candidates(state.project_path),
     )
     return state
 

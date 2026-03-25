@@ -11,6 +11,56 @@ from __future__ import annotations
 from typing import Any
 
 
+def evaluate_execution_package_enforcement_state(
+    *,
+    package: dict[str, Any] | None = None,
+    governance_state: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Package-level enforcement projection used by queue intelligence.
+    Never authorizes execution; only classifies queue suitability.
+    """
+    p = package if isinstance(package, dict) else {}
+    g = governance_state if isinstance(governance_state, dict) else {}
+    governance_status = str(g.get("governance_status") or "review_required").strip().lower()
+    hard_block = bool(g.get("hard_block"))
+    execution_status = str(p.get("execution_status") or "").strip().lower()
+    if hard_block or execution_status == "blocked":
+        return {
+            "enforcement_status": "blocked",
+            "queue_eligible": False,
+            "reason": "Hard block propagated from governance or execution status.",
+        }
+    if governance_status == "approval_required":
+        return {
+            "enforcement_status": "approval_required",
+            "queue_eligible": True,
+            "reason": "Approval is required before any progression.",
+        }
+    if governance_status == "approved":
+        return {
+            "enforcement_status": "continue",
+            "queue_eligible": True,
+            "reason": "Package is eligible for governed queue ranking.",
+        }
+    return {
+        "enforcement_status": "manual_review_required",
+        "queue_eligible": True,
+        "reason": "Manual review required before progression.",
+    }
+
+
+def evaluate_execution_package_enforcement_state_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return evaluate_execution_package_enforcement_state(**kwargs)
+    except Exception as e:
+        return {
+            "enforcement_status": "manual_review_required",
+            "queue_eligible": False,
+            "reason": f"Package enforcement projection failed: {e}",
+        }
+
+
 def evaluate_enforcement_outcome(
     *,
     governance_status: str | None = None,
