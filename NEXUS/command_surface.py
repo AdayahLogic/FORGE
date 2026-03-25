@@ -307,6 +307,20 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "strategy_baseline_reference": p.get("strategy_baseline_reference") or "",
         "strategy_variant_reference": p.get("strategy_variant_reference") or "",
         "strategy_comparison_outcome_signal": p.get("strategy_comparison_outcome_signal") or "not_tracking",
+        "strategy_outcome_count": int(p.get("strategy_outcome_count") or 0),
+        "strategy_success_count": int(p.get("strategy_success_count") or 0),
+        "strategy_failure_count": int(p.get("strategy_failure_count") or 0),
+        "strategy_recent_outcomes": list(p.get("strategy_recent_outcomes") or []),
+        "strategy_outcome_confidence": p.get("strategy_outcome_confidence") or 0.0,
+        "strategy_state": p.get("strategy_state") or "experimental",
+        "strategy_state_reason": p.get("strategy_state_reason") or "",
+        "strategy_state_confidence": p.get("strategy_state_confidence") or 0.0,
+        "strategy_policy_recommendation": p.get("strategy_policy_recommendation") or "keep_current_policy",
+        "strategy_promotion_candidate": bool(p.get("strategy_promotion_candidate")),
+        "strategy_promotion_reason": p.get("strategy_promotion_reason") or "",
+        "strategy_promotion_confidence": p.get("strategy_promotion_confidence") or 0.0,
+        "strategy_demotion_candidate": bool(p.get("strategy_demotion_candidate")),
+        "strategy_demotion_reason": p.get("strategy_demotion_reason") or "",
     }
 
 
@@ -346,6 +360,24 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
                 "strategy_baseline_reference": p.get("strategy_baseline_reference") or "",
                 "strategy_variant_reference": p.get("strategy_variant_reference") or "",
                 "strategy_comparison_outcome_signal": p.get("strategy_comparison_outcome_signal") or "not_tracking",
+            },
+            "strategy_outcomes": {
+                "strategy_outcome_count": int(p.get("strategy_outcome_count") or 0),
+                "strategy_success_count": int(p.get("strategy_success_count") or 0),
+                "strategy_failure_count": int(p.get("strategy_failure_count") or 0),
+                "strategy_recent_outcomes": list(p.get("strategy_recent_outcomes") or []),
+                "strategy_outcome_confidence": p.get("strategy_outcome_confidence") or 0.0,
+            },
+            "strategy_state": {
+                "strategy_state": p.get("strategy_state") or "experimental",
+                "strategy_state_reason": p.get("strategy_state_reason") or "",
+                "strategy_state_confidence": p.get("strategy_state_confidence") or 0.0,
+                "strategy_policy_recommendation": p.get("strategy_policy_recommendation") or "keep_current_policy",
+                "strategy_promotion_candidate": bool(p.get("strategy_promotion_candidate")),
+                "strategy_promotion_reason": p.get("strategy_promotion_reason") or "",
+                "strategy_promotion_confidence": p.get("strategy_promotion_confidence") or 0.0,
+                "strategy_demotion_candidate": bool(p.get("strategy_demotion_candidate")),
+                "strategy_demotion_reason": p.get("strategy_demotion_reason") or "",
             },
         },
         "approval": {
@@ -478,6 +510,13 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "strategy_variant_type": p.get("strategy_variant_type") or "none",
         "strategy_variant_guardrail_status": p.get("strategy_variant_guardrail_status") or "disabled",
         "strategy_comparison_status": p.get("strategy_comparison_status") or "not_enabled",
+        "strategy_outcome_count": int(p.get("strategy_outcome_count") or 0),
+        "strategy_outcome_confidence": p.get("strategy_outcome_confidence") or 0.0,
+        "strategy_state": p.get("strategy_state") or "experimental",
+        "strategy_state_confidence": p.get("strategy_state_confidence") or 0.0,
+        "strategy_policy_recommendation": p.get("strategy_policy_recommendation") or "keep_current_policy",
+        "strategy_promotion_candidate": bool(p.get("strategy_promotion_candidate")),
+        "strategy_demotion_candidate": bool(p.get("strategy_demotion_candidate")),
     }
 
 
@@ -746,6 +785,8 @@ def run_command(
                     "highest_value_next_action": row.get("highest_value_next_action"),
                     "strategy_execution_policy_status": row.get("strategy_execution_policy_status"),
                     "strategy_experimentation_status": row.get("strategy_experimentation_status"),
+                    "strategy_state": row.get("strategy_state"),
+                    "strategy_demotion_candidate": row.get("strategy_demotion_candidate"),
                 }
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
@@ -773,6 +814,12 @@ def run_command(
                             "strategy_execution_allowed": row.get("strategy_execution_allowed"),
                             "strategy_experimentation_enabled": row.get("strategy_experimentation_enabled"),
                             "strategy_variant_type": row.get("strategy_variant_type"),
+                            "strategy_outcome_count": row.get("strategy_outcome_count"),
+                            "strategy_outcome_confidence": row.get("strategy_outcome_confidence"),
+                            "strategy_state": row.get("strategy_state"),
+                            "strategy_policy_recommendation": row.get("strategy_policy_recommendation"),
+                            "strategy_promotion_candidate": row.get("strategy_promotion_candidate"),
+                            "strategy_demotion_candidate": row.get("strategy_demotion_candidate"),
                         }
                         for row in ranked_revenue[:5]
                     ],

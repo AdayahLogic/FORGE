@@ -106,6 +106,7 @@ STRATEGY_VARIANT_GUARDRAIL_STATUSES = {
     "disabled",
 }
 STRATEGY_COMPARISON_STATUSES = {"active_tracking", "baseline_only", "not_enabled"}
+STRATEGY_STATE_STATUSES = {"experimental", "recommended", "deprecated"}
 
 
 def _utc_now_iso() -> str:
@@ -335,6 +336,20 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "strategy_baseline_reference": str(normalized.get("strategy_baseline_reference") or ""),
         "strategy_variant_reference": str(normalized.get("strategy_variant_reference") or ""),
         "strategy_comparison_outcome_signal": str(normalized.get("strategy_comparison_outcome_signal") or "not_tracking"),
+        "strategy_outcome_count": int(normalized.get("strategy_outcome_count") or 0),
+        "strategy_success_count": int(normalized.get("strategy_success_count") or 0),
+        "strategy_failure_count": int(normalized.get("strategy_failure_count") or 0),
+        "strategy_recent_outcomes": list(normalized.get("strategy_recent_outcomes") or []),
+        "strategy_outcome_confidence": _normalize_revenue_ratio(normalized.get("strategy_outcome_confidence"), fallback=0.0),
+        "strategy_state": str(normalized.get("strategy_state") or "experimental"),
+        "strategy_state_reason": str(normalized.get("strategy_state_reason") or ""),
+        "strategy_state_confidence": _normalize_revenue_ratio(normalized.get("strategy_state_confidence"), fallback=0.0),
+        "strategy_policy_recommendation": str(normalized.get("strategy_policy_recommendation") or "keep_current_policy"),
+        "strategy_promotion_candidate": bool(normalized.get("strategy_promotion_candidate")),
+        "strategy_promotion_reason": str(normalized.get("strategy_promotion_reason") or ""),
+        "strategy_promotion_confidence": _normalize_revenue_ratio(normalized.get("strategy_promotion_confidence"), fallback=0.0),
+        "strategy_demotion_candidate": bool(normalized.get("strategy_demotion_candidate")),
+        "strategy_demotion_reason": str(normalized.get("strategy_demotion_reason") or ""),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -674,6 +689,114 @@ def _normalize_slug(value: Any) -> str:
     while "__" in slug:
         slug = slug.replace("__", "_")
     return slug or "unknown"
+
+
+def _normalize_recent_outcome_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for item in records[-12:]:
+        source = str(item.get("source") or "unknown").strip().lower() or "unknown"
+        signal = str(item.get("signal") or "neutral").strip().lower()
+        out.append(
+            {
+                "source": source,
+                "signal": signal,
+                "status": str(item.get("status") or ""),
+                "reason": str(item.get("reason") or ""),
+                "at": str(item.get("at") or ""),
+            }
+        )
+    return out
+
+
+def _coerce_outcome_signal(value: Any, *, fallback_status: str = "") -> tuple[str, str]:
+    status = str(value or fallback_status).strip().lower()
+    positive_tokens = {
+        "won",
+        "success",
+        "succeeded",
+        "closed_won",
+        "converted",
+        "positive",
+        "up",
+        "improved",
+    }
+    negative_tokens = {
+        "lost",
+        "failure",
+        "failed",
+        "closed_lost",
+        "rejected",
+        "negative",
+        "down",
+        "degraded",
+        "underperforming",
+    }
+    for token in positive_tokens:
+        if token in status:
+            return "success", status
+    for token in negative_tokens:
+        if token in status:
+            return "failure", status
+    if isinstance(value, bool):
+        return ("success" if value else "failure"), status or ("success" if value else "failure")
+    return "neutral", status
+
+
+def _collect_strategy_outcome_records(package: dict[str, Any], metadata: dict[str, Any]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+
+    def _append_record(source: str, signal: str, status: str, reason: str, at: str) -> None:
+        records.append(
+            {
+                "source": source,
+                "signal": signal,
+                "status": status,
+                "reason": reason,
+                "at": at,
+            }
+        )
+
+    recent_outcomes = list(metadata.get("revenue_recent_outcomes") or [])
+    for row in recent_outcomes:
+        if not isinstance(row, dict):
+            continue
+        signal, status = _coerce_outcome_signal(
+            row.get("signal") or row.get("outcome") or row.get("status"),
+            fallback_status=str(row.get("status") or ""),
+        )
+        _append_record(
+            "revenue_recent_outcomes",
+            signal,
+            status,
+            str(row.get("reason") or ""),
+            str(row.get("at") or row.get("timestamp") or ""),
+        )
+
+    for key in ("action_results", "conversion_results", "revenue_signals"):
+        source_rows = metadata.get(key)
+        if not isinstance(source_rows, list):
+            source_rows = package.get(key)
+        if not isinstance(source_rows, list):
+            continue
+        for row in source_rows:
+            if not isinstance(row, dict):
+                continue
+            raw = row.get("outcome")
+            if raw is None:
+                raw = row.get("status")
+            if raw is None:
+                raw = row.get("signal")
+            if raw is None and row.get("success") is not None:
+                raw = bool(row.get("success"))
+            signal, status = _coerce_outcome_signal(raw, fallback_status=str(row.get("status") or ""))
+            _append_record(
+                key,
+                signal,
+                status,
+                str(row.get("reason") or ""),
+                str(row.get("at") or row.get("timestamp") or ""),
+            )
+    return records
 
 
 def _normalize_revenue_ratio(value: Any, *, fallback: float = 0.0) -> float:
@@ -1096,9 +1219,29 @@ def _derive_strategy_execution_policy_fields(package: dict[str, Any]) -> dict[st
         or enforcement_status in {"blocked", "hold"}
         or revenue_activation_status == "blocked_for_revenue_action"
     )
+    governance_conflict = dict(metadata.get("governance_conflict") or {})
+    governance_conflict_status = str(governance_conflict.get("status") or "").strip().lower()
+    has_active_governance_conflict = governance_conflict_status in {"active", "open", "unresolved", "conflict"}
     operator_gate = enforcement_status in {"approval_required", "manual_review_required"}
     low_signal = strategy_confidence_level == "low" or data_maturity_level == "low"
     value_weak = conversion_probability < 0.25 and roi_estimate < 0.3
+    outcome_records = _collect_strategy_outcome_records(package, metadata)
+    strategy_recent_outcomes = _normalize_recent_outcome_records(outcome_records)
+    strategy_outcome_count = len(outcome_records)
+    strategy_success_count = sum(1 for row in outcome_records if str(row.get("signal") or "") == "success")
+    strategy_failure_count = sum(1 for row in outcome_records if str(row.get("signal") or "") == "failure")
+    success_rate = (strategy_success_count / strategy_outcome_count) if strategy_outcome_count else 0.0
+    failure_rate = (strategy_failure_count / strategy_outcome_count) if strategy_outcome_count else 0.0
+    recent_window = outcome_records[-5:]
+    recent_success_count = sum(1 for row in recent_window if str(row.get("signal") or "") == "success")
+    recent_failure_count = sum(1 for row in recent_window if str(row.get("signal") or "") == "failure")
+    recent_success_rate = (recent_success_count / len(recent_window)) if recent_window else success_rate
+    recent_failure_rate = (recent_failure_count / len(recent_window)) if recent_window else failure_rate
+    strategy_outcome_confidence = _normalize_revenue_ratio(
+        min(1.0, (strategy_outcome_count / 14.0) * 0.75 + abs(success_rate - 0.5) * 0.5),
+        fallback=0.0,
+    )
+    prior_comparison_outcome_signal = str(package.get("strategy_comparison_outcome_signal") or "").strip().lower()
 
     if hard_blocked:
         policy_status = "blocked"
@@ -1176,6 +1319,105 @@ def _derive_strategy_execution_policy_fields(package: dict[str, Any]) -> dict[st
         variant_type = "conservative_follow_up_variant"
         variant_reason = "Conservative baseline variant retained for rationale visibility only."
 
+    strategy_state = "experimental"
+    strategy_state_reason = "Strategy remains experimental until enough governed outcomes accumulate."
+    if strategy_outcome_count < 5:
+        strategy_state = "experimental"
+        strategy_state_reason = "Insufficient outcome sample keeps strategy experimental."
+    elif success_rate >= 0.68 and recent_success_rate >= 0.65:
+        strategy_state = "recommended"
+        strategy_state_reason = "Consistent success outcomes support recommended strategy status."
+    elif failure_rate >= 0.6 or recent_failure_rate >= 0.66:
+        strategy_state = "deprecated"
+        strategy_state_reason = "Repeated failure outcomes indicate strategy should be deprecated."
+    strategy_state_confidence = _normalize_revenue_ratio(
+        min(1.0, strategy_outcome_confidence * 0.8 + abs(success_rate - 0.5) * 0.7),
+        fallback=0.0,
+    )
+
+    sufficient_data_for_promotion = strategy_outcome_count >= 8
+    positive_outcome_bias = success_rate >= 0.68 and recent_success_rate >= 0.65
+    no_governance_conflict = not hard_blocked and not has_active_governance_conflict
+    strategy_promotion_candidate = bool(
+        strategy_state == "recommended"
+        and sufficient_data_for_promotion
+        and positive_outcome_bias
+        and no_governance_conflict
+    )
+    if strategy_promotion_candidate:
+        strategy_promotion_reason = "Promotion candidate: sufficient data, positive bias, and no governance conflict."
+    elif strategy_state != "recommended":
+        strategy_promotion_reason = "Promotion denied: strategy state is not recommended."
+    elif not sufficient_data_for_promotion:
+        strategy_promotion_reason = "Promotion denied: insufficient outcome data."
+    elif not positive_outcome_bias:
+        strategy_promotion_reason = "Promotion denied: success bias below threshold."
+    else:
+        strategy_promotion_reason = "Promotion denied: governance conflict or hard block present."
+    strategy_promotion_confidence = _normalize_revenue_ratio(
+        min(
+            1.0,
+            strategy_state_confidence * 0.65
+            + (0.2 if sufficient_data_for_promotion else 0.0)
+            + (0.15 if positive_outcome_bias else 0.0),
+        ),
+        fallback=0.0,
+    )
+
+    poor_conversion_vs_baseline = (
+        conversion_probability < 0.4
+        and success_rate < 0.5
+        and prior_comparison_outcome_signal in {"", "not_tracking", "pending_outcome_signal"}
+    )
+    negative_trend_pattern = strategy_outcome_count >= 6 and recent_success_rate + 0.15 < success_rate
+    repeated_failure = strategy_outcome_count >= 6 and (failure_rate >= 0.62 or recent_failure_rate >= 0.66)
+    strategy_demotion_candidate = bool(
+        strategy_state == "deprecated"
+        or repeated_failure
+        or poor_conversion_vs_baseline
+        or negative_trend_pattern
+    )
+    if repeated_failure:
+        strategy_demotion_reason = "Demotion candidate: repeated failure outcomes."
+    elif poor_conversion_vs_baseline:
+        strategy_demotion_reason = "Demotion candidate: poor conversion performance relative to baseline posture."
+    elif negative_trend_pattern:
+        strategy_demotion_reason = "Demotion candidate: negative trend in recent outcomes."
+    elif strategy_state == "deprecated":
+        strategy_demotion_reason = "Demotion candidate: strategy state is deprecated."
+    else:
+        strategy_demotion_reason = ""
+
+    strategy_policy_recommendation = "keep_current_policy"
+    if strategy_promotion_candidate:
+        strategy_policy_recommendation = "promote_to_recommended_policy"
+    elif strategy_demotion_candidate:
+        strategy_policy_recommendation = "restrict_to_conservative_policy"
+
+    # Phase 102 keeps governance precedence and only tightens policy posture.
+    if strategy_demotion_candidate and policy_status not in {"blocked"}:
+        policy_status = "deferred"
+        policy_name = "demotion_guardrail_defer_policy"
+        policy_reason = "Outcome-aware demotion recommends conservative defer posture pending recovery evidence."
+        allowed = False
+        requires_operator_review = True
+        block_reason = strategy_demotion_reason or "Demotion guardrail active."
+        experimentation_enabled = False
+        experimentation_status = "disabled_conservative_mode"
+        variant_type = "conservative_follow_up_variant"
+        variant_reason = "Demotion guardrail restricts execution to conservative baseline handling."
+        variant_guardrail_status = "conservative_only"
+        variant_guardrail_reason = "Demotion candidate disables experimentation until outcomes recover."
+        comparison_status = "baseline_only"
+        comparison_reason = "Comparison remains baseline-only while demotion guardrail is active."
+        comparison_outcome_signal = "not_tracking"
+        comparison_group = ""
+
+    if strategy_promotion_candidate:
+        policy_reason = (
+            f"{policy_reason} Promotion recommendation is available, but execution remains governed and non-autonomous."
+        )
+
     if variant_type not in STRATEGY_VARIANT_TYPES:
         variant_type = "none"
     if policy_status not in STRATEGY_EXECUTION_POLICY_STATUSES:
@@ -1209,6 +1451,8 @@ def _derive_strategy_execution_policy_fields(package: dict[str, Any]) -> dict[st
 
     if comparison_status not in STRATEGY_COMPARISON_STATUSES:
         comparison_status = "not_enabled"
+    if strategy_state not in STRATEGY_STATE_STATUSES:
+        strategy_state = "experimental"
 
     return {
         "strategy_execution_policy": policy_name,
@@ -1231,6 +1475,20 @@ def _derive_strategy_execution_policy_fields(package: dict[str, Any]) -> dict[st
         "strategy_baseline_reference": baseline_reference,
         "strategy_variant_reference": variant_reference,
         "strategy_comparison_outcome_signal": comparison_outcome_signal,
+        "strategy_outcome_count": strategy_outcome_count,
+        "strategy_success_count": strategy_success_count,
+        "strategy_failure_count": strategy_failure_count,
+        "strategy_recent_outcomes": strategy_recent_outcomes,
+        "strategy_outcome_confidence": strategy_outcome_confidence,
+        "strategy_state": strategy_state,
+        "strategy_state_reason": strategy_state_reason,
+        "strategy_state_confidence": strategy_state_confidence,
+        "strategy_policy_recommendation": strategy_policy_recommendation,
+        "strategy_promotion_candidate": strategy_promotion_candidate,
+        "strategy_promotion_reason": strategy_promotion_reason,
+        "strategy_promotion_confidence": strategy_promotion_confidence,
+        "strategy_demotion_candidate": strategy_demotion_candidate,
+        "strategy_demotion_reason": strategy_demotion_reason,
         "strategy_policy_trace": {
             "governance_posture": {
                 "governance_status": governance_status,
@@ -1250,6 +1508,8 @@ def _derive_strategy_execution_policy_fields(package: dict[str, Any]) -> dict[st
                 "policy_status": policy_status,
                 "experimentation_status": experimentation_status,
                 "comparison_status": comparison_status,
+                "strategy_state": strategy_state,
+                "strategy_policy_recommendation": strategy_policy_recommendation,
             },
         },
     }
@@ -1663,6 +1923,22 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "strategy_baseline_reference": str(r.get("strategy_baseline_reference") or ""),
         "strategy_variant_reference": str(r.get("strategy_variant_reference") or ""),
         "strategy_comparison_outcome_signal": str(r.get("strategy_comparison_outcome_signal") or "not_tracking"),
+        "strategy_outcome_count": max(0, int(r.get("strategy_outcome_count") or 0)),
+        "strategy_success_count": max(0, int(r.get("strategy_success_count") or 0)),
+        "strategy_failure_count": max(0, int(r.get("strategy_failure_count") or 0)),
+        "strategy_recent_outcomes": _normalize_recent_outcome_records(
+            [x for x in list(r.get("strategy_recent_outcomes") or []) if isinstance(x, dict)]
+        ),
+        "strategy_outcome_confidence": _normalize_revenue_ratio(r.get("strategy_outcome_confidence"), fallback=0.0),
+        "strategy_state": str(r.get("strategy_state") or "experimental"),
+        "strategy_state_reason": str(r.get("strategy_state_reason") or ""),
+        "strategy_state_confidence": _normalize_revenue_ratio(r.get("strategy_state_confidence"), fallback=0.0),
+        "strategy_policy_recommendation": str(r.get("strategy_policy_recommendation") or "keep_current_policy"),
+        "strategy_promotion_candidate": bool(r.get("strategy_promotion_candidate")),
+        "strategy_promotion_reason": str(r.get("strategy_promotion_reason") or ""),
+        "strategy_promotion_confidence": _normalize_revenue_ratio(r.get("strategy_promotion_confidence"), fallback=0.0),
+        "strategy_demotion_candidate": bool(r.get("strategy_demotion_candidate")),
+        "strategy_demotion_reason": str(r.get("strategy_demotion_reason") or ""),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
