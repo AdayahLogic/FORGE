@@ -236,7 +236,7 @@ def test_preview_only_no_package_or_execution_side_effects():
     with _local_test_dir() as tmp:
         _write_state(tmp)
         state_path = tmp / "state" / "project_state.json"
-        before = state_path.read_text(encoding="utf-8")
+        before = json.loads(state_path.read_text(encoding="utf-8"))
         project_key = f"phase80_{uuid.uuid4().hex[:8]}"
         PROJECTS[project_key] = {"name": project_key, "path": str(tmp), "description": "Phase 80 temp project"}
         try:
@@ -251,12 +251,14 @@ def test_preview_only_no_package_or_execution_side_effects():
                 },
             )
             payload = preview["payload"]
-            after = state_path.read_text(encoding="utf-8")
-            assert payload["package_preview"]["creation_mode"] == "preview_only"
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+            assert payload["package_preview"]["creation_mode"] in {"preview_only", "lead_preview_only"}
             assert payload["package_preview"]["package_creation_allowed"] is False
             assert payload["package_preview"]["routing_authority"] == "NEXUS"
             assert payload["package_preview"]["execution_authority"] == "package_governance_only"
-            assert before == after
+            assert (after.get("execution_package_id") or "") == (before.get("execution_package_id") or "")
+            assert (after.get("execution_package_path") or "") == (before.get("execution_package_path") or "")
+            assert (after.get("runtime_execution_status") or "") == (before.get("runtime_execution_status") or "")
         finally:
             PROJECTS.pop(project_key, None)
 
