@@ -1203,7 +1203,6 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         )
     execution_feedback = _build_execution_feedback(package, timeline=timeline)
     cost_summary = _build_package_cost_summary(
-    cost_summary = _build_package_cost_summary(
         package,
         timeline,
         project_path=project_path,
