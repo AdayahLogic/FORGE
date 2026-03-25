@@ -100,6 +100,17 @@ OPERATOR_ACTION_TYPES = {
     "defer_low_value_opportunity",
 }
 OPERATOR_ACTION_PRIORITIES = {"low", "medium", "high"}
+OPERATOR_ACTION_LIFECYCLE_STATUSES = {
+    "pending",
+    "acknowledged",
+    "in_progress",
+    "completed",
+    "failed",
+    "ignored",
+    "cancelled",
+}
+OPERATOR_ACTION_ATTENTION_STATUSES = {"normal", "needs_attention", "overdue", "escalated"}
+OPERATOR_ACTION_REVENUE_EFFECTS = {"unknown", "positive", "negative", "neutral"}
 COMMUNICATION_CHANNELS = {"none", "email"}
 COMMUNICATION_INTENTS = {
     "none",
@@ -336,6 +347,31 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_action_reason": str(normalized.get("operator_action_reason") or ""),
         "operator_action_deadline": str(normalized.get("operator_action_deadline") or ""),
         "operator_action_priority": str(normalized.get("operator_action_priority") or "medium"),
+        "operator_action_id": str(normalized.get("operator_action_id") or ""),
+        "operator_action_status": str(normalized.get("operator_action_status") or "pending"),
+        "operator_action_created_at": str(normalized.get("operator_action_created_at") or ""),
+        "operator_action_acknowledged_at": str(normalized.get("operator_action_acknowledged_at") or ""),
+        "operator_action_started_at": str(normalized.get("operator_action_started_at") or ""),
+        "operator_action_completed_at": str(normalized.get("operator_action_completed_at") or ""),
+        "operator_action_failed_at": str(normalized.get("operator_action_failed_at") or ""),
+        "operator_action_ignored_at": str(normalized.get("operator_action_ignored_at") or ""),
+        "operator_action_actor": str(normalized.get("operator_action_actor") or ""),
+        "operator_action_notes": str(normalized.get("operator_action_notes") or ""),
+        "operator_action_due_at": str(normalized.get("operator_action_due_at") or ""),
+        "operator_action_attention_status": str(normalized.get("operator_action_attention_status") or "normal"),
+        "operator_action_attention_reason": str(normalized.get("operator_action_attention_reason") or ""),
+        "operator_action_overdue": bool(normalized.get("operator_action_overdue")),
+        "operator_action_history_count": int(normalized.get("operator_action_history_count") or 0),
+        "linked_execution_result": str(normalized.get("linked_execution_result") or ""),
+        "linked_conversion_result": str(normalized.get("linked_conversion_result") or ""),
+        "linked_revenue_realized": _normalize_revenue_ratio(normalized.get("linked_revenue_realized"), fallback=0.0),
+        "linked_communication_delivery_status": str(normalized.get("linked_communication_delivery_status") or "not_sent"),
+        "operator_action_effect_on_revenue": str(normalized.get("operator_action_effect_on_revenue") or "unknown"),
+        "operator_action_effect_reason": str(normalized.get("operator_action_effect_reason") or ""),
+        "action_success_rate": _normalize_revenue_ratio(normalized.get("action_success_rate"), fallback=0.0),
+        "action_follow_through_rate": _normalize_revenue_ratio(normalized.get("action_follow_through_rate"), fallback=0.0),
+        "action_to_reply_rate": _normalize_revenue_ratio(normalized.get("action_to_reply_rate"), fallback=0.0),
+        "action_to_conversion_rate": _normalize_revenue_ratio(normalized.get("action_to_conversion_rate"), fallback=0.0),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
         "communication_channel": str(normalized.get("communication_channel") or "none"),
@@ -1141,6 +1177,248 @@ def _normalize_follow_up_status(value: Any) -> str:
     return normalized
 
 
+def _normalize_operator_action_lifecycle_status(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in OPERATOR_ACTION_LIFECYCLE_STATUSES:
+        return "pending"
+    return normalized
+
+
+def _normalize_operator_action_attention_status(value: Any, *, fallback: str = "normal") -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in OPERATOR_ACTION_ATTENTION_STATUSES:
+        normalized = str(fallback or "normal").strip().lower()
+    if normalized not in OPERATOR_ACTION_ATTENTION_STATUSES:
+        return "normal"
+    return normalized
+
+
+def _normalize_operator_action_revenue_effect(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    if normalized not in OPERATOR_ACTION_REVENUE_EFFECTS:
+        return "unknown"
+    return normalized
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        return datetime.fromisoformat(text)
+    except Exception:
+        return None
+
+
+def _normalize_operator_action_history(value: Any) -> list[dict[str, Any]]:
+    history = value if isinstance(value, list) else []
+    normalized: list[dict[str, Any]] = []
+    for item in history[-100:]:
+        if not isinstance(item, dict):
+            continue
+        normalized.append(
+            {
+                "event_at": str(item.get("event_at") or item.get("at") or ""),
+                "event_type": str(item.get("event_type") or "status_update").strip().lower(),
+                "operator_action_status": _normalize_operator_action_lifecycle_status(item.get("operator_action_status") or item.get("status")),
+                "operator_action_actor": str(item.get("operator_action_actor") or item.get("actor") or "").strip(),
+                "operator_action_notes": str(item.get("operator_action_notes") or item.get("notes") or ""),
+                "linked_execution_result": str(item.get("linked_execution_result") or ""),
+                "linked_conversion_result": str(item.get("linked_conversion_result") or ""),
+                "linked_revenue_realized": _normalize_revenue_ratio(item.get("linked_revenue_realized"), fallback=0.0),
+                "linked_communication_delivery_status": _normalize_communication_delivery_status(item.get("linked_communication_delivery_status")),
+                "operator_action_effect_on_revenue": _normalize_operator_action_revenue_effect(item.get("operator_action_effect_on_revenue")),
+                "operator_action_effect_reason": str(item.get("operator_action_effect_reason") or ""),
+            }
+        )
+    return normalized[-50:]
+
+
+def _derive_operator_action_attention_fields(
+    *,
+    operator_action_status: str,
+    operator_action_due_at: str,
+    operator_action_priority: str,
+    operator_action_queue_status: str,
+) -> dict[str, Any]:
+    status = _normalize_operator_action_lifecycle_status(operator_action_status)
+    due_at = str(operator_action_due_at or "").strip()
+    queue_status = str(operator_action_queue_status or "").strip().lower()
+    priority = _normalize_operator_action_priority(operator_action_priority)
+    now = datetime.now(timezone.utc)
+    parsed_due = _parse_iso_datetime(due_at)
+    overdue = bool(
+        parsed_due
+        and parsed_due.tzinfo is not None
+        and parsed_due < now
+        and status in {"pending", "acknowledged", "in_progress"}
+    )
+
+    attention_status = "normal"
+    attention_reason = ""
+    if overdue:
+        attention_status = "overdue"
+        attention_reason = "Operator action due time has passed."
+    elif queue_status == "blocked_operator_action":
+        attention_status = "escalated"
+        attention_reason = "Action is blocked and requires explicit human review."
+    elif status in {"pending", "acknowledged"} and priority == "high":
+        attention_status = "needs_attention"
+        attention_reason = "High-priority operator action is still not completed."
+    elif status == "failed":
+        attention_status = "needs_attention"
+        attention_reason = "Operator action failed and needs human follow-up."
+
+    return {
+        "operator_action_attention_status": _normalize_operator_action_attention_status(attention_status),
+        "operator_action_attention_reason": str(attention_reason or ""),
+        "operator_action_overdue": bool(overdue),
+    }
+
+
+def _derive_operator_action_performance_signals(
+    *,
+    operator_action_history: list[dict[str, Any]],
+    operator_action_status: str,
+    linked_conversion_result: str,
+    linked_communication_delivery_status: str,
+) -> dict[str, Any]:
+    history = [item for item in operator_action_history if isinstance(item, dict)]
+    total_events = len(history)
+    status_events = [str(item.get("operator_action_status") or "").strip().lower() for item in history]
+    completed_count = sum(1 for s in status_events if s == "completed")
+    terminal_count = sum(1 for s in status_events if s in {"completed", "failed", "ignored", "cancelled"})
+    progressed_count = sum(1 for s in status_events if s in {"in_progress", "completed", "failed", "ignored", "cancelled"})
+    reply_count = sum(
+        1
+        for item in history
+        if str(item.get("linked_communication_delivery_status") or "").strip().lower()
+        in {"delivery_pending", "delivered"}
+    )
+    conversion_count = sum(
+        1
+        for item in history
+        if str(item.get("linked_conversion_result") or "").strip().lower()
+        in {"converted", "closed_won", "won", "success"}
+    )
+
+    current_status = _normalize_operator_action_lifecycle_status(operator_action_status)
+    if total_events == 0 and current_status:
+        total_events = 1
+        if current_status == "completed":
+            completed_count = 1
+            terminal_count = 1
+            progressed_count = 1
+        elif current_status in {"failed", "ignored", "cancelled"}:
+            terminal_count = 1
+            progressed_count = 1
+        elif current_status == "in_progress":
+            progressed_count = 1
+
+    if str(linked_communication_delivery_status or "").strip().lower() in {"delivery_pending", "delivered"}:
+        reply_count = max(reply_count, 1)
+    if str(linked_conversion_result or "").strip().lower() in {"converted", "closed_won", "won", "success"}:
+        conversion_count = max(conversion_count, 1)
+
+    denominator_terminal = terminal_count if terminal_count > 0 else total_events if total_events > 0 else 1
+    denominator_total = total_events if total_events > 0 else 1
+
+    return {
+        "action_success_rate": round(completed_count / denominator_terminal, 4),
+        "action_follow_through_rate": round(progressed_count / denominator_total, 4),
+        "action_to_reply_rate": round(reply_count / denominator_total, 4),
+        "action_to_conversion_rate": round(conversion_count / denominator_total, 4),
+    }
+
+
+def _derive_operator_action_memory_fields(
+    *,
+    package: dict[str, Any],
+    operator_action_fields: dict[str, Any],
+    communication_fields: dict[str, Any],
+    revenue_candidate_status: str,
+) -> dict[str, Any]:
+    p = dict(package or {})
+    metadata = dict(p.get("metadata") or {})
+    now_iso = _utc_now_iso()
+    operator_action_id = str(p.get("operator_action_id") or "").strip() or f"opact-{uuid.uuid4().hex[:12]}"
+    created_at = str(p.get("operator_action_created_at") or now_iso).strip()
+    due_at = str(p.get("operator_action_due_at") or p.get("operator_action_deadline") or operator_action_fields.get("operator_action_deadline") or "").strip()
+    status = _normalize_operator_action_lifecycle_status(p.get("operator_action_status"))
+    actor = str(p.get("operator_action_actor") or "").strip()
+    notes = str(p.get("operator_action_notes") or "")
+    linked_execution_result = str(p.get("linked_execution_result") or "")
+    linked_conversion_result = str(p.get("linked_conversion_result") or "")
+    linked_revenue_realized = _normalize_revenue_ratio(p.get("linked_revenue_realized"), fallback=0.0)
+    linked_delivery_status = _normalize_communication_delivery_status(
+        p.get("linked_communication_delivery_status") or communication_fields.get("communication_delivery_status")
+    )
+    effect_on_revenue = _normalize_operator_action_revenue_effect(
+        p.get("operator_action_effect_on_revenue")
+        or ("negative" if revenue_candidate_status == "blocked" else "unknown")
+    )
+    effect_reason = str(p.get("operator_action_effect_reason") or "")
+    history = _normalize_operator_action_history(
+        p.get("operator_action_history")
+        or metadata.get("operator_action_history")
+    )
+    if not history:
+        history = [
+            {
+                "event_at": created_at,
+                "event_type": "created",
+                "operator_action_status": status,
+                "operator_action_actor": actor,
+                "operator_action_notes": notes or "Operator action memory initialized.",
+                "linked_execution_result": linked_execution_result,
+                "linked_conversion_result": linked_conversion_result,
+                "linked_revenue_realized": linked_revenue_realized,
+                "linked_communication_delivery_status": linked_delivery_status,
+                "operator_action_effect_on_revenue": effect_on_revenue,
+                "operator_action_effect_reason": effect_reason,
+            }
+        ]
+    attention_fields = _derive_operator_action_attention_fields(
+        operator_action_status=status,
+        operator_action_due_at=due_at,
+        operator_action_priority=str(operator_action_fields.get("operator_action_priority") or "medium"),
+        operator_action_queue_status=str(operator_action_fields.get("operator_action_queue_status") or ""),
+    )
+    performance_signals = _derive_operator_action_performance_signals(
+        operator_action_history=history,
+        operator_action_status=status,
+        linked_conversion_result=linked_conversion_result,
+        linked_communication_delivery_status=linked_delivery_status,
+    )
+    latest_memory = history[-1] if history else {}
+    return {
+        "operator_action_id": operator_action_id,
+        "operator_action_status": status,
+        "operator_action_created_at": created_at,
+        "operator_action_acknowledged_at": str(p.get("operator_action_acknowledged_at") or ""),
+        "operator_action_started_at": str(p.get("operator_action_started_at") or ""),
+        "operator_action_completed_at": str(p.get("operator_action_completed_at") or ""),
+        "operator_action_failed_at": str(p.get("operator_action_failed_at") or ""),
+        "operator_action_ignored_at": str(p.get("operator_action_ignored_at") or ""),
+        "operator_action_actor": actor,
+        "operator_action_notes": notes,
+        "operator_action_due_at": due_at,
+        **attention_fields,
+        "linked_execution_result": linked_execution_result,
+        "linked_conversion_result": linked_conversion_result,
+        "linked_revenue_realized": linked_revenue_realized,
+        "linked_communication_delivery_status": linked_delivery_status,
+        "operator_action_effect_on_revenue": effect_on_revenue,
+        "operator_action_effect_reason": effect_reason,
+        "operator_action_history": history[-50:],
+        "operator_action_history_count": len(history[-50:]),
+        "operator_action_latest_memory": latest_memory,
+        **performance_signals,
+    }
+
+
 def _derive_communication_intent(pipeline_stage: str, operator_action_type: str) -> str:
     if pipeline_stage == "proposal_pending":
         return "proposal_nudge"
@@ -1534,6 +1812,12 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         operator_action_queue_status=str(operator_action_fields.get("operator_action_queue_status") or ""),
         operator_action_type=str(operator_action_fields.get("operator_action_type") or ""),
     )
+    operator_action_memory_fields = _derive_operator_action_memory_fields(
+        package=package,
+        operator_action_fields=operator_action_fields,
+        communication_fields=communication_fields,
+        revenue_candidate_status=revenue_candidate_status,
+    )
 
     return {
         "lead_id": lead_id,
@@ -1562,6 +1846,7 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
         "opportunity_classification_reason": opportunity_classification_reason,
         **operator_action_fields,
         **communication_fields,
+        **operator_action_memory_fields,
         "revenue_activation_trace": {
             "signals": {
                 "execution_score": execution_score,
@@ -1582,6 +1867,13 @@ def _derive_revenue_activation_fields(package: dict[str, Any]) -> dict[str, Any]
             "operator_action_queue_rank": operator_action_fields.get("operator_action_queue_rank"),
             "operator_action_type": operator_action_fields.get("operator_action_type"),
             "operator_action_priority": operator_action_fields.get("operator_action_priority"),
+            "operator_action_status": operator_action_memory_fields.get("operator_action_status"),
+            "operator_action_attention_status": operator_action_memory_fields.get("operator_action_attention_status"),
+            "operator_action_overdue": operator_action_memory_fields.get("operator_action_overdue"),
+            "action_success_rate": operator_action_memory_fields.get("action_success_rate"),
+            "action_follow_through_rate": operator_action_memory_fields.get("action_follow_through_rate"),
+            "action_to_reply_rate": operator_action_memory_fields.get("action_to_reply_rate"),
+            "action_to_conversion_rate": operator_action_memory_fields.get("action_to_conversion_rate"),
             "communication_status": communication_fields.get("communication_status"),
             "communication_send_eligible": communication_fields.get("communication_send_eligible"),
             "communication_approval_status": communication_fields.get("communication_approval_status"),
@@ -1976,6 +2268,31 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_action_reason": str(r.get("operator_action_reason") or ""),
         "operator_action_deadline": str(r.get("operator_action_deadline") or ""),
         "operator_action_priority": _normalize_operator_action_priority(r.get("operator_action_priority")),
+        "operator_action_id": str(r.get("operator_action_id") or ""),
+        "operator_action_status": _normalize_operator_action_lifecycle_status(r.get("operator_action_status")),
+        "operator_action_created_at": str(r.get("operator_action_created_at") or ""),
+        "operator_action_acknowledged_at": str(r.get("operator_action_acknowledged_at") or ""),
+        "operator_action_started_at": str(r.get("operator_action_started_at") or ""),
+        "operator_action_completed_at": str(r.get("operator_action_completed_at") or ""),
+        "operator_action_failed_at": str(r.get("operator_action_failed_at") or ""),
+        "operator_action_ignored_at": str(r.get("operator_action_ignored_at") or ""),
+        "operator_action_actor": str(r.get("operator_action_actor") or ""),
+        "operator_action_notes": str(r.get("operator_action_notes") or ""),
+        "operator_action_due_at": str(r.get("operator_action_due_at") or ""),
+        "operator_action_attention_status": _normalize_operator_action_attention_status(r.get("operator_action_attention_status")),
+        "operator_action_attention_reason": str(r.get("operator_action_attention_reason") or ""),
+        "operator_action_overdue": bool(r.get("operator_action_overdue")),
+        "operator_action_history_count": max(0, int(r.get("operator_action_history_count") or 0)),
+        "linked_execution_result": str(r.get("linked_execution_result") or ""),
+        "linked_conversion_result": str(r.get("linked_conversion_result") or ""),
+        "linked_revenue_realized": _normalize_revenue_ratio(r.get("linked_revenue_realized"), fallback=0.0),
+        "linked_communication_delivery_status": _normalize_communication_delivery_status(r.get("linked_communication_delivery_status")),
+        "operator_action_effect_on_revenue": _normalize_operator_action_revenue_effect(r.get("operator_action_effect_on_revenue")),
+        "operator_action_effect_reason": str(r.get("operator_action_effect_reason") or ""),
+        "action_success_rate": _normalize_revenue_ratio(r.get("action_success_rate"), fallback=0.0),
+        "action_follow_through_rate": _normalize_revenue_ratio(r.get("action_follow_through_rate"), fallback=0.0),
+        "action_to_reply_rate": _normalize_revenue_ratio(r.get("action_to_reply_rate"), fallback=0.0),
+        "action_to_conversion_rate": _normalize_revenue_ratio(r.get("action_to_conversion_rate"), fallback=0.0),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
         "communication_channel": _normalize_communication_channel(r.get("communication_channel")),
@@ -3808,6 +4125,156 @@ def _append_communication_audit_event(
     metadata["communication_audit"] = audit[-50:]
     p["metadata"] = metadata
     return p
+
+
+def _append_operator_action_history_event(
+    package: dict[str, Any],
+    *,
+    event_type: str,
+    operator_action_status: str,
+    operator_action_actor: str,
+    operator_action_notes: str = "",
+    linked_execution_result: str = "",
+    linked_conversion_result: str = "",
+    linked_revenue_realized: float = 0.0,
+    linked_communication_delivery_status: str = "not_sent",
+    operator_action_effect_on_revenue: str = "unknown",
+    operator_action_effect_reason: str = "",
+) -> dict[str, Any]:
+    p = dict(package or {})
+    history = _normalize_operator_action_history(p.get("operator_action_history"))
+    history.append(
+        {
+            "event_at": _utc_now_iso(),
+            "event_type": str(event_type or "status_update").strip().lower(),
+            "operator_action_status": _normalize_operator_action_lifecycle_status(operator_action_status),
+            "operator_action_actor": str(operator_action_actor or "").strip(),
+            "operator_action_notes": str(operator_action_notes or ""),
+            "linked_execution_result": str(linked_execution_result or ""),
+            "linked_conversion_result": str(linked_conversion_result or ""),
+            "linked_revenue_realized": _normalize_revenue_ratio(linked_revenue_realized, fallback=0.0),
+            "linked_communication_delivery_status": _normalize_communication_delivery_status(linked_communication_delivery_status),
+            "operator_action_effect_on_revenue": _normalize_operator_action_revenue_effect(operator_action_effect_on_revenue),
+            "operator_action_effect_reason": str(operator_action_effect_reason or ""),
+        }
+    )
+    p["operator_action_history"] = history[-50:]
+    return p
+
+
+def record_execution_package_operator_action_lifecycle(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    operator_action_status: str,
+    operator_action_actor: str,
+    operator_action_notes: str = "",
+    linked_execution_result: str | None = None,
+    linked_conversion_result: str | None = None,
+    linked_revenue_realized: float | None = None,
+    linked_communication_delivery_status: str | None = None,
+    operator_action_effect_on_revenue: str | None = None,
+    operator_action_effect_reason: str | None = None,
+) -> dict[str, Any]:
+    actor = str(operator_action_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "operator_action_actor required.", "package": None}
+    next_status = _normalize_operator_action_lifecycle_status(operator_action_status)
+    if next_status == "pending":
+        return {"status": "error", "reason": "operator_action_status must be a lifecycle transition value.", "package": None}
+
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    normalized = normalize_execution_package(package)
+    current_status = _normalize_operator_action_lifecycle_status(normalized.get("operator_action_status"))
+
+    allowed_transitions = {
+        "pending": {"acknowledged", "in_progress", "completed", "failed", "ignored", "cancelled"},
+        "acknowledged": {"in_progress", "completed", "failed", "ignored", "cancelled"},
+        "in_progress": {"completed", "failed", "ignored", "cancelled"},
+        "completed": {"completed"},
+        "failed": {"failed"},
+        "ignored": {"ignored"},
+        "cancelled": {"cancelled"},
+    }
+    if next_status not in allowed_transitions.get(current_status, set()):
+        return {
+            "status": "error",
+            "reason": f"Invalid operator action transition: {current_status} -> {next_status}.",
+            "package": normalized,
+        }
+
+    now_iso = _utc_now_iso()
+    package["operator_action_status"] = next_status
+    package["operator_action_actor"] = actor
+    package["operator_action_notes"] = str(operator_action_notes or "")
+    package["operator_action_created_at"] = str(normalized.get("operator_action_created_at") or now_iso)
+    package["operator_action_id"] = str(normalized.get("operator_action_id") or f"opact-{uuid.uuid4().hex[:12]}")
+    package["operator_action_due_at"] = str(
+        normalized.get("operator_action_due_at") or normalized.get("operator_action_deadline") or ""
+    )
+
+    if next_status == "acknowledged" and not str(normalized.get("operator_action_acknowledged_at") or "").strip():
+        package["operator_action_acknowledged_at"] = now_iso
+    if next_status == "in_progress":
+        if not str(normalized.get("operator_action_acknowledged_at") or "").strip():
+            package["operator_action_acknowledged_at"] = now_iso
+        if not str(normalized.get("operator_action_started_at") or "").strip():
+            package["operator_action_started_at"] = now_iso
+    if next_status == "completed":
+        if not str(normalized.get("operator_action_started_at") or "").strip():
+            package["operator_action_started_at"] = now_iso
+        package["operator_action_completed_at"] = now_iso
+    if next_status == "failed":
+        if not str(normalized.get("operator_action_started_at") or "").strip():
+            package["operator_action_started_at"] = now_iso
+        package["operator_action_failed_at"] = now_iso
+    if next_status == "ignored":
+        package["operator_action_ignored_at"] = now_iso
+
+    if linked_execution_result is not None:
+        package["linked_execution_result"] = str(linked_execution_result or "")
+    if linked_conversion_result is not None:
+        package["linked_conversion_result"] = str(linked_conversion_result or "")
+    if linked_revenue_realized is not None:
+        package["linked_revenue_realized"] = _normalize_revenue_ratio(linked_revenue_realized, fallback=0.0)
+    if linked_communication_delivery_status is not None:
+        package["linked_communication_delivery_status"] = _normalize_communication_delivery_status(linked_communication_delivery_status)
+    if operator_action_effect_on_revenue is not None:
+        package["operator_action_effect_on_revenue"] = _normalize_operator_action_revenue_effect(operator_action_effect_on_revenue)
+    if operator_action_effect_reason is not None:
+        package["operator_action_effect_reason"] = str(operator_action_effect_reason or "")
+
+    package = _append_operator_action_history_event(
+        package,
+        event_type=f"lifecycle_{next_status}",
+        operator_action_status=next_status,
+        operator_action_actor=actor,
+        operator_action_notes=str(operator_action_notes or ""),
+        linked_execution_result=str(package.get("linked_execution_result") or ""),
+        linked_conversion_result=str(package.get("linked_conversion_result") or ""),
+        linked_revenue_realized=_normalize_revenue_ratio(package.get("linked_revenue_realized"), fallback=0.0),
+        linked_communication_delivery_status=str(package.get("linked_communication_delivery_status") or "not_sent"),
+        operator_action_effect_on_revenue=str(package.get("operator_action_effect_on_revenue") or "unknown"),
+        operator_action_effect_reason=str(package.get("operator_action_effect_reason") or ""),
+    )
+
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package operator action lifecycle updated.",
+    )
+
+
+def record_execution_package_operator_action_lifecycle_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_operator_action_lifecycle(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to update execution package operator action lifecycle.", "package": None}
 
 
 def record_execution_package_communication_approval(

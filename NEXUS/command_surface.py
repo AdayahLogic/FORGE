@@ -52,6 +52,11 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_approve_email_draft",
     "execution_package_deny_email_draft",
     "execution_package_mark_email_sent",
+    "execution_package_acknowledge_operator_action",
+    "execution_package_start_operator_action",
+    "execution_package_complete_operator_action",
+    "execution_package_fail_operator_action",
+    "execution_package_ignore_operator_action",
     "execution_package_eligibility_check",
     "execution_package_eligibility_status",
     "execution_package_release_request",
@@ -297,6 +302,17 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "operator_action_reason": p.get("operator_action_reason") or "",
         "operator_action_deadline": p.get("operator_action_deadline") or "",
         "operator_action_priority": p.get("operator_action_priority") or "medium",
+        "operator_action_id": p.get("operator_action_id") or "",
+        "operator_action_status": p.get("operator_action_status") or "pending",
+        "operator_action_actor": p.get("operator_action_actor") or "",
+        "operator_action_due_at": p.get("operator_action_due_at") or "",
+        "operator_action_attention_status": p.get("operator_action_attention_status") or "normal",
+        "operator_action_attention_reason": p.get("operator_action_attention_reason") or "",
+        "operator_action_overdue": bool(p.get("operator_action_overdue")),
+        "action_success_rate": p.get("action_success_rate") or 0.0,
+        "action_follow_through_rate": p.get("action_follow_through_rate") or 0.0,
+        "action_to_reply_rate": p.get("action_to_reply_rate") or 0.0,
+        "action_to_conversion_rate": p.get("action_to_conversion_rate") or 0.0,
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
         "communication_channel": p.get("communication_channel") or "none",
@@ -309,6 +325,30 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "communication_delivery_status": p.get("communication_delivery_status") or "not_sent",
         "follow_up_status": p.get("follow_up_status") or "not_ready",
         "follow_up_due_at": p.get("follow_up_due_at") or "",
+        "operator_action_id": p.get("operator_action_id") or "",
+        "operator_action_status": p.get("operator_action_status") or "pending",
+        "operator_action_created_at": p.get("operator_action_created_at") or "",
+        "operator_action_acknowledged_at": p.get("operator_action_acknowledged_at") or "",
+        "operator_action_started_at": p.get("operator_action_started_at") or "",
+        "operator_action_completed_at": p.get("operator_action_completed_at") or "",
+        "operator_action_failed_at": p.get("operator_action_failed_at") or "",
+        "operator_action_ignored_at": p.get("operator_action_ignored_at") or "",
+        "operator_action_actor": p.get("operator_action_actor") or "",
+        "operator_action_notes": p.get("operator_action_notes") or "",
+        "operator_action_due_at": p.get("operator_action_due_at") or "",
+        "operator_action_attention_status": p.get("operator_action_attention_status") or "normal",
+        "operator_action_attention_reason": p.get("operator_action_attention_reason") or "",
+        "operator_action_overdue": bool(p.get("operator_action_overdue")),
+        "action_success_rate": p.get("action_success_rate") or 0.0,
+        "action_follow_through_rate": p.get("action_follow_through_rate") or 0.0,
+        "action_to_reply_rate": p.get("action_to_reply_rate") or 0.0,
+        "action_to_conversion_rate": p.get("action_to_conversion_rate") or 0.0,
+        "linked_execution_result": p.get("linked_execution_result") or "",
+        "linked_conversion_result": p.get("linked_conversion_result") or "",
+        "linked_revenue_realized": p.get("linked_revenue_realized") or 0.0,
+        "linked_communication_delivery_status": p.get("linked_communication_delivery_status") or "not_sent",
+        "operator_action_effect_on_revenue": p.get("operator_action_effect_on_revenue") or "unknown",
+        "operator_action_effect_reason": p.get("operator_action_effect_reason") or "",
     }
 
 
@@ -420,6 +460,37 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "follow_up_reason": p.get("follow_up_reason") or "",
             "follow_up_sequence_step": p.get("follow_up_sequence_step") or 0,
         },
+        "operator_action_lifecycle": {
+            "operator_action_id": p.get("operator_action_id") or "",
+            "operator_action_status": p.get("operator_action_status") or "pending",
+            "operator_action_created_at": p.get("operator_action_created_at") or "",
+            "operator_action_acknowledged_at": p.get("operator_action_acknowledged_at") or "",
+            "operator_action_started_at": p.get("operator_action_started_at") or "",
+            "operator_action_completed_at": p.get("operator_action_completed_at") or "",
+            "operator_action_failed_at": p.get("operator_action_failed_at") or "",
+            "operator_action_ignored_at": p.get("operator_action_ignored_at") or "",
+            "operator_action_actor": p.get("operator_action_actor") or "",
+            "operator_action_notes": p.get("operator_action_notes") or "",
+            "operator_action_due_at": p.get("operator_action_due_at") or "",
+            "operator_action_attention_status": p.get("operator_action_attention_status") or "normal",
+            "operator_action_attention_reason": p.get("operator_action_attention_reason") or "",
+            "operator_action_overdue": bool(p.get("operator_action_overdue")),
+        },
+        "operator_action_memory": {
+            "operator_action_history_count": p.get("operator_action_history_count") or 0,
+            "operator_action_latest_memory": dict(p.get("operator_action_latest_memory") or {}),
+            "operator_action_history": list(p.get("operator_action_history") or []),
+            "linked_execution_result": p.get("linked_execution_result") or "",
+            "linked_conversion_result": p.get("linked_conversion_result") or "",
+            "linked_revenue_realized": p.get("linked_revenue_realized") or 0.0,
+            "linked_communication_delivery_status": p.get("linked_communication_delivery_status") or "not_sent",
+            "operator_action_effect_on_revenue": p.get("operator_action_effect_on_revenue") or "unknown",
+            "operator_action_effect_reason": p.get("operator_action_effect_reason") or "",
+            "action_success_rate": p.get("action_success_rate") or 0.0,
+            "action_follow_through_rate": p.get("action_follow_through_rate") or 0.0,
+            "action_to_reply_rate": p.get("action_to_reply_rate") or 0.0,
+            "action_to_conversion_rate": p.get("action_to_conversion_rate") or 0.0,
+        },
         "metadata": dict(p.get("metadata") or {}),
     }
     cursor_bridge_artifacts = list(p.get("cursor_bridge_artifacts") or [])
@@ -476,6 +547,17 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "operator_action_reason": p.get("operator_action_reason") or "",
         "operator_action_deadline": p.get("operator_action_deadline") or "",
         "operator_action_priority": p.get("operator_action_priority") or "medium",
+        "operator_action_id": p.get("operator_action_id") or "",
+        "operator_action_status": p.get("operator_action_status") or "pending",
+        "operator_action_actor": p.get("operator_action_actor") or "",
+        "operator_action_due_at": p.get("operator_action_due_at") or "",
+        "operator_action_attention_status": p.get("operator_action_attention_status") or "normal",
+        "operator_action_attention_reason": p.get("operator_action_attention_reason") or "",
+        "operator_action_overdue": bool(p.get("operator_action_overdue")),
+        "action_success_rate": p.get("action_success_rate") or 0.0,
+        "action_follow_through_rate": p.get("action_follow_through_rate") or 0.0,
+        "action_to_reply_rate": p.get("action_to_reply_rate") or 0.0,
+        "action_to_conversion_rate": p.get("action_to_conversion_rate") or 0.0,
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "communication_channel": p.get("communication_channel") or "none",
         "communication_status": p.get("communication_status") or "not_prepared",
@@ -837,6 +919,56 @@ def run_command(
                 for row in queue_rows
                 if str(row.get("operator_action_queue_status") or "") == "review_required_operator_action"
             ]
+            pending_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_id": row.get("operator_action_id"),
+                    "operator_action_status": row.get("operator_action_status"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_priority": row.get("operator_action_priority"),
+                    "operator_action_due_at": row.get("operator_action_due_at") or row.get("operator_action_deadline"),
+                    "operator_action_attention_status": row.get("operator_action_attention_status"),
+                }
+                for row in queue_rows
+                if str(row.get("operator_action_status") or "") in {"pending", "acknowledged", "in_progress"}
+            ]
+            overdue_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_id": row.get("operator_action_id"),
+                    "operator_action_status": row.get("operator_action_status"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_due_at": row.get("operator_action_due_at") or row.get("operator_action_deadline"),
+                    "operator_action_attention_reason": row.get("operator_action_attention_reason") or "",
+                }
+                for row in queue_rows
+                if bool(row.get("operator_action_overdue"))
+            ]
+            completed_operator_actions = [
+                {
+                    "package_id": row.get("package_id"),
+                    "operator_action_id": row.get("operator_action_id"),
+                    "operator_action_status": row.get("operator_action_status"),
+                    "operator_action_type": row.get("operator_action_type"),
+                    "operator_action_actor": row.get("operator_action_actor") or "",
+                    "action_success_rate": row.get("action_success_rate") or 0.0,
+                }
+                for row in queue_rows
+                if str(row.get("operator_action_status") or "") in {"completed", "failed", "ignored", "cancelled"}
+            ]
+            highest_priority_operator_attention = sorted(
+                [
+                    row
+                    for row in queue_rows
+                    if str(row.get("operator_action_attention_status") or "") in {"needs_attention", "overdue", "escalated"}
+                ],
+                key=lambda row: (
+                    1 if bool(row.get("operator_action_overdue")) else 0,
+                    1 if str(row.get("operator_action_priority") or "").lower() == "high" else 0,
+                    float(row.get("operator_action_queue_rank") or 0.0),
+                ),
+                reverse=True,
+            )
             awaiting_communication_approval = [
                 {
                     "package_id": row.get("package_id"),
@@ -916,6 +1048,23 @@ def run_command(
                     "blocked_operator_actions": blocked_operator_actions[:5],
                     "deferred_operator_actions": deferred_operator_actions[:5],
                     "review_required_operator_actions": review_required_operator_actions[:5],
+                    "pending_operator_actions": pending_operator_actions[:10],
+                    "overdue_operator_actions": overdue_operator_actions[:10],
+                    "completed_operator_actions": completed_operator_actions[:10],
+                    "highest_priority_operator_attention": [
+                        {
+                            "package_id": row.get("package_id"),
+                            "operator_action_id": row.get("operator_action_id"),
+                            "operator_action_status": row.get("operator_action_status"),
+                            "operator_action_type": row.get("operator_action_type"),
+                            "operator_action_priority": row.get("operator_action_priority"),
+                            "operator_action_attention_status": row.get("operator_action_attention_status"),
+                            "operator_action_attention_reason": row.get("operator_action_attention_reason"),
+                            "operator_action_due_at": row.get("operator_action_due_at") or row.get("operator_action_deadline"),
+                            "operator_action_overdue": bool(row.get("operator_action_overdue")),
+                        }
+                        for row in highest_priority_operator_attention[:10]
+                    ],
                     "awaiting_communication_approval": awaiting_communication_approval[:10],
                     "communication_sent_items": communication_sent[:10],
                     "communication_blocked_items": communication_blocked[:10],
@@ -1118,6 +1267,122 @@ def run_command(
                         "decision_actor": package.get("decision_actor"),
                         "decision_notes": package.get("decision_notes"),
                         "decision_id": package.get("decision_id"),
+                    },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd in {
+        "execution_package_acknowledge_operator_action",
+        "execution_package_start_operator_action",
+        "execution_package_complete_operator_action",
+        "execution_package_fail_operator_action",
+        "execution_package_ignore_operator_action",
+    }:
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        actor_field = {
+            "execution_package_acknowledge_operator_action": "acknowledgement_actor",
+            "execution_package_start_operator_action": "start_actor",
+            "execution_package_complete_operator_action": "completion_actor",
+            "execution_package_fail_operator_action": "failure_actor",
+            "execution_package_ignore_operator_action": "ignore_actor",
+        }.get(cmd, "operator_action_actor")
+        notes_field = {
+            "execution_package_acknowledge_operator_action": "acknowledgement_notes",
+            "execution_package_start_operator_action": "start_notes",
+            "execution_package_complete_operator_action": "completion_notes",
+            "execution_package_fail_operator_action": "failure_notes",
+            "execution_package_ignore_operator_action": "ignore_notes",
+        }.get(cmd, "operator_action_notes")
+        target_status = {
+            "execution_package_acknowledge_operator_action": "acknowledged",
+            "execution_package_start_operator_action": "in_progress",
+            "execution_package_complete_operator_action": "completed",
+            "execution_package_fail_operator_action": "failed",
+            "execution_package_ignore_operator_action": "ignored",
+        }.get(cmd, "")
+        operator_action_actor = str(kwargs.get(actor_field) or kwargs.get("operator_action_actor") or "").strip()
+        operator_action_notes = str(kwargs.get(notes_field) or kwargs.get("operator_action_notes") or "")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not operator_action_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=f"{actor_field} required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_execution_package_operator_action_lifecycle_safe
+
+            result = record_execution_package_operator_action_lifecycle_safe(
+                project_path=path,
+                package_id=package_id,
+                operator_action_status=target_status,
+                operator_action_actor=operator_action_actor,
+                operator_action_notes=operator_action_notes,
+                linked_execution_result=kwargs.get("linked_execution_result"),
+                linked_conversion_result=kwargs.get("linked_conversion_result"),
+                linked_revenue_realized=kwargs.get("linked_revenue_realized"),
+                linked_communication_delivery_status=kwargs.get("linked_communication_delivery_status"),
+                operator_action_effect_on_revenue=kwargs.get("operator_action_effect_on_revenue"),
+                operator_action_effect_reason=kwargs.get("operator_action_effect_reason"),
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to update operator action lifecycle."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; operator_action_status={package.get('operator_action_status')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Execution package operator action lifecycle updated.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "operator_action": {
+                        "operator_action_id": package.get("operator_action_id"),
+                        "operator_action_status": package.get("operator_action_status"),
+                        "operator_action_actor": package.get("operator_action_actor"),
+                        "operator_action_notes": package.get("operator_action_notes"),
+                        "operator_action_due_at": package.get("operator_action_due_at"),
+                        "operator_action_attention_status": package.get("operator_action_attention_status"),
+                        "operator_action_attention_reason": package.get("operator_action_attention_reason"),
+                        "operator_action_overdue": package.get("operator_action_overdue"),
+                        "operator_action_history_count": package.get("operator_action_history_count"),
+                        "action_success_rate": package.get("action_success_rate"),
+                        "action_follow_through_rate": package.get("action_follow_through_rate"),
+                        "action_to_reply_rate": package.get("action_to_reply_rate"),
+                        "action_to_conversion_rate": package.get("action_to_conversion_rate"),
                     },
                 },
             )
