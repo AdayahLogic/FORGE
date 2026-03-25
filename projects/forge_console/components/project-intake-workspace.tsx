@@ -114,6 +114,9 @@ function getChipClass(value: string) {
       "no_response",
       "needs_more_info",
       "high_touch_required",
+      "conversion_not_ready",
+      "conversion_needs_review",
+      "high_touch_conversion_required",
     ].includes(value)
   ) {
     return "chip warn";
@@ -126,6 +129,7 @@ function getChipClass(value: string) {
       "high_priority",
       "offer_ready",
       "response_ready",
+      "conversion_ready",
     ].includes(value)
   ) {
     return "chip success";
@@ -952,6 +956,51 @@ export function ProjectIntakeWorkspace({
                       ) : (
                         <div className="audit-item muted">No response constraints provided.</div>
                       )}
+                    </div>
+                  </div>
+                ) : null}
+                {effectivePreview.conversion_summary ? (
+                  <div className="detail-card">
+                    <h4>Project Conversion (Governed Preview)</h4>
+                    <div className="chip-row" style={{ marginBottom: 10 }}>
+                      <span className={getChipClass(effectivePreview.conversion_summary.conversion_status)}>
+                        {effectivePreview.conversion_summary.conversion_status}
+                      </span>
+                      <span className="chip warn">non-executing</span>
+                    </div>
+                    <div className="detail-list">
+                      <div className="detail-row">
+                        <span>Proposed Type</span>
+                        <strong>{effectivePreview.conversion_summary.proposed_project_type || "undetermined"}</strong>
+                      </div>
+                      <div className="detail-row">
+                        <span>Proposed Name</span>
+                        <strong>{effectivePreview.conversion_summary.proposed_project_name || "not proposed"}</strong>
+                      </div>
+                    </div>
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Scope Summary</div>
+                      <div style={{ marginTop: 8 }}>
+                        {effectivePreview.conversion_summary.proposed_scope_summary || "No conversion scope summary yet."}
+                      </div>
+                    </div>
+                    <div className="detail-card-subsection">
+                      <div className="stat-label">Reasoning</div>
+                      <div style={{ marginTop: 8 }}>
+                        {effectivePreview.conversion_summary.conversion_reasoning_summary || "No conversion reasoning available yet."}
+                      </div>
+                    </div>
+                    <div className="detail-list">
+                      {effectivePreview.conversion_summary.proposed_constraints.map((constraint) => (
+                        <div className="audit-item" key={`constraint-${constraint}`}>
+                          {constraint}
+                        </div>
+                      ))}
+                      {effectivePreview.conversion_summary.conversion_notes.map((note) => (
+                        <div className="audit-item" key={`note-${note}`}>
+                          {note}
+                        </div>
+                      ))}
                     </div>
                   </div>
                 ) : null}

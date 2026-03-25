@@ -828,6 +828,118 @@ def _build_revenue_response_summary(
     }
 
 
+def _project_type_from_offer(offer: dict[str, Any]) -> str:
+    service_type = str(offer.get("recommended_service_type") or "").strip().lower()
+    if service_type in {"advisory_plus_delivery", "discovery_workshop"}:
+        return "advisory"
+    if service_type == "rapid_delivery_sprint":
+        return "delivery_sprint"
+    return "governed_implementation"
+
+
+def _sanitize_project_name(value: str) -> str:
+    text = " ".join(str(value or "").strip().split())
+    if not text:
+        return "Revenue Lead Project Candidate"
+    cleaned = "".join(ch for ch in text if ch.isalnum() or ch in {" ", "-", "_"}).strip()
+    if not cleaned:
+        return "Revenue Lead Project Candidate"
+    return cleaned[:80]
+
+
+def _build_revenue_conversion_summary(
+    *,
+    lead_profile: dict[str, str],
+    qualification_summary: dict[str, Any],
+    offer_summary: dict[str, Any] | None,
+    response_summary: dict[str, Any] | None,
+) -> dict[str, Any]:
+    qualification_status = str(qualification_summary.get("qualification_status") or "").strip().lower()
+    offer = dict(offer_summary or {})
+    response = dict(response_summary or {})
+    offer_status = str(offer.get("offer_status") or "").strip().lower()
+    response_status = str(response.get("response_status") or "").strip().lower()
+    contact_company = str(lead_profile.get("company_name") or "").strip()
+    problem_summary = str(lead_profile.get("problem_summary") or "").strip()
+    requested_outcome = str(lead_profile.get("requested_outcome") or "").strip()
+    project_type = _project_type_from_offer(offer)
+    proposed_name = _sanitize_project_name(f"{contact_company or 'Lead'} - {project_type} candidate")
+    constraints = [
+        "Conversion output is governed preview data only.",
+        "No execution package is created by conversion preview.",
+        "No routing or runtime execution is triggered from this output.",
+    ]
+    notes: list[str] = []
+
+    if qualification_status == "needs_more_info" or offer_status in {"", "no_offer_yet"} or response_status in {"", "no_response"}:
+        notes.append("Upstream readiness is incomplete across qualification, offer, or response.")
+        return {
+            "conversion_status": "conversion_not_ready",
+            "proposed_project_type": "undetermined",
+            "proposed_project_name": "",
+            "proposed_scope_summary": "",
+            "proposed_constraints": constraints,
+            "conversion_reasoning_summary": (
+                "Lead cannot be converted yet because qualification, offer framing, or response drafting is incomplete."
+            ),
+            "conversion_notes": notes,
+        }
+
+    if offer_status == "high_touch_review_recommended" or response_status == "high_touch_required":
+        notes.append("High-touch conversion review is required before project creation can be requested.")
+        return {
+            "conversion_status": "high_touch_conversion_required",
+            "proposed_project_type": project_type,
+            "proposed_project_name": proposed_name,
+            "proposed_scope_summary": (
+                f"High-touch candidate for {contact_company or 'lead organization'} focused on: "
+                f"{problem_summary or 'governed transformation planning'}."
+            ),
+            "proposed_constraints": constraints,
+            "conversion_reasoning_summary": (
+                "Lead signals indicate complexity/risk. Conversion should remain in governed high-touch review."
+            ),
+            "conversion_notes": notes,
+        }
+
+    missing_lead_fields = _lead_intake_missing_fields(lead_profile)
+    if offer_status == "offer_needs_more_info" or response_status == "needs_more_info" or missing_lead_fields:
+        notes.append("Conversion candidate exists but key details require operator review.")
+        if missing_lead_fields:
+            notes.append("Missing lead fields: " + ", ".join(missing_lead_fields))
+        return {
+            "conversion_status": "conversion_needs_review",
+            "proposed_project_type": project_type,
+            "proposed_project_name": proposed_name,
+            "proposed_scope_summary": (
+                f"Candidate project for {contact_company or 'lead'} around {problem_summary or 'governed implementation needs'}."
+            ),
+            "proposed_constraints": constraints,
+            "conversion_reasoning_summary": (
+                "Readiness is partial. A governed operator review is required before submitting project-creation intent."
+            ),
+            "conversion_notes": notes,
+        }
+
+    scope_summary = (
+        f"Proposed governed project candidate for {contact_company or 'lead'} to address "
+        f"{problem_summary or 'the stated operational challenge'}. "
+        f"{requested_outcome + '. ' if requested_outcome else ''}"
+        "Candidate remains non-executing until explicit governed project-creation approval."
+    ).strip()
+    return {
+        "conversion_status": "conversion_ready",
+        "proposed_project_type": project_type,
+        "proposed_project_name": proposed_name,
+        "proposed_scope_summary": scope_summary,
+        "proposed_constraints": constraints,
+        "conversion_reasoning_summary": (
+            "Lead, qualification, offer, and response inputs are aligned enough to produce a governed project candidate."
+        ),
+        "conversion_notes": notes,
+    }
+
+
 def _resolve_default_request_kind(project_state: dict[str, Any]) -> str:
     intake_mode = str(project_state.get("intake_mode") or "").strip().lower()
     if intake_mode == "lead_intake":
@@ -1069,6 +1181,16 @@ def preview_intake_request(
         if normalized_request_kind == "lead_intake"
         else None
     )
+    conversion_summary = (
+        _build_revenue_conversion_summary(
+            lead_profile=lead_profile,
+            qualification_summary=qualification_summary,
+            offer_summary=offer_summary,
+            response_summary=response_summary,
+        )
+        if normalized_request_kind == "lead_intake"
+        else None
+    )
     return {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
@@ -1096,6 +1218,7 @@ def preview_intake_request(
         ),
         "offer_summary": offer_summary,
         "response_summary": response_summary,
+        "conversion_summary": conversion_summary,
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
@@ -1162,6 +1285,40 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
                             lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
                             qualification=_normalize_lead_qualification(kwargs.get("qualification")),
                             qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                        )
+                        if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                        else None
+                    ),
+                )
+                if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                else None
+            ),
+            "conversion_summary": (
+                _build_revenue_conversion_summary(
+                    lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                    qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                    offer_summary=(
+                        _build_revenue_offer_summary(
+                            lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                            qualification=_normalize_lead_qualification(kwargs.get("qualification")),
+                            qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                        )
+                        if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                        else None
+                    ),
+                    response_summary=(
+                        _build_revenue_response_summary(
+                            lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                            qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                            offer_summary=(
+                                _build_revenue_offer_summary(
+                                    lead_profile=_normalize_lead_intake_profile(kwargs.get("lead_intake_profile")),
+                                    qualification=_normalize_lead_qualification(kwargs.get("qualification")),
+                                    qualification_summary=_build_lead_qualification_summary(kwargs.get("qualification")),
+                                )
+                                if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
+                                else None
+                            ),
                         )
                         if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
                         else None

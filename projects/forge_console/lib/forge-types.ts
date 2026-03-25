@@ -106,6 +106,22 @@ export type ForgeRevenueResponseSummary = {
   response_constraints: string[];
 };
 
+export type ForgeRevenueConversionStatus =
+  | "conversion_not_ready"
+  | "conversion_needs_review"
+  | "conversion_ready"
+  | "high_touch_conversion_required";
+
+export type ForgeRevenueConversionSummary = {
+  conversion_status: ForgeRevenueConversionStatus;
+  proposed_project_type: string;
+  proposed_project_name: string;
+  proposed_scope_summary: string;
+  proposed_constraints: string[];
+  conversion_reasoning_summary: string;
+  conversion_notes: string[];
+};
+
 export type ForgeRequestedArtifactDetail = {
   artifact_id: string;
   label: string;
@@ -242,6 +258,7 @@ export type ForgeIntakePreview = {
   qualification_summary: ForgeLeadQualificationSummary | null;
   offer_summary: ForgeRevenueOfferSummary | null;
   response_summary: ForgeRevenueResponseSummary | null;
+  conversion_summary: ForgeRevenueConversionSummary | null;
   package_preview: {
     creation_mode: string;
     package_creation_allowed: boolean;
