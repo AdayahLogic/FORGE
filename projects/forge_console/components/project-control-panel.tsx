@@ -190,6 +190,9 @@ export function ProjectControlPanel({
                     <span className="chip info">
                       est ${Number(project.estimated_cost_total_usd ?? 0).toFixed(4)}
                     </span>
+                    <span className={getChipClass(String(project.budget_status ?? "within_budget"))}>
+                      budget {String(project.budget_status ?? "within_budget")}
+                    </span>
                   </div>
                 </button>
               </div>
@@ -290,6 +293,31 @@ export function ProjectControlPanel({
                     {Number(
                       projectSnapshot.cost_summary?.session_cost_summary.estimated_cost_total ?? 0,
                     ).toFixed(4)}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Estimated Budget Status</span>
+                  <strong>{displayValue(projectSnapshot.cost_summary?.budget_status, "within_budget")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Budget Scope</span>
+                  <strong>{displayValue(projectSnapshot.cost_summary?.budget_scope, "operation")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Budget Cap</span>
+                  <strong>${Number(projectSnapshot.cost_summary?.budget_cap ?? 0).toFixed(4)}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Remaining Budget</span>
+                  <strong>
+                    $
+                    {Number(projectSnapshot.cost_summary?.remaining_estimated_budget ?? 0).toFixed(4)}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Kill Switch</span>
+                  <strong>
+                    {projectSnapshot.cost_summary?.kill_switch_active ? "active" : "inactive"}
                   </strong>
                 </div>
               </div>

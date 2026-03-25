@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from NEXUS.authority_model import enforce_component_authority_safe, infer_component_name
+from NEXUS.budget_controls import (
+    evaluate_budget_controls,
+    normalize_budget_control,
+    resolve_budget_caps,
+    summarize_journal_estimated_costs,
+)
 from NEXUS.execution_package_hardening import (
     VALID_EXECUTION_FAILURE_CLASSES,
     build_default_hardening_fields,
@@ -50,6 +56,7 @@ from NEXUS.runtimes.cursor_runtime import (
     validate_cursor_artifact_return,
 )
 from NEXUS.self_evolution_governance import build_self_change_audit_record
+from NEXUS.project_state import load_project_state
 
 
 EXECUTION_PACKAGE_JOURNAL_FILENAME = "execution_package_journal.jsonl"
@@ -137,6 +144,29 @@ def _estimate_package_cost_tracking(package: dict[str, Any] | None) -> dict[str,
     )
 
 
+def _budget_fields_from_control(control: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "budget_status": str(control.get("budget_status") or "within_budget"),
+        "budget_scope": str(control.get("budget_scope") or "operation"),
+        "budget_cap": float(control.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(control.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(control.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(control.get("kill_switch_active")),
+        "budget_reason": str(control.get("budget_reason") or ""),
+    }
+
+
+def _resolve_package_budget_caps(package: dict[str, Any] | None, project_path: str | None = None) -> dict[str, Any]:
+    p = package or {}
+    caps = resolve_budget_caps(p)
+    if any(float(caps.get(key) or 0.0) > 0.0 for key in ("operation_budget_cap", "project_budget_cap", "session_budget_cap")):
+        return caps
+    if not project_path:
+        return caps
+    project_state = load_project_state(str(project_path))
+    return resolve_budget_caps(project_state)
+
+
 def _build_execution_package_journal_record(normalized: dict[str, Any], package_path: str | None) -> dict[str, Any]:
     metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
     governance_conflict = metadata.get("governance_conflict") if isinstance(metadata.get("governance_conflict"), dict) else {}
@@ -222,6 +252,15 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "governance_resolution_state": metadata.get("governance_resolution_state"),
         "governance_routing_outcome": metadata.get("governance_routing_outcome"),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
+        "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
+        "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
+        "budget_status": str(normalized.get("budget_status") or "within_budget"),
+        "budget_scope": str(normalized.get("budget_scope") or "operation"),
+        "budget_cap": float(normalized.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(normalized.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(normalized.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(normalized.get("kill_switch_active")),
+        "budget_reason": str(normalized.get("budget_reason") or ""),
     }
 
 
@@ -535,6 +574,19 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
     )
     if float(normalized_cost_tracking.get("cost_estimate") or 0.0) <= 0.0:
         normalized_cost_tracking = _estimate_package_cost_tracking(p)
+    budget_caps = _resolve_package_budget_caps(p, str(p.get("project_path") or ""))
+    provided_budget_control = p.get("budget_control")
+    if isinstance(provided_budget_control, dict) and provided_budget_control:
+        budget_control = normalize_budget_control(provided_budget_control)
+    else:
+        operation_cost = float(normalized_cost_tracking.get("cost_estimate") or 0.0)
+        budget_control = evaluate_budget_controls(
+            budget_caps=budget_caps,
+            current_operation_cost=operation_cost,
+            current_project_cost=operation_cost,
+            current_session_cost=operation_cost,
+        )
+    budget_fields = _budget_fields_from_control(budget_control)
 
     return {
         "package_id": package_id,
@@ -637,6 +689,9 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "local_analysis_basis": normalize_local_analysis_basis(p.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
         "cost_tracking": normalized_cost_tracking,
+        "budget_caps": budget_caps,
+        "budget_control": budget_control,
+        **budget_fields,
     }
 
 
@@ -725,6 +780,15 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
         "governance_routing_outcome": str(r.get("governance_routing_outcome") or ""),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
+        "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
+        "budget_control": normalize_budget_control(r.get("budget_control") or {}),
+        "budget_status": str(r.get("budget_status") or "within_budget"),
+        "budget_scope": str(r.get("budget_scope") or "operation"),
+        "budget_cap": float(r.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(r.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(r.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(r.get("kill_switch_active")),
+        "budget_reason": str(r.get("budget_reason") or ""),
     }
 
 
@@ -1944,6 +2008,76 @@ def record_execution_package_execution(
     package = read_execution_package(project_path=project_path, package_id=package_id)
     if not package:
         return {"status": "error", "reason": "Execution package not found.", "package": None}
+    projected_execution_cost = _estimate_package_cost_tracking(package)
+    projected_operation_cost = float(projected_execution_cost.get("cost_estimate") or 0.0)
+    run_id = str(package.get("run_id") or "")
+    journal_rows = list_execution_package_journal_entries(project_path, n=50)
+    journal_cost_totals = summarize_journal_estimated_costs(journal_rows, run_id=run_id)
+    budget_caps = _resolve_package_budget_caps(package, project_path)
+    projected_budget_control = evaluate_budget_controls(
+        budget_caps=budget_caps,
+        current_operation_cost=projected_operation_cost,
+        current_project_cost=float(journal_cost_totals.get("project_estimated_cost_total") or 0.0) + projected_operation_cost,
+        current_session_cost=float(journal_cost_totals.get("session_estimated_cost_total") or 0.0) + projected_operation_cost,
+    )
+    package["budget_caps"] = projected_budget_control.get("budget_caps") or budget_caps
+    package["budget_control"] = projected_budget_control
+    package.update(_budget_fields_from_control(projected_budget_control))
+    if bool(projected_budget_control.get("kill_switch_active")):
+        blocked_at = _utc_now_iso()
+        package["execution_status"] = "blocked"
+        package["execution_timestamp"] = blocked_at
+        package["execution_started_at"] = blocked_at
+        package["execution_finished_at"] = blocked_at
+        package["execution_actor"] = actor
+        package["execution_id"] = str(uuid.uuid4())
+        package["execution_version"] = "v1"
+        package["execution_reason"] = _normalize_execution_reason(
+            {
+                "code": "budget_kill_switch_triggered",
+                "message": str(projected_budget_control.get("budget_reason") or "Budget kill switch triggered."),
+            }
+        )
+        package["execution_receipt"] = _normalize_execution_receipt(
+            {
+                "result_status": "blocked",
+                "failure_class": "preflight_block",
+                "stderr_summary": (
+                    "Budget cap exceeded; progression blocked by kill switch without bypassing governance."
+                ),
+            }
+        )
+        package["rollback_status"] = "not_needed"
+        package["rollback_timestamp"] = ""
+        package["rollback_reason"] = _normalize_rollback_reason({"code": "", "message": ""})
+        package["failure_summary"] = normalize_failure_summary(
+            summarize_failure(failure_class="preflight_block", timestamp=blocked_at)
+        )
+        package["integrity_verification"] = verify_terminal_execution_integrity(package)
+        package["recovery_summary"] = normalize_recovery_summary(
+            evaluate_recovery_summary(
+                execution_status="blocked",
+                failure_summary=package.get("failure_summary"),
+                retry_policy=package.get("retry_policy"),
+                rollback_repair=package.get("rollback_repair"),
+                integrity_verification=package.get("integrity_verification"),
+            )
+        )
+        package["cost_tracking"] = {
+            **projected_execution_cost,
+            "cost_source": "runtime_execution",
+            "cost_breakdown": {
+                **dict(projected_execution_cost.get("cost_breakdown") or {}),
+                "model": "forge_runtime_cost_estimator",
+            },
+        }
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="denied",
+            reason=str(projected_budget_control.get("budget_reason") or "Budget kill switch triggered."),
+        )
     execution_component = "openclaw"
     execution_authority = enforce_component_authority_safe(
         component_name=execution_component,
@@ -2127,6 +2261,18 @@ def record_execution_package_execution(
             "model": "forge_runtime_cost_estimator",
         },
     }
+    post_journal_rows = list_execution_package_journal_entries(project_path, n=50)
+    post_cost_totals = summarize_journal_estimated_costs(post_journal_rows, run_id=run_id)
+    operation_cost = float(package["cost_tracking"].get("cost_estimate") or 0.0)
+    budget_control = evaluate_budget_controls(
+        budget_caps=_resolve_package_budget_caps(package, project_path),
+        current_operation_cost=operation_cost,
+        current_project_cost=float(post_cost_totals.get("project_estimated_cost_total") or 0.0) + operation_cost,
+        current_session_cost=float(post_cost_totals.get("session_estimated_cost_total") or 0.0) + operation_cost,
+    )
+    package["budget_caps"] = budget_control.get("budget_caps") or _resolve_package_budget_caps(package, project_path)
+    package["budget_control"] = budget_control
+    package.update(_budget_fields_from_control(budget_control))
 
     return _persist_package_update(
         project_path=project_path,

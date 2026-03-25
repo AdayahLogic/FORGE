@@ -31,6 +31,7 @@ export function SystemOverview({ overview }: Props) {
   const local = data?.local_analysis_counts;
   const executorHealth = data?.executor_health ?? {};
   const costVisibility = data?.cost_visibility;
+  const budgetVisibility = data?.budget_visibility;
   const systemStatus = data?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const displayState = (value: unknown, fallback: string) => {
@@ -113,6 +114,17 @@ export function SystemOverview({ overview }: Props) {
           label="Estimated Cost"
           value={`$${Number(costVisibility?.estimated_cost_total_usd ?? 0).toFixed(4)}`}
           subvalue={costVisibility?.label ?? "Estimated Cost (Preview/Non-Billed)"}
+        />
+        <StatCard
+          label="Estimated Budget"
+          value={String(budgetVisibility?.budget_status ?? "within_budget")}
+          subvalue={
+            budgetVisibility
+              ? `${budgetVisibility.label} | remaining $${Number(
+                  budgetVisibility.remaining_estimated_budget ?? 0,
+                ).toFixed(4)}`
+              : "Estimated Budget (Non-Billed Governance Control)"
+          }
         />
       </div>
     </section>

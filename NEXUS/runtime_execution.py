@@ -10,6 +10,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from NEXUS.budget_controls import evaluate_budget_controls, resolve_budget_caps
+
 
 def _build_runtime_cost_tracking(
     *,
@@ -46,6 +48,8 @@ def build_runtime_execution_result(
     next_action: str = "none",
     artifacts: list[dict[str, Any]] | None = None,
     errors: list[dict[str, Any]] | None = None,
+    budget_caps: dict[str, Any] | None = None,
+    budget_cost_context: dict[str, Any] | None = None,
     extra_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
@@ -61,6 +65,22 @@ def build_runtime_execution_result(
     - artifacts: list
     - errors: list
     """
+    cost_tracking = _build_runtime_cost_tracking(
+        runtime=runtime,
+        status=status,
+        artifacts=artifacts,
+        errors=errors,
+    )
+    operation_cost = float(cost_tracking.get("cost_estimate") or 0.0)
+    budget_context = budget_cost_context if isinstance(budget_cost_context, dict) else {}
+    project_cost = float(budget_context.get("current_project_cost") or operation_cost)
+    session_cost = float(budget_context.get("current_session_cost") or operation_cost)
+    budget_control = evaluate_budget_controls(
+        budget_caps=resolve_budget_caps(budget_caps or {}),
+        current_operation_cost=operation_cost,
+        current_project_cost=project_cost,
+        current_session_cost=session_cost,
+    )
     result = {
         "runtime": runtime,
         "status": status,
@@ -70,12 +90,16 @@ def build_runtime_execution_result(
         "next_action": next_action,
         "artifacts": artifacts or [],
         "errors": errors or [],
-        "cost_tracking": _build_runtime_cost_tracking(
-            runtime=runtime,
-            status=status,
-            artifacts=artifacts,
-            errors=errors,
-        ),
+        "cost_tracking": cost_tracking,
+        "budget_caps": budget_control.get("budget_caps") or resolve_budget_caps(budget_caps or {}),
+        "budget_control": budget_control,
+        "budget_status": str(budget_control.get("budget_status") or "within_budget"),
+        "budget_scope": str(budget_control.get("budget_scope") or "operation"),
+        "budget_cap": float(budget_control.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(budget_control.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(budget_control.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(budget_control.get("kill_switch_active")),
+        "budget_reason": str(budget_control.get("budget_reason") or ""),
     }
     if isinstance(extra_fields, dict):
         result.update(extra_fields)

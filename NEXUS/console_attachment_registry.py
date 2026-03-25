@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any
 
 from NEXUS.autonomy_modes import get_mode_policy, normalize_autonomy_mode
+from NEXUS.budget_controls import (
+    evaluate_budget_controls,
+    resolve_budget_caps,
+    summarize_journal_estimated_costs,
+)
+from NEXUS.execution_package_registry import list_execution_package_journal_entries
 from NEXUS.path_utils import to_studio_relative_path
 from NEXUS.project_state import ensure_state_folder, load_project_state
 
@@ -1135,6 +1141,7 @@ def preview_intake_request(
     lead_intake_profile: Any = None,
     qualification: Any = None,
 ) -> dict[str, Any]:
+    project_state = load_project_state(project_path)
     attachments = list_console_attachments_safe(project_path)
     attachments_by_id = {
         str(item.get("attachment_id") or ""): item
@@ -1246,6 +1253,19 @@ def preview_intake_request(
         warnings_count=len(warnings),
         lead_profile=lead_profile,
     )
+    journal_rows = list_execution_package_journal_entries(project_path, n=50)
+    run_id = str(project_state.get("run_id") or "")
+    estimated_totals = summarize_journal_estimated_costs(journal_rows, run_id=run_id)
+    operation_cost = float(cost_tracking.get("cost_estimate") or 0.0)
+    project_cost = float(estimated_totals.get("project_estimated_cost_total") or 0.0) + operation_cost
+    session_cost = float(estimated_totals.get("session_estimated_cost_total") or 0.0) + operation_cost
+    budget_caps = resolve_budget_caps(project_state)
+    budget_control = evaluate_budget_controls(
+        budget_caps=budget_caps,
+        current_operation_cost=operation_cost,
+        current_project_cost=project_cost,
+        current_session_cost=session_cost,
+    )
     return {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
@@ -1275,6 +1295,15 @@ def preview_intake_request(
         "response_summary": response_summary,
         "conversion_summary": conversion_summary,
         "cost_tracking": cost_tracking,
+        "budget_caps": budget_control.get("budget_caps") or budget_caps,
+        "budget_control": budget_control,
+        "budget_status": str(budget_control.get("budget_status") or "within_budget"),
+        "budget_scope": str(budget_control.get("budget_scope") or "operation"),
+        "budget_cap": float(budget_control.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(budget_control.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(budget_control.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(budget_control.get("kill_switch_active")),
+        "budget_reason": str(budget_control.get("budget_reason") or ""),
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
@@ -1388,6 +1417,20 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
                 estimated_tokens=80,
                 model="forge_intake_preview_estimator",
             ),
+            "budget_caps": resolve_budget_caps({}),
+            "budget_control": evaluate_budget_controls(
+                budget_caps=resolve_budget_caps({}),
+                current_operation_cost=0.0,
+                current_project_cost=0.0,
+                current_session_cost=0.0,
+            ),
+            "budget_status": "within_budget",
+            "budget_scope": "operation",
+            "budget_cap": 0.0,
+            "current_estimated_cost": 0.0,
+            "remaining_estimated_budget": 0.0,
+            "kill_switch_active": False,
+            "budget_reason": "Preview failed before budget evaluation could run.",
             "package_preview": {
                 "creation_mode": "preview_only",
                 "package_creation_allowed": False,

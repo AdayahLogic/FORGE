@@ -98,6 +98,15 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
               {Number(costSummary?.timeline_estimated_cost_total ?? 0).toFixed(4)}
             </div>
           </div>
+          <div className="detail-card-subsection">
+            <div className="stat-label">Estimated Budget (Non-Billed Governance Control)</div>
+            <div style={{ marginTop: 8 }}>
+              Status: {String(costSummary?.budget_status ?? "within_budget")} | Scope:{" "}
+              {String(costSummary?.budget_scope ?? "operation")} | Remaining: $
+              {Number(costSummary?.remaining_estimated_budget ?? 0).toFixed(4)} | Kill switch:{" "}
+              {costSummary?.kill_switch_active ? "active" : "inactive"}
+            </div>
+          </div>
           <div className="section-title" style={{ marginTop: 18 }}>
             <div>
               <div className="eyebrow">Timeline</div>
@@ -123,6 +132,7 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
                         ) || 0,
                       ).toFixed(4)}
                     </span>
+                    <span className="chip">{String(item.budget_status ?? "within_budget")}</span>
                   </div>
                 </div>
               ))

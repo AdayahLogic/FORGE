@@ -49,6 +49,28 @@ export type ForgeEstimatedCost = {
   };
 };
 
+export type ForgeBudgetCaps = {
+  session_budget_cap: number;
+  project_budget_cap: number;
+  operation_budget_cap: number;
+  kill_switch_enabled: boolean;
+};
+
+export type ForgeBudgetControl = {
+  budget_caps: ForgeBudgetCaps;
+  budget_status:
+    | "within_budget"
+    | "approaching_cap"
+    | "cap_exceeded"
+    | "kill_switch_triggered";
+  budget_scope: "operation" | "project" | "session";
+  budget_cap: number;
+  current_estimated_cost: number;
+  remaining_estimated_budget: number;
+  kill_switch_active: boolean;
+  budget_reason: string;
+};
+
 export type ForgeConstraintSections = {
   scope_boundaries: string[];
   risk_notes: string[];
@@ -271,6 +293,15 @@ export type ForgeIntakePreview = {
   response_summary: ForgeRevenueResponseSummary | null;
   conversion_summary: ForgeRevenueConversionSummary | null;
   cost_tracking: ForgeEstimatedCost;
+  budget_caps: ForgeBudgetCaps;
+  budget_control: ForgeBudgetControl;
+  budget_status: ForgeBudgetControl["budget_status"];
+  budget_scope: ForgeBudgetControl["budget_scope"];
+  budget_cap: number;
+  current_estimated_cost: number;
+  remaining_estimated_budget: number;
+  kill_switch_active: boolean;
+  budget_reason: string;
   package_preview: {
     creation_mode: string;
     package_creation_allowed: boolean;
@@ -326,6 +357,12 @@ export type ForgeProjectRow = {
   latest_local_analysis_status: string;
   executor_health: string;
   estimated_cost_total_usd?: number;
+  budget_status?: ForgeBudgetControl["budget_status"];
+  budget_scope?: ForgeBudgetControl["budget_scope"];
+  budget_cap?: number;
+  current_estimated_cost?: number;
+  remaining_estimated_budget?: number;
+  kill_switch_active?: boolean;
 };
 
 export type ForgeClientProjectRow = {
@@ -428,6 +465,15 @@ export type ForgeOverviewSnapshot = {
       operation_count_total: number;
       label: string;
     };
+    budget_visibility?: {
+      label: string;
+      budget_status: ForgeBudgetControl["budget_status"];
+      budget_scope: ForgeBudgetControl["budget_scope"];
+      budget_cap: number;
+      current_estimated_cost: number;
+      remaining_estimated_budget: number;
+      kill_switch_active: boolean;
+    };
   };
   projects: ForgeProjectRow[];
   approval_center: {
@@ -485,6 +531,15 @@ export type PackageDetailSnapshot = {
     timeline_estimated_cost_total: number;
     cost_unit: string;
     label: string;
+    budget_caps: ForgeBudgetCaps;
+    budget_control: ForgeBudgetControl;
+    budget_status: ForgeBudgetControl["budget_status"];
+    budget_scope: ForgeBudgetControl["budget_scope"];
+    budget_cap: number;
+    current_estimated_cost: number;
+    remaining_estimated_budget: number;
+    kill_switch_active: boolean;
+    budget_reason: string;
   };
   review_center: ForgeReviewCenterSnapshot;
 };
@@ -523,6 +578,15 @@ export type ProjectSnapshot = {
       operation_count: number;
     };
     operation_count: number;
+    budget_caps: ForgeBudgetCaps;
+    budget_control: ForgeBudgetControl;
+    budget_status: ForgeBudgetControl["budget_status"];
+    budget_scope: ForgeBudgetControl["budget_scope"];
+    budget_cap: number;
+    current_estimated_cost: number;
+    remaining_estimated_budget: number;
+    kill_switch_active: boolean;
+    budget_reason: string;
   };
   degraded_sources: string[];
 };

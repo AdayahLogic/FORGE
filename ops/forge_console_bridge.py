@@ -21,6 +21,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from NEXUS.command_surface import run_command
+from NEXUS.budget_controls import (
+    evaluate_budget_controls,
+    normalize_budget_control,
+    resolve_budget_caps,
+    summarize_journal_estimated_costs,
+)
 from NEXUS.console_attachment_registry import (
     build_attachment_review_context_safe,
     build_intake_workspace,
@@ -131,6 +137,27 @@ def _project_cost_summary(
             6,
         )
     recent = operation_rows[:12]
+    deduped_totals = summarize_journal_estimated_costs(journal_rows, run_id=session_key)
+    project_state = load_project_state(project_path)
+    budget_caps = resolve_budget_caps(project_state)
+    preview_operation_cost = 0.0
+    if isinstance(intake_preview, dict):
+        preview_operation_cost = float(
+            (_normalize_cost_tracking(intake_preview.get("cost_tracking"), fallback_source="model_execution").get("cost_estimate") or 0.0)
+        )
+    latest_operation_cost = (
+        preview_operation_cost
+        if preview_operation_cost > 0.0
+        else float(((recent[0].get("cost_tracking") or {}).get("cost_estimate") or 0.0))
+        if operation_rows
+        else 0.0
+    )
+    budget_control = evaluate_budget_controls(
+        budget_caps=budget_caps,
+        current_operation_cost=latest_operation_cost,
+        current_project_cost=float(deduped_totals.get("project_estimated_cost_total") or project_total) + preview_operation_cost,
+        current_session_cost=float(deduped_totals.get("session_estimated_cost_total") or session_total) + preview_operation_cost,
+    )
     return {
         "cost_per_operation": [dict(item.get("cost_tracking") or {}) for item in recent],
         "cost_per_project": {
@@ -144,6 +171,15 @@ def _project_cost_summary(
             "operation_count": sum(1 for item in operation_rows if not session_key or str(item.get("run_id") or "") == session_key),
         },
         "operation_count": len(operation_rows),
+        "budget_caps": budget_control.get("budget_caps") or budget_caps,
+        "budget_control": budget_control,
+        "budget_status": str(budget_control.get("budget_status") or "within_budget"),
+        "budget_scope": str(budget_control.get("budget_scope") or "operation"),
+        "budget_cap": float(budget_control.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(budget_control.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(budget_control.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(budget_control.get("kill_switch_active")),
+        "budget_reason": str(budget_control.get("budget_reason") or ""),
     }
 
 
@@ -194,6 +230,12 @@ def _project_rows_from_dashboard(dashboard: dict[str, Any]) -> list[dict[str, An
                 "estimated_cost_total_usd": float(
                     ((cost_summary.get("cost_per_project") or {}).get("estimated_cost_total") or 0.0)
                 ),
+                "budget_status": str(cost_summary.get("budget_status") or "within_budget"),
+                "budget_scope": str(cost_summary.get("budget_scope") or "operation"),
+                "budget_cap": float(cost_summary.get("budget_cap") or 0.0),
+                "current_estimated_cost": float(cost_summary.get("current_estimated_cost") or 0.0),
+                "remaining_estimated_budget": float(cost_summary.get("remaining_estimated_budget") or 0.0),
+                "kill_switch_active": bool(cost_summary.get("kill_switch_active")),
             }
         )
     return rows
@@ -781,6 +823,17 @@ def build_studio_snapshot() -> dict[str, Any]:
         for row in project_rows
     }
     estimated_cost_total = round(sum(project_cost_map.values()), 6)
+    severity = {"within_budget": 0, "approaching_cap": 1, "cap_exceeded": 2, "kill_switch_triggered": 3}
+    governing_project_budget = sorted(
+        project_rows,
+        key=lambda row: severity.get(str(row.get("budget_status") or "within_budget"), 0),
+        reverse=True,
+    )[0] if project_rows else {}
+    total_budget_cap = round(
+        sum(float(row.get("budget_cap") or 0.0) for row in project_rows if float(row.get("budget_cap") or 0.0) > 0.0),
+        6,
+    )
+    remaining_total_budget = round(max(0.0, total_budget_cap - estimated_cost_total), 6) if total_budget_cap > 0 else 0.0
     package_counts = {
         "review_pending": review_summary.get("pending_count_total", 0),
         "decision_pending": decision_summary.get("pending_count_total", 0),
@@ -839,6 +892,15 @@ def build_studio_snapshot() -> dict[str, Any]:
                 "project_estimated_cost_usd": project_cost_map,
                 "operation_count_total": sum(1 for _ in project_rows),
                 "label": "Estimated Cost (Preview/Non-Billed)",
+            },
+            "budget_visibility": {
+                "label": "Estimated Budget (Non-Billed Governance Control)",
+                "budget_status": str(governing_project_budget.get("budget_status") or "within_budget"),
+                "budget_scope": str(governing_project_budget.get("budget_scope") or "project"),
+                "budget_cap": total_budget_cap,
+                "current_estimated_cost": estimated_cost_total,
+                "remaining_estimated_budget": remaining_total_budget,
+                "kill_switch_active": bool(governing_project_budget.get("kill_switch_active")),
             },
         },
         "projects": project_rows,
@@ -1092,10 +1154,18 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 "evaluation_status": row.get("evaluation_status") or "",
                 "local_analysis_status": row.get("local_analysis_status") or "",
                 "cost_tracking": _normalize_cost_tracking(row.get("cost_tracking"), fallback_source="composed_operation"),
+                "budget_status": str(row.get("budget_status") or "within_budget"),
+                "budget_scope": str(row.get("budget_scope") or "operation"),
+                "kill_switch_active": bool(row.get("kill_switch_active")),
             }
         )
     execution_feedback = _build_execution_feedback(package, timeline=timeline)
-    cost_summary = _build_package_cost_summary(package, timeline)
+    cost_summary = _build_package_cost_summary(
+        package,
+        timeline,
+        project_path=project_path,
+        run_id=str(package.get("run_id") or ""),
+    )
     return _result(
         "ok",
         {
@@ -1176,7 +1246,13 @@ def _summarize_test_results(
     }
 
 
-def _build_package_cost_summary(package: dict[str, Any], timeline: list[dict[str, Any]]) -> dict[str, Any]:
+def _build_package_cost_summary(
+    package: dict[str, Any],
+    timeline: list[dict[str, Any]],
+    *,
+    project_path: str,
+    run_id: str,
+) -> dict[str, Any]:
     package_cost = _normalize_cost_tracking(package.get("cost_tracking"), fallback_source="composed_operation")
     timeline_costs = [
         _normalize_cost_tracking(row.get("cost_tracking"), fallback_source="composed_operation")
@@ -1184,11 +1260,33 @@ def _build_package_cost_summary(package: dict[str, Any], timeline: list[dict[str
         if isinstance(row, dict)
     ]
     timeline_total = round(sum(float(item.get("cost_estimate") or 0.0) for item in timeline_costs), 6)
+    journal_rows = list_execution_package_journal_entries(project_path, n=50)
+    totals = summarize_journal_estimated_costs(journal_rows, run_id=run_id)
+    budget_caps = resolve_budget_caps(package if isinstance(package, dict) else {})
+    if not any(float(budget_caps.get(key) or 0.0) > 0.0 for key in ("operation_budget_cap", "project_budget_cap", "session_budget_cap")):
+        budget_caps = resolve_budget_caps(load_project_state(project_path))
+    budget_control = normalize_budget_control(package.get("budget_control") or {})
+    if not str(budget_control.get("budget_status") or "").strip():
+        budget_control = evaluate_budget_controls(
+            budget_caps=budget_caps,
+            current_operation_cost=float(package_cost.get("cost_estimate") or 0.0),
+            current_project_cost=float(totals.get("project_estimated_cost_total") or 0.0),
+            current_session_cost=float(totals.get("session_estimated_cost_total") or 0.0),
+        )
     return {
         "operation_cost": package_cost,
         "timeline_estimated_cost_total": timeline_total,
         "cost_unit": "usd_estimated",
         "label": "Estimated Cost (Preview/Non-Billed)",
+        "budget_caps": budget_control.get("budget_caps") or budget_caps,
+        "budget_control": budget_control,
+        "budget_status": str(budget_control.get("budget_status") or "within_budget"),
+        "budget_scope": str(budget_control.get("budget_scope") or "operation"),
+        "budget_cap": float(budget_control.get("budget_cap") or 0.0),
+        "current_estimated_cost": float(budget_control.get("current_estimated_cost") or 0.0),
+        "remaining_estimated_budget": float(budget_control.get("remaining_estimated_budget") or 0.0),
+        "kill_switch_active": bool(budget_control.get("kill_switch_active")),
+        "budget_reason": str(budget_control.get("budget_reason") or ""),
     }
 
 
