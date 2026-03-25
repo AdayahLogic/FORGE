@@ -17,6 +17,7 @@ import {
 import type {
   ForgeConstraintSections,
   ForgeLeadQualificationDraft,
+  ForgeQuickAction,
   ForgeRequestedArtifactsDraft,
   ForgeUiState,
 } from "../lib/forge-types";
@@ -378,6 +379,43 @@ export function ConsoleShell() {
   const clientProjects = uiState.clientViewSnapshot?.projects ?? [];
   const clientGeneratedAt = uiState.clientViewSnapshot?.generated_at ?? "";
 
+  const scrollToPanel = (panelId: string) => {
+    const node = document.getElementById(panelId);
+    if (node) {
+      node.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
+
+  const runQuickAction = (action: ForgeQuickAction) => {
+    switch (action.action_id) {
+      case "navigate_review_center":
+      case "open_review_context":
+        scrollToPanel("review-center-panel");
+        return;
+      case "input_request_missing_fields":
+        scrollToPanel("project-intake-workspace");
+        return;
+      case "inspect_current_package":
+        if (uiState.selectedPackageId && uiState.selectedProjectKey) {
+          void loadPackage(uiState.selectedPackageId, uiState.selectedProjectKey);
+        }
+        setUiState((current) => ({ ...current, detailDrawerOpen: true }));
+        return;
+      case "open_delivery_summary":
+      case "inspect_package_attachments":
+        scrollToPanel("review-center-panel");
+        return;
+      case "inspect_budget_blockers":
+        scrollToPanel("project-control-panel");
+        return;
+      case "refresh_system_overview":
+      case "refresh_project_snapshot":
+      case "refresh_package_snapshot":
+      default:
+        refresh();
+    }
+  };
+
   return (
     <main className="console-root">
       <div className="console-grid">
@@ -429,7 +467,10 @@ export function ConsoleShell() {
             </div>
           </section>
         ) : (
-          <SystemOverview overview={uiState.overviewSnapshot} />
+          <SystemOverview
+            onQuickAction={runQuickAction}
+            overview={uiState.overviewSnapshot}
+          />
         )}
         <ProjectControlPanel
           onSelectProject={selectProject}
@@ -442,6 +483,7 @@ export function ConsoleShell() {
           }
           selectedProjectKey={uiState.selectedProjectKey}
           surfaceMode={uiState.surfaceMode}
+          onQuickAction={runQuickAction}
         />
         <div className="center-stack">
           {uiState.surfaceMode === "client_safe" ? null : (
@@ -479,6 +521,7 @@ export function ConsoleShell() {
           <ReviewCenter
             clientProject={clientProject}
             detail={uiState.packageDetail}
+            onQuickAction={runQuickAction}
             surfaceMode={uiState.surfaceMode}
           />
           {uiState.surfaceMode === "client_safe" ? null : (

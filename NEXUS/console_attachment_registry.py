@@ -22,6 +22,7 @@ from NEXUS.budget_controls import (
 )
 from NEXUS.execution_package_registry import list_execution_package_journal_entries
 from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
+from NEXUS.operator_quick_actions import build_intake_preview_quick_actions
 from NEXUS.path_utils import to_studio_relative_path
 from NEXUS.project_state import ensure_state_folder, load_project_state
 
@@ -1405,7 +1406,7 @@ def preview_intake_request(
             "budget_policy_reason": str(budget_control.get("budget_reason") or ""),
         },
     )
-    return {
+    preview_payload = {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
         "objective": objective_value,
@@ -1461,13 +1462,15 @@ def preview_intake_request(
             ),
         },
     }
+    preview_payload["quick_actions"] = build_intake_preview_quick_actions(preview_payload)
+    return preview_payload
 
 
 def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
     try:
         return preview_intake_request(**kwargs)
     except Exception as exc:
-        return {
+        fallback_payload = {
             "request_id": "",
             "request_kind": _normalize_request_kind(kwargs.get("request_kind") or "update_request"),
             "objective": "",
@@ -1601,3 +1604,5 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
                 "summary": "Preview unavailable.",
             },
         }
+        fallback_payload["quick_actions"] = build_intake_preview_quick_actions(fallback_payload)
+        return fallback_payload

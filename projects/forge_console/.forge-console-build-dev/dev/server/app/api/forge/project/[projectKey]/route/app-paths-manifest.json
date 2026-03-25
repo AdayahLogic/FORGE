@@ -1,0 +1,3 @@
+{
+  "/api/forge/project/[projectKey]/route": "app/api/forge/project/[projectKey]/route.js"
+}

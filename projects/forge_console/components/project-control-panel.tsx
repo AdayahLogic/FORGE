@@ -1,6 +1,7 @@
 import type {
   ForgeClientProjectRow,
   ForgeClientProjectSnapshot,
+  ForgeQuickAction,
   ForgeProjectRow,
   ProjectSnapshot,
   SurfaceMode,
@@ -13,6 +14,7 @@ type Props = {
   clientProject: ForgeClientProjectSnapshot | null;
   surfaceMode: SurfaceMode;
   onSelectProject: (projectKey: string) => void;
+  onQuickAction?: (action: ForgeQuickAction) => void;
 };
 
 function getChipClass(value: string) {
@@ -43,11 +45,12 @@ export function ProjectControlPanel({
   clientProject,
   surfaceMode,
   onSelectProject,
+  onQuickAction,
 }: Props) {
   if (surfaceMode === "client_safe") {
     const clientProjects = projects as ForgeClientProjectRow[];
     return (
-      <section className="panel left-rail">
+      <section className="panel left-rail" id="project-control-panel">
         <div className="section-title">
           <div>
             <div className="eyebrow">Client View</div>
@@ -161,13 +164,14 @@ export function ProjectControlPanel({
   const preview = intake?.preview;
   const modelRouting = preview?.model_routing_policy;
   const workflow = projectSnapshot?.workflow_activity;
+  const projectQuickActions = projectSnapshot?.quick_actions;
   const systemStatus = projectSnapshot?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const operatorProjects = projects as ForgeProjectRow[];
   const currentPackageId =
     typeof state.execution_package_id === "string" ? state.execution_package_id : "";
   return (
-    <section className="panel left-rail">
+    <section className="panel left-rail" id="project-control-panel">
       <div className="section-title">
         <div>
           <div className="eyebrow">Project Rail</div>
@@ -401,6 +405,47 @@ export function ProjectControlPanel({
                   <span>Package Created</span>
                   <strong>{displayValue(workflow.package_created_at, "Not started")}</strong>
                 </div>
+              </div>
+            )}
+          </div>
+          <div className="control-card">
+            <div className="eyebrow">Operator Actions (Manual)</div>
+            {!projectQuickActions ? (
+              <div className="audit-item muted" style={{ marginTop: 10 }}>
+                Suggested quick actions appear when governed context is available.
+              </div>
+            ) : (
+              <div className="detail-list" style={{ marginTop: 10 }}>
+                <div className="chip-row" style={{ marginBottom: 8 }}>
+                  <span className="chip info">{projectQuickActions.quick_actions_status}</span>
+                  <span className="chip">{projectQuickActions.quick_actions_reason}</span>
+                </div>
+                {projectQuickActions.available_actions.length > 0 ? (
+                  projectQuickActions.available_actions.map((action) => (
+                    <div className="audit-item" key={action.action_id}>
+                      <div className="chip-row" style={{ marginBottom: 8 }}>
+                        <span className="chip info">{action.action_kind}</span>
+                        <span className="chip">{action.action_scope}</span>
+                      </div>
+                      <button
+                        className="action-button"
+                        disabled={!action.action_enabled}
+                        onClick={() => onQuickAction?.(action)}
+                        style={{ marginBottom: 8 }}
+                        type="button"
+                      >
+                        {action.action_label}
+                      </button>
+                      <div className="muted">
+                        {action.action_enabled
+                          ? action.action_reason
+                          : action.blocked_reason || action.action_reason}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="audit-item muted">No project quick actions are currently available.</div>
+                )}
               </div>
             )}
           </div>

@@ -186,7 +186,7 @@ export function ProjectIntakeWorkspace({
     AUTONOMY_MODE_OPTIONS[0];
 
   return (
-    <section className="panel center-canvas">
+    <section className="panel center-canvas" id="project-intake-workspace">
       <div className="section-title">
         <div>
           <div className="eyebrow">Phase C Intake</div>

@@ -40,6 +40,11 @@ from NEXUS.execution_package_registry import (
     read_execution_package,
 )
 from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
+from NEXUS.operator_quick_actions import (
+    build_overview_quick_actions,
+    build_project_quick_actions,
+    build_review_center_quick_actions,
+)
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
 
@@ -909,7 +914,7 @@ def build_studio_snapshot() -> dict[str, Any]:
         "execution_failed": execution_summary.get("failed_count_total", 0),
         "execution_succeeded": execution_summary.get("succeeded_count_total", 0),
     }
-    return {
+    overview_payload = {
         "generated_at": dashboard.get("summary_generated_at") or "",
         "studio_name": dashboard.get("studio_name") or "FORGE",
         "overview": {
@@ -979,6 +984,8 @@ def build_studio_snapshot() -> dict[str, Any]:
             "dashboard_summary": dashboard,
         },
     }
+    overview_payload["overview"]["quick_actions"] = build_overview_quick_actions(project_rows)
+    return overview_payload
 
 
 def _normalize_package_queue(project_key: str, project_path: str) -> dict[str, Any]:
@@ -1029,44 +1036,52 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             ).get("payload")
             or {}
         )
+    project_payload = {
+        "project_key": key,
+        "project_name": project.get("name") or key,
+        "project_path": project_path,
+        "project_meta": project,
+        "project_summary": project_summary,
+        "project_state": project_state,
+        "latest_session": latest_session,
+        "system_health": health,
+        "package_queue": package_queue,
+        "current_package": current_package,
+        "system_status": _build_system_status(
+            backend_reachable=True,
+            reason="Forge backend returned project snapshot data.",
+        ),
+        "workflow_activity": _build_workflow_activity(
+            project_name=str(project.get("name") or key),
+            project_state=project_state,
+            package=current_package_data,
+            execution_feedback=execution_feedback,
+        ),
+        "approval_summary": approvals,
+        "delivery_summary": delivery_summary,
+        "intake_workspace": intake_workspace,
+        "cost_summary": cost_summary,
+        "degraded_sources": [
+            source
+            for source, value in (
+                ("project_state", project_state),
+                ("project_summary", project_summary),
+                ("latest_session", latest_session),
+                ("system_health", health),
+            )
+            if isinstance(value, dict) and value.get("error")
+        ],
+    }
+    project_payload["quick_actions"] = build_project_quick_actions(
+        project_state=project_state,
+        workflow_activity=project_payload.get("workflow_activity"),
+        intake_preview=(intake_workspace.get("preview") if isinstance(intake_workspace, dict) else None),
+        delivery_summary=delivery_summary,
+        cost_summary=cost_summary,
+    )
     return _result(
         "ok",
-        {
-            "project_key": key,
-            "project_name": project.get("name") or key,
-            "project_path": project_path,
-            "project_meta": project,
-            "project_summary": project_summary,
-            "project_state": project_state,
-            "latest_session": latest_session,
-            "system_health": health,
-            "package_queue": package_queue,
-            "current_package": current_package,
-            "system_status": _build_system_status(
-                backend_reachable=True,
-                reason="Forge backend returned project snapshot data.",
-            ),
-            "workflow_activity": _build_workflow_activity(
-                project_name=str(project.get("name") or key),
-                project_state=project_state,
-                package=current_package_data,
-                execution_feedback=execution_feedback,
-            ),
-            "approval_summary": approvals,
-            "delivery_summary": delivery_summary,
-            "intake_workspace": intake_workspace,
-            "cost_summary": cost_summary,
-            "degraded_sources": [
-                source
-                for source, value in (
-                    ("project_state", project_state),
-                    ("project_summary", project_summary),
-                    ("latest_session", latest_session),
-                    ("system_health", health),
-                )
-                if isinstance(value, dict) and value.get("error")
-            ],
-        },
+        project_payload,
         "",
     )
 
@@ -1235,6 +1250,17 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         run_id=str(package.get("run_id") or ""),
     )
     model_routing_policy = _derive_package_model_routing_policy(package)
+    review_center = _build_review_center_snapshot(
+        package_id=package_id,
+        package=package,
+        detail=detail,
+        evaluation=evaluation.get("evaluation") or {},
+        local_analysis=local_analysis.get("local_analysis") or {},
+        related_attachments=related_attachments,
+        model_routing_policy=model_routing_policy,
+        delivery_summary=delivery_summary,
+        cost_summary=cost_summary,
+    )
     return _result(
         "ok",
         {
@@ -1251,16 +1277,8 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "execution_feedback": execution_feedback,
             "cost_summary": cost_summary,
             "model_routing_policy": model_routing_policy,
-            "review_center": _build_review_center_snapshot(
-                package_id=package_id,
-                package=package,
-                detail=detail,
-                evaluation=evaluation.get("evaluation") or {},
-                local_analysis=local_analysis.get("local_analysis") or {},
-                related_attachments=related_attachments,
-                model_routing_policy=model_routing_policy,
-                delivery_summary=delivery_summary,
-            ),
+            "review_center": review_center,
+            "quick_actions": dict(review_center.get("quick_actions") or {}),
         },
         "",
     )
@@ -1407,11 +1425,12 @@ def _build_review_center_snapshot(
     related_attachments: list[dict[str, Any]],
     model_routing_policy: dict[str, Any],
     delivery_summary: dict[str, Any],
+    cost_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
     execution_feedback = _build_execution_feedback(package)
-    return {
+    review_payload = {
         "package_id": package_id,
         "approval_ready_context": {
             "review_status": str(review_header.get("review_status") or package.get("review_status") or "pending"),
@@ -1434,6 +1453,12 @@ def _build_review_center_snapshot(
         "delivery_summary": dict(delivery_summary or {}),
         "client_safe_delivery_summary": _client_ready_delivery_summary(delivery_summary),
     }
+    review_payload["quick_actions"] = build_review_center_quick_actions(
+        review_center=review_payload,
+        package_json=package,
+        cost_summary=cost_summary,
+    )
+    return review_payload
 
 
 def execute_control_action(

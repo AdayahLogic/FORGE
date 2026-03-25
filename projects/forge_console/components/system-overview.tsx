@@ -1,7 +1,12 @@
-import type { ForgeOverviewSnapshot } from "../lib/forge-types";
+import type {
+  ForgeOverviewSnapshot,
+  ForgeQuickAction,
+  ForgeQuickActions,
+} from "../lib/forge-types";
 
 type Props = {
   overview: ForgeOverviewSnapshot | null;
+  onQuickAction?: (action: ForgeQuickAction) => void;
 };
 
 function StatCard({
@@ -22,7 +27,58 @@ function StatCard({
   );
 }
 
-export function SystemOverview({ overview }: Props) {
+function QuickActionsCard({
+  title,
+  quickActions,
+  onQuickAction,
+}: {
+  title: string;
+  quickActions: ForgeQuickActions | undefined;
+  onQuickAction?: (action: ForgeQuickAction) => void;
+}) {
+  if (!quickActions) {
+    return null;
+  }
+  return (
+    <div className="detail-card" style={{ marginTop: 14 }}>
+      <h4>{title}</h4>
+      <div className="chip-row" style={{ marginBottom: 10 }}>
+        <span className="chip info">{quickActions.quick_actions_status}</span>
+        <span className="chip">{quickActions.quick_actions_reason}</span>
+      </div>
+      <div className="detail-list">
+        {quickActions.available_actions.length > 0 ? (
+          quickActions.available_actions.map((action) => (
+            <div className="audit-item" key={action.action_id}>
+              <div className="chip-row" style={{ marginBottom: 8 }}>
+                <span className="chip info">{action.action_kind}</span>
+                <span className="chip">{action.action_scope}</span>
+              </div>
+              <button
+                className="action-button"
+                disabled={!action.action_enabled}
+                onClick={() => onQuickAction?.(action)}
+                style={{ marginBottom: 8 }}
+                type="button"
+              >
+                {action.action_label}
+              </button>
+              <div className="muted">
+                {action.action_enabled
+                  ? action.action_reason
+                  : action.blocked_reason || action.action_reason}
+              </div>
+            </div>
+          ))
+        ) : (
+          <div className="audit-item muted">No suggested quick actions available.</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+export function SystemOverview({ overview, onQuickAction }: Props) {
   const data = overview?.overview;
   const aegis = data?.aegis_posture ?? {};
   const queue = data?.queue_counts ?? {};
@@ -33,6 +89,7 @@ export function SystemOverview({ overview }: Props) {
   const costVisibility = data?.cost_visibility;
   const budgetVisibility = data?.budget_visibility;
   const modelRouting = data?.model_routing_visibility;
+  const quickActions = data?.quick_actions;
   const systemStatus = data?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const displayState = (value: unknown, fallback: string) => {
@@ -44,7 +101,7 @@ export function SystemOverview({ overview }: Props) {
   };
 
   return (
-    <section className="panel top-band">
+    <section className="panel top-band" id="system-overview-panel">
       <div className="section-title">
         <div>
           <div className="eyebrow">Forge Console</div>
@@ -133,6 +190,11 @@ export function SystemOverview({ overview }: Props) {
           subvalue={modelRouting?.policy_output_label ?? "Policy Output (Read-only)"}
         />
       </div>
+      <QuickActionsCard
+        title="Suggested Quick Actions"
+        quickActions={quickActions}
+        onQuickAction={onQuickAction}
+      />
     </section>
   );
 }

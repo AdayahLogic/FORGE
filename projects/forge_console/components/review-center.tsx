@@ -1,5 +1,6 @@
 import type {
   ForgeClientProjectSnapshot,
+  ForgeQuickAction,
   ForgeReviewCenterSnapshot,
   PackageDetailSnapshot,
   SurfaceMode,
@@ -9,6 +10,7 @@ type Props = {
   detail: PackageDetailSnapshot | null;
   clientProject?: ForgeClientProjectSnapshot | null;
   surfaceMode?: SurfaceMode;
+  onQuickAction?: (action: ForgeQuickAction) => void;
 };
 
 function chipClass(value: string) {
@@ -44,6 +46,7 @@ export function ReviewCenter({
   detail,
   clientProject = null,
   surfaceMode = "read_only",
+  onQuickAction,
 }: Props) {
   if (surfaceMode === "client_safe") {
     return (
@@ -206,7 +209,7 @@ export function ReviewCenter({
   const approval = review?.approval_ready_context;
 
   return (
-    <section className="panel" style={{ padding: 18 }}>
+    <section className="panel" id="review-center-panel" style={{ padding: 18 }}>
       <div className="section-title">
         <div>
           <div className="eyebrow">Review Center</div>
@@ -227,6 +230,41 @@ export function ReviewCenter({
         </div>
       ) : (
         <div className="review-grid">
+          <div className="detail-card">
+            <h4>Suggested Quick Actions</h4>
+            <div className="chip-row" style={{ marginBottom: 10 }}>
+              <span className="chip info">{review.quick_actions?.quick_actions_status ?? "none"}</span>
+              <span className="chip">{review.quick_actions?.quick_actions_reason ?? "No quick actions available."}</span>
+            </div>
+            <div className="detail-list">
+              {(review.quick_actions?.available_actions ?? []).length > 0 ? (
+                review.quick_actions?.available_actions.map((action) => (
+                  <div className="audit-item" key={action.action_id}>
+                    <div className="chip-row" style={{ marginBottom: 8 }}>
+                      <span className="chip info">{action.action_kind}</span>
+                      <span className="chip">{action.action_scope}</span>
+                    </div>
+                    <button
+                      className="action-button"
+                      disabled={!action.action_enabled}
+                      onClick={() => onQuickAction?.(action)}
+                      style={{ marginBottom: 8 }}
+                      type="button"
+                    >
+                      {action.action_label}
+                    </button>
+                    <div className="muted">
+                      {action.action_enabled
+                        ? action.action_reason
+                        : action.blocked_reason || action.action_reason}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="audit-item muted">No review-center quick actions are currently available.</div>
+              )}
+            </div>
+          </div>
           <div className="detail-card">
             <h4>Execution Feedback</h4>
             <div className="chip-row" style={{ marginBottom: 10 }}>

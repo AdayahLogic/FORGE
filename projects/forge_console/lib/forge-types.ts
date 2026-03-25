@@ -21,6 +21,31 @@ export type ForgeWorkflowActivity = {
   package_created_at: string;
 };
 
+export type ForgeQuickActionKind =
+  | "navigate"
+  | "refresh"
+  | "review"
+  | "input_request"
+  | "inspect";
+
+export type ForgeQuickActionScope = "system" | "project" | "package";
+
+export type ForgeQuickAction = {
+  action_id: string;
+  action_label: string;
+  action_kind: ForgeQuickActionKind;
+  action_scope: ForgeQuickActionScope;
+  action_enabled: boolean;
+  action_reason: string;
+  blocked_reason: string;
+};
+
+export type ForgeQuickActions = {
+  quick_actions_status: "none" | "available" | "blocked";
+  available_actions: ForgeQuickAction[];
+  quick_actions_reason: string;
+};
+
 export type ForgeLifecycleTransition = {
   stage_id: string;
   stage_label: string;
@@ -316,6 +341,7 @@ export type ForgeReviewCenterSnapshot = {
   related_attachments: ForgeReviewAttachmentRecord[];
   delivery_summary?: ForgeDeliverySummary;
   client_safe_delivery_summary?: ForgeDeliverySummary;
+  quick_actions?: ForgeQuickActions;
 };
 
 export type ForgeIntakePreview = {
@@ -369,6 +395,7 @@ export type ForgeIntakePreview = {
     attachment_preview_count: number;
     summary: string;
   };
+  quick_actions?: ForgeQuickActions;
 };
 
 export type ForgeIntakeWorkspace = {
@@ -543,6 +570,7 @@ export type ForgeOverviewSnapshot = {
       blocked_or_deferred_count: number;
       budget_note: string;
     };
+    quick_actions?: ForgeQuickActions;
   };
   projects: ForgeProjectRow[];
   approval_center: {
@@ -613,6 +641,7 @@ export type PackageDetailSnapshot = {
     budget_reason: string;
   };
   review_center: ForgeReviewCenterSnapshot;
+  quick_actions?: ForgeQuickActions;
 };
 
 export type ProjectSnapshot = {
@@ -661,6 +690,7 @@ export type ProjectSnapshot = {
     budget_reason: string;
   };
   degraded_sources: string[];
+  quick_actions?: ForgeQuickActions;
 };
 
 export type ApprovalCenterState = {
