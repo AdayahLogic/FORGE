@@ -932,6 +932,7 @@ def build_studio_snapshot() -> dict[str, Any]:
     system_operator_guidance = build_system_operator_guidance_safe(
         project_rows=project_rows,
         self_evolution_governance_summary=self_evolution_summary,
+    )
     live_operation_status = build_overview_live_operation_status(
         project_rows=project_rows,
         dashboard=dashboard,
@@ -1059,6 +1060,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
         has_active_package=bool(current_package_id),
         package=current_package_data,
         latest_self_change_entry=latest_self_change_entry,
+    )
     live_operation_status = build_live_operation_status(
         project_key=key or "",
         project_name=str(project.get("name") or key or ""),
@@ -1299,6 +1301,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         has_active_package=True,
         package=package,
         latest_self_change_entry=latest_self_change_entry,
+    )
     live_operation_status = build_live_operation_status(
         project_key=key,
         project_name=str((PROJECTS.get(key) or {}).get("name") or key),
@@ -1483,7 +1486,6 @@ def _build_review_center_snapshot(
     related_attachments: list[dict[str, Any]],
     model_routing_policy: dict[str, Any],
     delivery_summary: dict[str, Any],
-    operator_guidance: dict[str, Any],
     operator_guidance: dict[str, Any],
     live_operation_status: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
