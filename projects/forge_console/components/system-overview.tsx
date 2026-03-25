@@ -30,6 +30,7 @@ export function SystemOverview({ overview }: Props) {
   const evaluation = data?.evaluation_counts;
   const local = data?.local_analysis_counts;
   const executorHealth = data?.executor_health ?? {};
+  const costVisibility = data?.cost_visibility;
   const systemStatus = data?.system_status;
   const backendOffline = systemStatus?.status === "offline";
   const displayState = (value: unknown, fallback: string) => {
@@ -107,6 +108,11 @@ export function SystemOverview({ overview }: Props) {
             backendOffline ? "Backend offline" : "Waiting for input",
           )}
           subvalue={`${Number(executorHealth.integrity_issues_count_total ?? 0)} integrity issues`}
+        />
+        <StatCard
+          label="Estimated Cost"
+          value={`$${Number(costVisibility?.estimated_cost_total_usd ?? 0).toFixed(4)}`}
+          subvalue={costVisibility?.label ?? "Estimated Cost (Preview/Non-Billed)"}
         />
       </div>
     </section>

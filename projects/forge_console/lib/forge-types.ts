@@ -38,6 +38,17 @@ export type ForgeExecutionFeedback = {
   lifecycle_transitions: ForgeLifecycleTransition[];
 };
 
+export type ForgeEstimatedCost = {
+  cost_estimate: number;
+  cost_unit: "usd_estimated" | string;
+  cost_source: "model_execution" | "runtime_execution" | "composed_operation" | string;
+  cost_breakdown: {
+    model: string;
+    estimated_tokens: number;
+    estimated_cost: number;
+  };
+};
+
 export type ForgeConstraintSections = {
   scope_boundaries: string[];
   risk_notes: string[];
@@ -259,6 +270,7 @@ export type ForgeIntakePreview = {
   offer_summary: ForgeRevenueOfferSummary | null;
   response_summary: ForgeRevenueResponseSummary | null;
   conversion_summary: ForgeRevenueConversionSummary | null;
+  cost_tracking: ForgeEstimatedCost;
   package_preview: {
     creation_mode: string;
     package_creation_allowed: boolean;
@@ -313,6 +325,7 @@ export type ForgeProjectRow = {
   latest_evaluation_status: string;
   latest_local_analysis_status: string;
   executor_health: string;
+  estimated_cost_total_usd?: number;
 };
 
 export type ForgeClientProjectRow = {
@@ -409,6 +422,12 @@ export type ForgeOverviewSnapshot = {
     };
     project_count: number;
     executor_health: Record<string, unknown>;
+    cost_visibility?: {
+      estimated_cost_total_usd: number;
+      project_estimated_cost_usd: Record<string, number>;
+      operation_count_total: number;
+      label: string;
+    };
   };
   projects: ForgeProjectRow[];
   approval_center: {
@@ -445,6 +464,7 @@ export type PackageQueueRow = {
   failure_risk_band: string;
   local_analysis_status: string;
   suggested_next_action: string;
+  cost_tracking?: ForgeEstimatedCost;
   lifecycle_status_label?: string;
   last_action_label?: string;
 };
@@ -460,6 +480,12 @@ export type PackageDetailSnapshot = {
   package_json: Record<string, unknown>;
   timeline: Array<Record<string, unknown>>;
   execution_feedback: ForgeExecutionFeedback;
+  cost_summary?: {
+    operation_cost: ForgeEstimatedCost;
+    timeline_estimated_cost_total: number;
+    cost_unit: string;
+    label: string;
+  };
   review_center: ForgeReviewCenterSnapshot;
 };
 
@@ -484,6 +510,20 @@ export type ProjectSnapshot = {
   workflow_activity: ForgeWorkflowActivity;
   approval_summary: Record<string, unknown>;
   intake_workspace: ForgeIntakeWorkspace | null;
+  cost_summary?: {
+    cost_per_operation: ForgeEstimatedCost[];
+    cost_per_project: {
+      estimated_cost_total: number;
+      cost_unit: string;
+    };
+    session_cost_summary: {
+      run_id: string;
+      estimated_cost_total: number;
+      cost_unit: string;
+      operation_count: number;
+    };
+    operation_count: number;
+  };
   degraded_sources: string[];
 };
 

@@ -187,6 +187,9 @@ export function ProjectControlPanel({
                     <span className={getChipClass(project.enforcement_status)}>
                       {project.enforcement_status}
                     </span>
+                    <span className="chip info">
+                      est ${Number(project.estimated_cost_total_usd ?? 0).toFixed(4)}
+                    </span>
                   </div>
                 </button>
               </div>
@@ -269,6 +272,24 @@ export function ProjectControlPanel({
                         intake?.draft_seed.requested_artifacts.length ??
                         0,
                     )}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Estimated Cost (Project)</span>
+                  <strong>
+                    $
+                    {Number(
+                      projectSnapshot.cost_summary?.cost_per_project.estimated_cost_total ?? 0,
+                    ).toFixed(4)}
+                  </strong>
+                </div>
+                <div className="detail-row">
+                  <span>Estimated Cost (Session)</span>
+                  <strong>
+                    $
+                    {Number(
+                      projectSnapshot.cost_summary?.session_cost_summary.estimated_cost_total ?? 0,
+                    ).toFixed(4)}
                   </strong>
                 </div>
               </div>

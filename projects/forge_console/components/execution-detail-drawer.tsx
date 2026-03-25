@@ -43,6 +43,7 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
   const reviewHeader = (detail?.review_header ?? {}) as Record<string, unknown>;
   const sections = (detail?.sections ?? {}) as Record<string, unknown>;
   const feedback = detail?.execution_feedback;
+  const costSummary = detail?.cost_summary;
   return (
     <section className={`drawer-panel ${open ? "open" : "closed"}`}>
       <div className="drawer-header">
@@ -90,6 +91,13 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
                 "No active execution yet. Create an intake request and let Forge prepare a governed package to populate this drawer."}
             </div>
           </div>
+          <div className="detail-card-subsection">
+            <div className="stat-label">Estimated Cost (Preview/Non-Billed)</div>
+            <div style={{ marginTop: 8 }}>
+              Operation: ${Number(costSummary?.operation_cost?.cost_estimate ?? 0).toFixed(4)} | Timeline total: $
+              {Number(costSummary?.timeline_estimated_cost_total ?? 0).toFixed(4)}
+            </div>
+          </div>
           <div className="section-title" style={{ marginTop: 18 }}>
             <div>
               <div className="eyebrow">Timeline</div>
@@ -107,6 +115,14 @@ export function ExecutionDetailDrawer({ open, detail, onToggle }: Props) {
                     <span className="chip">{String(item.execution_status ?? "waiting_for_input")}</span>
                     <span className="chip">{String(item.evaluation_status ?? "waiting_for_input")}</span>
                     <span className="chip">{String(item.local_analysis_status ?? "waiting_for_input")}</span>
+                    <span className="chip info">
+                      est $
+                      {Number(
+                        Number(
+                          ((item.cost_tracking as Record<string, unknown> | undefined)?.cost_estimate as number) ?? 0,
+                        ) || 0,
+                      ).toFixed(4)}
+                    </span>
                   </div>
                 </div>
               ))

@@ -62,6 +62,81 @@ def _utc_now_iso() -> str:
     return utc_now_iso()
 
 
+def _build_estimated_cost_tracking(
+    *,
+    cost_source: str,
+    estimated_tokens: int,
+    model: str,
+) -> dict[str, Any]:
+    tokens = max(0, int(estimated_tokens or 0))
+    estimated_cost = round((tokens / 1000.0) * 0.004, 6)
+    return {
+        "cost_estimate": estimated_cost,
+        "cost_unit": "usd_estimated",
+        "cost_source": str(cost_source or "composed_operation"),
+        "cost_breakdown": {
+            "model": str(model or "forge_cost_estimator"),
+            "estimated_tokens": tokens,
+            "estimated_cost": estimated_cost,
+        },
+    }
+
+
+def _normalize_cost_tracking(value: Any, *, fallback_source: str) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return _build_estimated_cost_tracking(
+            cost_source=fallback_source,
+            estimated_tokens=0,
+            model="forge_cost_estimator",
+        )
+    cost_estimate = value.get("cost_estimate")
+    try:
+        parsed_cost_estimate = float(cost_estimate)
+    except Exception:
+        parsed_cost_estimate = 0.0
+    breakdown = value.get("cost_breakdown")
+    breakdown_dict = dict(breakdown) if isinstance(breakdown, dict) else {}
+    estimated_tokens = breakdown_dict.get("estimated_tokens")
+    try:
+        parsed_tokens = max(0, int(estimated_tokens))
+    except Exception:
+        parsed_tokens = 0
+    estimated_cost = breakdown_dict.get("estimated_cost")
+    try:
+        parsed_breakdown_cost = float(estimated_cost)
+    except Exception:
+        parsed_breakdown_cost = parsed_cost_estimate
+    return {
+        "cost_estimate": round(max(0.0, parsed_cost_estimate), 6),
+        "cost_unit": str(value.get("cost_unit") or "usd_estimated"),
+        "cost_source": str(value.get("cost_source") or fallback_source),
+        "cost_breakdown": {
+            "model": str(breakdown_dict.get("model") or "forge_cost_estimator"),
+            "estimated_tokens": parsed_tokens,
+            "estimated_cost": round(max(0.0, parsed_breakdown_cost), 6),
+        },
+    }
+
+
+def _estimate_package_cost_tracking(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    receipt = _normalize_execution_receipt(p.get("execution_receipt"))
+    artifacts = [x for x in list(p.get("runtime_artifacts") or []) if isinstance(x, dict)]
+    expected_outputs = [x for x in list(p.get("expected_outputs") or []) if str(x).strip()]
+    status = str(p.get("execution_status") or "").strip().lower()
+    tokens = 140 + (len(expected_outputs) * 45) + (len(artifacts) * 70)
+    tokens += max(0, int(receipt.get("files_touched_count") or 0)) * 6
+    tokens += max(0, int(receipt.get("artifacts_written_count") or 0)) * 8
+    if status in {"failed", "blocked", "rolled_back"}:
+        tokens += 60
+    source = "runtime_execution" if status not in {"", "pending", "not_started"} else "composed_operation"
+    return _build_estimated_cost_tracking(
+        cost_source=source,
+        estimated_tokens=tokens,
+        model="forge_package_cost_estimator",
+    )
+
+
 def _build_execution_package_journal_record(normalized: dict[str, Any], package_path: str | None) -> dict[str, Any]:
     metadata = normalized.get("metadata") if isinstance(normalized.get("metadata"), dict) else {}
     governance_conflict = metadata.get("governance_conflict") if isinstance(metadata.get("governance_conflict"), dict) else {}
@@ -146,6 +221,7 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "governance_conflict_type": governance_conflict.get("conflict_type"),
         "governance_resolution_state": metadata.get("governance_resolution_state"),
         "governance_routing_outcome": metadata.get("governance_routing_outcome"),
+        "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
     }
 
 
@@ -453,6 +529,12 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         metadata["cursor_bridge_summary"] = cursor_bridge_summary
     if cursor_bridge_artifacts:
         metadata["cursor_bridge_artifacts"] = cursor_bridge_artifacts
+    normalized_cost_tracking = _normalize_cost_tracking(
+        p.get("cost_tracking"),
+        fallback_source="composed_operation",
+    )
+    if float(normalized_cost_tracking.get("cost_estimate") or 0.0) <= 0.0:
+        normalized_cost_tracking = _estimate_package_cost_tracking(p)
 
     return {
         "package_id": package_id,
@@ -554,6 +636,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "local_analysis_reason": normalize_local_analysis_reason(p.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(p.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
+        "cost_tracking": normalized_cost_tracking,
     }
 
 
@@ -641,6 +724,7 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "governance_conflict_type": str(r.get("governance_conflict_type") or ""),
         "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
         "governance_routing_outcome": str(r.get("governance_routing_outcome") or ""),
+        "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
     }
 
 
@@ -1923,6 +2007,11 @@ def record_execution_package_execution(
         package["failure_summary"] = normalize_failure_summary(
             summarize_failure(failure_class="preflight_block", timestamp=package["execution_finished_at"])
         )
+        package["cost_tracking"] = _build_estimated_cost_tracking(
+            cost_source="runtime_execution",
+            estimated_tokens=120,
+            model="forge_runtime_cost_estimator",
+        )
         package["recovery_summary"] = normalize_recovery_summary(
             evaluate_recovery_summary(
                 execution_status="blocked",
@@ -2029,6 +2118,15 @@ def record_execution_package_execution(
             rollback_repair=package.get("rollback_repair"),
             integrity_verification=package.get("integrity_verification"),
         )
+    execution_cost = _estimate_package_cost_tracking(package)
+    package["cost_tracking"] = {
+        **execution_cost,
+        "cost_source": "runtime_execution",
+        "cost_breakdown": {
+            **dict(execution_cost.get("cost_breakdown") or {}),
+            "model": "forge_runtime_cost_estimator",
+        },
+    }
 
     return _persist_package_update(
         project_path=project_path,

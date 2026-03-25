@@ -111,6 +111,51 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _build_cost_tracking(*, cost_source: str, estimated_tokens: int, model: str) -> dict[str, Any]:
+    tokens = max(0, int(estimated_tokens or 0))
+    estimated_cost = round((tokens / 1000.0) * 0.004, 6)
+    return {
+        "cost_estimate": estimated_cost,
+        "cost_unit": "usd_estimated",
+        "cost_source": str(cost_source or "composed_operation"),
+        "cost_breakdown": {
+            "model": str(model or "forge_preview_cost_estimator"),
+            "estimated_tokens": tokens,
+            "estimated_cost": estimated_cost,
+        },
+    }
+
+
+def _estimate_preview_cost(
+    *,
+    request_kind: str,
+    objective: str,
+    project_context: str,
+    constraints: list[str],
+    requested_artifacts: list[str],
+    linked_attachment_count: int,
+    warnings_count: int,
+    lead_profile: dict[str, str],
+) -> dict[str, Any]:
+    text_len = (
+        len(str(objective or ""))
+        + len(str(project_context or ""))
+        + sum(len(str(item or "")) for item in constraints)
+        + sum(len(str(item or "")) for item in requested_artifacts)
+        + sum(len(str(value or "")) for value in lead_profile.values())
+    )
+    base_tokens = 140 + int(text_len / 4)
+    base_tokens += linked_attachment_count * 45
+    base_tokens += warnings_count * 20
+    if str(request_kind or "").strip().lower() == "lead_intake":
+        base_tokens += 90
+    return _build_cost_tracking(
+        cost_source="model_execution",
+        estimated_tokens=base_tokens,
+        model="forge_intake_preview_estimator",
+    )
+
+
 def _attachment_root(project_path: str) -> Path:
     root = ensure_state_folder(project_path) / "console_attachments"
     root.mkdir(parents=True, exist_ok=True)
@@ -1191,6 +1236,16 @@ def preview_intake_request(
         if normalized_request_kind == "lead_intake"
         else None
     )
+    cost_tracking = _estimate_preview_cost(
+        request_kind=normalized_request_kind,
+        objective=objective_value,
+        project_context=project_context_value,
+        constraints=flat_constraints,
+        requested_artifacts=flat_requested_artifacts,
+        linked_attachment_count=len(linked),
+        warnings_count=len(warnings),
+        lead_profile=lead_profile,
+    )
     return {
         "request_id": request_id,
         "request_kind": normalized_request_kind,
@@ -1219,6 +1274,7 @@ def preview_intake_request(
         "offer_summary": offer_summary,
         "response_summary": response_summary,
         "conversion_summary": conversion_summary,
+        "cost_tracking": cost_tracking,
         "package_preview": {
             "creation_mode": "lead_preview_only" if mode == "revenue_lead" else "preview_only",
             "package_creation_allowed": False,
@@ -1326,6 +1382,11 @@ def preview_intake_request_safe(**kwargs: Any) -> dict[str, Any]:
                 )
                 if _normalize_request_kind(kwargs.get("request_kind")) == "lead_intake"
                 else None
+            ),
+            "cost_tracking": _build_cost_tracking(
+                cost_source="composed_operation",
+                estimated_tokens=80,
+                model="forge_intake_preview_estimator",
             ),
             "package_preview": {
                 "creation_mode": "preview_only",

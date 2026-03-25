@@ -11,6 +11,31 @@ from datetime import datetime
 from typing import Any
 
 
+def _build_runtime_cost_tracking(
+    *,
+    runtime: str,
+    status: str,
+    artifacts: list[dict[str, Any]] | None = None,
+    errors: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    artifact_count = len(artifacts or [])
+    error_count = len(errors or [])
+    estimated_tokens = 120 + (artifact_count * 60) + (error_count * 40)
+    if str(status or "").strip().lower() in {"error", "blocked"}:
+        estimated_tokens += 40
+    estimated_cost = round((estimated_tokens / 1000.0) * 0.004, 6)
+    return {
+        "cost_estimate": estimated_cost,
+        "cost_unit": "usd_estimated",
+        "cost_source": "runtime_execution",
+        "cost_breakdown": {
+            "model": f"{str(runtime or 'runtime').strip().lower()}_runtime_estimator",
+            "estimated_tokens": estimated_tokens,
+            "estimated_cost": estimated_cost,
+        },
+    }
+
+
 def build_runtime_execution_result(
     *,
     runtime: str,
@@ -45,6 +70,12 @@ def build_runtime_execution_result(
         "next_action": next_action,
         "artifacts": artifacts or [],
         "errors": errors or [],
+        "cost_tracking": _build_runtime_cost_tracking(
+            runtime=runtime,
+            status=status,
+            artifacts=artifacts,
+            errors=errors,
+        ),
     }
     if isinstance(extra_fields, dict):
         result.update(extra_fields)

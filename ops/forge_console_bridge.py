@@ -62,6 +62,91 @@ def _result(status: str, payload: dict[str, Any], message: str = "") -> dict[str
     }
 
 
+def _normalize_cost_tracking(value: Any, *, fallback_source: str = "composed_operation") -> dict[str, Any]:
+    raw = dict(value) if isinstance(value, dict) else {}
+    cost_estimate = raw.get("cost_estimate")
+    try:
+        parsed_cost_estimate = float(cost_estimate)
+    except Exception:
+        parsed_cost_estimate = 0.0
+    breakdown = dict(raw.get("cost_breakdown") or {})
+    estimated_tokens = breakdown.get("estimated_tokens")
+    try:
+        parsed_tokens = max(0, int(estimated_tokens))
+    except Exception:
+        parsed_tokens = 0
+    estimated_cost = breakdown.get("estimated_cost")
+    try:
+        parsed_breakdown_cost = float(estimated_cost)
+    except Exception:
+        parsed_breakdown_cost = parsed_cost_estimate
+    return {
+        "cost_estimate": round(max(0.0, parsed_cost_estimate), 6),
+        "cost_unit": str(raw.get("cost_unit") or "usd_estimated"),
+        "cost_source": str(raw.get("cost_source") or fallback_source),
+        "cost_breakdown": {
+            "model": str(breakdown.get("model") or "forge_cost_estimator"),
+            "estimated_tokens": parsed_tokens,
+            "estimated_cost": round(max(0.0, parsed_breakdown_cost), 6),
+        },
+    }
+
+
+def _project_cost_summary(
+    *,
+    project_path: str,
+    intake_preview: dict[str, Any] | None = None,
+    session_run_id: str = "",
+) -> dict[str, Any]:
+    journal_rows = list_execution_package_journal_entries(project_path, n=50)
+    operation_rows: list[dict[str, Any]] = []
+    for row in journal_rows:
+        if not isinstance(row, dict):
+            continue
+        operation_rows.append(
+            {
+                "scope": "execution_package",
+                "run_id": str(row.get("run_id") or ""),
+                "cost_tracking": _normalize_cost_tracking(row.get("cost_tracking"), fallback_source="composed_operation"),
+            }
+        )
+    if isinstance(intake_preview, dict):
+        operation_rows.append(
+            {
+                "scope": "intake_preview",
+                "run_id": "",
+                "cost_tracking": _normalize_cost_tracking(intake_preview.get("cost_tracking"), fallback_source="model_execution"),
+            }
+        )
+    project_total = round(sum(float((item.get("cost_tracking") or {}).get("cost_estimate") or 0.0) for item in operation_rows), 6)
+    session_key = str(session_run_id or "").strip()
+    session_total = 0.0
+    if session_key:
+        session_total = round(
+            sum(
+                float((item.get("cost_tracking") or {}).get("cost_estimate") or 0.0)
+                for item in operation_rows
+                if str(item.get("run_id") or "") == session_key
+            ),
+            6,
+        )
+    recent = operation_rows[:12]
+    return {
+        "cost_per_operation": [dict(item.get("cost_tracking") or {}) for item in recent],
+        "cost_per_project": {
+            "estimated_cost_total": project_total,
+            "cost_unit": "usd_estimated",
+        },
+        "session_cost_summary": {
+            "run_id": session_key,
+            "estimated_cost_total": session_total,
+            "cost_unit": "usd_estimated",
+            "operation_count": sum(1 for item in operation_rows if not session_key or str(item.get("run_id") or "") == session_key),
+        },
+        "operation_count": len(operation_rows),
+    }
+
+
 def _resolve_project(project_key: str | None) -> tuple[str | None, dict[str, Any] | None]:
     key = str(project_key or "").strip().lower()
     if not key:
@@ -86,6 +171,10 @@ def _project_rows_from_dashboard(dashboard: dict[str, Any]) -> list[dict[str, An
     health_by_project = dashboard.get("execution_status_by_project") or {}
     for key in sorted(PROJECTS.keys()):
         meta = PROJECTS.get(key) or {}
+        project_path = str(meta.get("path") or "")
+        cost_summary = _project_cost_summary(project_path=project_path) if project_path else {
+            "cost_per_project": {"estimated_cost_total": 0.0, "cost_unit": "usd_estimated"}
+        }
         rows.append(
             {
                 "project_key": key,
@@ -102,6 +191,9 @@ def _project_rows_from_dashboard(dashboard: dict[str, Any]) -> list[dict[str, An
                 "latest_evaluation_status": latest_eval.get(key) or "pending",
                 "latest_local_analysis_status": latest_analysis.get(key) or "pending",
                 "executor_health": health_by_project.get(key) or "unknown",
+                "estimated_cost_total_usd": float(
+                    ((cost_summary.get("cost_per_project") or {}).get("estimated_cost_total") or 0.0)
+                ),
             }
         )
     return rows
@@ -128,6 +220,7 @@ def _decorate_queue_row(row: dict[str, Any]) -> dict[str, Any]:
         **row,
         "lifecycle_status_label": execution_feedback.get("package_status") or "Not started",
         "last_action_label": execution_feedback.get("active_transition") or "Waiting for input",
+        "cost_tracking": _normalize_cost_tracking(row.get("cost_tracking"), fallback_source="composed_operation"),
     }
 
 
@@ -683,6 +776,11 @@ def build_studio_snapshot() -> dict[str, Any]:
     evaluation_summary = dashboard.get("execution_package_evaluation_summary") or {}
     local_analysis_summary = dashboard.get("execution_package_local_analysis_summary") or {}
     project_rows = _project_rows_from_dashboard(dashboard)
+    project_cost_map = {
+        str(row.get("project_key") or ""): float(row.get("estimated_cost_total_usd") or 0.0)
+        for row in project_rows
+    }
+    estimated_cost_total = round(sum(project_cost_map.values()), 6)
     package_counts = {
         "review_pending": review_summary.get("pending_count_total", 0),
         "decision_pending": decision_summary.get("pending_count_total", 0),
@@ -736,6 +834,12 @@ def build_studio_snapshot() -> dict[str, Any]:
             },
             "project_count": (dashboard.get("project_summary") or {}).get("total", 0) or len(project_rows),
             "executor_health": _executor_health_summary(dashboard),
+            "cost_visibility": {
+                "estimated_cost_total_usd": estimated_cost_total,
+                "project_estimated_cost_usd": project_cost_map,
+                "operation_count_total": sum(1 for _ in project_rows),
+                "label": "Estimated Cost (Preview/Non-Billed)",
+            },
         },
         "projects": project_rows,
         "approval_center": {
@@ -777,6 +881,12 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
     package_queue = _normalize_package_queue(key, project_path)
     approvals = (run_command("pending_approvals", project_path=project_path, project_name=key).get("payload") or {})
     intake_workspace = build_intake_workspace(project_key=key, project_path=project_path)
+    latest_run_id = str((latest_session.get("run_id") or project_state.get("run_id") or ""))
+    cost_summary = _project_cost_summary(
+        project_path=project_path,
+        intake_preview=(intake_workspace.get("preview") if isinstance(intake_workspace, dict) else None),
+        session_run_id=latest_run_id,
+    )
     current_package_id = str(project_state.get("execution_package_id") or "")
     current_package_data = _read_current_package(project_path, project_state)
     execution_feedback = _build_execution_feedback(current_package_data)
@@ -816,6 +926,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             ),
             "approval_summary": approvals,
             "intake_workspace": intake_workspace,
+            "cost_summary": cost_summary,
             "degraded_sources": [
                 source
                 for source, value in (
@@ -980,9 +1091,11 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
                 "execution_status": row.get("execution_status") or "",
                 "evaluation_status": row.get("evaluation_status") or "",
                 "local_analysis_status": row.get("local_analysis_status") or "",
+                "cost_tracking": _normalize_cost_tracking(row.get("cost_tracking"), fallback_source="composed_operation"),
             }
         )
     execution_feedback = _build_execution_feedback(package, timeline=timeline)
+    cost_summary = _build_package_cost_summary(package, timeline)
     return _result(
         "ok",
         {
@@ -996,6 +1109,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "package_json": package,
             "timeline": timeline,
             "execution_feedback": execution_feedback,
+            "cost_summary": cost_summary,
             "review_center": _build_review_center_snapshot(
                 package_id=package_id,
                 package=package,
@@ -1059,6 +1173,22 @@ def _summarize_test_results(
         "integrity_status": str((package.get("integrity_verification") or {}).get("integrity_status") or "waiting_for_input"),
         "evaluation_quality_band": str(evaluation_summary.get("execution_quality_band") or ""),
         "suggested_next_action": str(local_summary.get("suggested_next_action") or ""),
+    }
+
+
+def _build_package_cost_summary(package: dict[str, Any], timeline: list[dict[str, Any]]) -> dict[str, Any]:
+    package_cost = _normalize_cost_tracking(package.get("cost_tracking"), fallback_source="composed_operation")
+    timeline_costs = [
+        _normalize_cost_tracking(row.get("cost_tracking"), fallback_source="composed_operation")
+        for row in timeline
+        if isinstance(row, dict)
+    ]
+    timeline_total = round(sum(float(item.get("cost_estimate") or 0.0) for item in timeline_costs), 6)
+    return {
+        "operation_cost": package_cost,
+        "timeline_estimated_cost_total": timeline_total,
+        "cost_unit": "usd_estimated",
+        "label": "Estimated Cost (Preview/Non-Billed)",
     }
 
 
