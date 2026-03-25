@@ -87,6 +87,7 @@ export function SystemOverview({ overview, onQuickAction }: Props) {
   const costVisibility = data?.cost_visibility;
   const budgetVisibility = data?.budget_visibility;
   const modelRouting = data?.model_routing_visibility;
+  const handoffReview = data?.execution_handoff_review;
   const operatorGuidance = data?.operator_guidance;
   const liveOperation = data?.live_operation_status;
   const quickActions = data?.quick_actions;
@@ -190,6 +191,11 @@ export function SystemOverview({ overview, onQuickAction }: Props) {
           subvalue={modelRouting?.policy_output_label ?? "Policy Output (Read-only)"}
         />
         <StatCard
+          label="Execution Handoff Review"
+          value={String(handoffReview?.handoff_status ?? "not_ready")}
+          subvalue={handoffReview?.next_handoff_action || "No handoff action is currently required."}
+        />
+        <StatCard
           label="Operator Guidance (Suggested, Not Executed)"
           value={String(operatorGuidance?.guidance_status ?? "idle")}
           subvalue={operatorGuidance?.next_best_action || "No action is currently required."}
@@ -208,6 +214,27 @@ export function SystemOverview({ overview, onQuickAction }: Props) {
         </div>
       </div>
       <div className="review-grid" style={{ marginTop: 16 }}>
+        <div className="detail-card">
+          <h4>Execution Handoff Review</h4>
+          <div className="detail-list">
+            <div className="detail-row">
+              <span>Status</span>
+              <strong>{displayState(handoffReview?.handoff_status, "not_ready")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Readiness</span>
+              <strong>{displayState(handoffReview?.handoff_readiness, "low")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Approval Posture</span>
+              <strong>{displayState(handoffReview?.approval_posture, "review_in_progress")}</strong>
+            </div>
+            <div className="detail-row">
+              <span>Next Action</span>
+              <strong>{displayState(handoffReview?.next_handoff_action, "No handoff action required.")}</strong>
+            </div>
+          </div>
+        </div>
         <div className="detail-card">
           <h4>Live Operation Status</h4>
           <div className="detail-list">

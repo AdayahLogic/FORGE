@@ -21,6 +21,7 @@ from NEXUS.budget_controls import (
     summarize_journal_estimated_costs,
 )
 from NEXUS.execution_package_registry import list_execution_package_journal_entries
+from NEXUS.execution_handoff_review import build_execution_handoff_review_safe
 from NEXUS.model_routing_policy import resolve_model_routing_policy_safe
 from NEXUS.operator_guidance import build_operator_guidance_safe
 from NEXUS.operator_quick_actions import build_intake_preview_quick_actions
@@ -1206,6 +1207,16 @@ def build_intake_workspace(
         package={},
         latest_self_change_entry={},
     )
+    execution_handoff_review = build_execution_handoff_review_safe(
+        scope="project",
+        project_state=project_state,
+        intake_preview=preview,
+        operator_guidance=operator_guidance,
+        model_routing_policy=dict(preview.get("model_routing_policy") or {}),
+        budget_status=str(preview.get("budget_status") or ""),
+        budget_reason=str(preview.get("budget_reason") or ""),
+        has_active_package=bool(str(project_state.get("execution_package_id") or "").strip()),
+    )
     return {
         "project_key": project_key,
         "project_path": project_path,
@@ -1236,6 +1247,7 @@ def build_intake_workspace(
         },
         "preview": preview,
         "operator_guidance": operator_guidance,
+        "execution_handoff_review": execution_handoff_review,
     }
 
 

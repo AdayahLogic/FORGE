@@ -1,5 +1,6 @@
 import type {
   ForgeClientProjectSnapshot,
+  ForgeExecutionHandoffReview,
   ForgeQuickAction,
   ForgeReviewCenterSnapshot,
   PackageDetailSnapshot,
@@ -209,6 +210,8 @@ export function ReviewCenter({
   const approval = review?.approval_ready_context;
   const operatorGuidance = detail?.operator_guidance ?? review?.operator_guidance;
   const liveOperation = review?.live_operation_status ?? detail?.live_operation_status;
+  const handoffReview: ForgeExecutionHandoffReview | undefined =
+    review?.execution_handoff_review ?? detail?.execution_handoff_review;
 
   return (
     <section className="panel" id="review-center-panel" style={{ padding: 18 }}>
@@ -220,6 +223,9 @@ export function ReviewCenter({
         <div className="chip-row">
           <span className={chipClass(String(approval?.review_status ?? "pending"))}>
             {String(approval?.review_status ?? "pending")}
+          </span>
+          <span className={chipClass(String(handoffReview?.handoff_status ?? "not_ready"))}>
+            {String(handoffReview?.handoff_status ?? "not_ready")}
           </span>
           <span className="chip">
             package {detail?.package_id ? "selected" : "none"}
@@ -333,6 +339,62 @@ export function ReviewCenter({
                 ) : (
                   <div className="audit-item muted">No recent governed activity.</div>
                 )}
+              </div>
+            </div>
+          </div>
+          <div className="detail-card">
+            <h4>Execution Handoff Review</h4>
+            <div className="chip-row" style={{ marginBottom: 10 }}>
+              <span className={chipClass(String(handoffReview?.handoff_status ?? "not_ready"))}>
+                {String(handoffReview?.handoff_status ?? "not_ready")}
+              </span>
+              <span className={chipClass(String(handoffReview?.handoff_readiness ?? "low"))}>
+                readiness {String(handoffReview?.handoff_readiness ?? "low")}
+              </span>
+              <span className="chip">
+                {String(handoffReview?.approval_posture ?? "review_in_progress")}
+              </span>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">Review Summary</div>
+              <div style={{ marginTop: 8 }}>
+                {displayValue(handoffReview?.review_summary, "No handoff review summary available.")}
+              </div>
+            </div>
+            <div className="detail-card-subsection">
+              <div className="stat-label">Next Handoff Action</div>
+              <div style={{ marginTop: 8 }}>
+                {displayValue(handoffReview?.next_handoff_action, "No handoff action is currently required.")}
+              </div>
+            </div>
+            <div className="detail-grid-two" style={{ marginTop: 10 }}>
+              <div className="detail-card-subsection">
+                <div className="stat-label">Handoff Blockers</div>
+                <div className="detail-list" style={{ marginTop: 8 }}>
+                  {(handoffReview?.handoff_blockers ?? []).length > 0 ? (
+                    (handoffReview?.handoff_blockers ?? []).map((item, index) => (
+                      <div className="audit-item" key={`handoff-blocker-${index}`}>
+                        {item}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="audit-item muted">No explicit handoff blockers.</div>
+                  )}
+                </div>
+              </div>
+              <div className="detail-card-subsection">
+                <div className="stat-label">Handoff Requirements</div>
+                <div className="detail-list" style={{ marginTop: 8 }}>
+                  {(handoffReview?.handoff_requirements ?? []).length > 0 ? (
+                    (handoffReview?.handoff_requirements ?? []).map((item, index) => (
+                      <div className="audit-item" key={`handoff-requirement-${index}`}>
+                        {item}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="audit-item muted">No additional handoff requirements.</div>
+                  )}
+                </div>
               </div>
             </div>
           </div>

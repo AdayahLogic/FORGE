@@ -1,6 +1,7 @@
 import type {
   ForgeClientProjectRow,
   ForgeClientProjectSnapshot,
+  ForgeExecutionHandoffReview,
   ForgeQuickAction,
   ForgeProjectRow,
   ProjectSnapshot,
@@ -167,6 +168,8 @@ export function ProjectControlPanel({
   const operatorGuidance =
     projectSnapshot?.operator_guidance ?? intake?.operator_guidance;
   const liveOperation = projectSnapshot?.live_operation_status;
+  const handoffReview: ForgeExecutionHandoffReview | undefined =
+    projectSnapshot?.execution_handoff_review ?? intake?.execution_handoff_review;
   const projectQuickActions = projectSnapshot?.quick_actions;
   const systemStatus = projectSnapshot?.system_status;
   const backendOffline = systemStatus?.status === "offline";
@@ -295,6 +298,18 @@ export function ProjectControlPanel({
                   <strong>{displayValue(preview?.readiness, "Waiting for input")}</strong>
                 </div>
                 <div className="detail-row">
+                  <span>Execution Handoff</span>
+                  <strong>{displayValue(handoffReview?.handoff_status, "not_ready")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Handoff Readiness</span>
+                  <strong>{displayValue(handoffReview?.handoff_readiness, "low")}</strong>
+                </div>
+                <div className="detail-row">
+                  <span>Approval Posture</span>
+                  <strong>{displayValue(handoffReview?.approval_posture, "review_in_progress")}</strong>
+                </div>
+                <div className="detail-row">
                   <span>Model Lane (Policy)</span>
                   <strong>{displayValue(modelRouting?.selected_model_lane, "Waiting for policy output")}</strong>
                 </div>
@@ -386,6 +401,29 @@ export function ProjectControlPanel({
                   <div className="stat-label">Routing Reason (Policy Output)</div>
                   <div style={{ marginTop: 8 }}>
                     {displayValue(modelRouting?.routing_reason, "Model routing policy output is not available yet.")}
+                  </div>
+                </div>
+                <div className="detail-card-subsection">
+                  <div className="stat-label">Execution Handoff Review</div>
+                  <div style={{ marginTop: 8 }}>
+                    <strong>Summary:</strong>{" "}
+                    {displayValue(handoffReview?.review_summary, "No handoff review summary available.")}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <strong>Next Action:</strong>{" "}
+                    {displayValue(handoffReview?.next_handoff_action, "No handoff action currently required.")}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <strong>Blockers:</strong>{" "}
+                    {handoffReview?.handoff_blockers?.length
+                      ? handoffReview.handoff_blockers.join(" | ")
+                      : "none"}
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    <strong>Requirements:</strong>{" "}
+                    {handoffReview?.handoff_requirements?.length
+                      ? handoffReview.handoff_requirements.join(" | ")
+                      : "none"}
                   </div>
                 </div>
               </div>

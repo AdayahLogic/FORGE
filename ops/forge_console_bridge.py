@@ -40,6 +40,10 @@ from NEXUS.execution_package_registry import (
     list_self_change_audit_entries,
     read_execution_package,
 )
+from NEXUS.execution_handoff_review import (
+    build_execution_handoff_review_safe,
+    build_overview_execution_handoff_review_safe,
+)
 from NEXUS.live_operation_status import (
     build_live_operation_status,
     build_overview_live_operation_status,
@@ -1000,6 +1004,7 @@ def build_studio_snapshot() -> dict[str, Any]:
                 "kill_switch_active": bool(governing_project_budget.get("kill_switch_active")),
             },
             "model_routing_visibility": _build_model_routing_visibility(project_rows),
+            "execution_handoff_review": build_overview_execution_handoff_review_safe(project_rows),
             "operator_guidance": system_operator_guidance,
             "live_operation_status": live_operation_status,
         },
@@ -1076,6 +1081,19 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
         cost_summary=cost_summary,
         delivery_summary=delivery_summary,
     )
+    execution_handoff_review = build_execution_handoff_review_safe(
+        scope="project",
+        project_state=project_state,
+        package=current_package_data,
+        intake_preview=dict((intake_workspace or {}).get("preview") or {}),
+        operator_guidance=operator_guidance,
+        live_operation_status=live_operation_status,
+        model_routing_policy=dict(((intake_workspace or {}).get("preview") or {}).get("model_routing_policy") or {}),
+        delivery_summary=delivery_summary,
+        budget_status=str((cost_summary or {}).get("budget_status") or ""),
+        budget_reason=str((cost_summary or {}).get("budget_reason") or ""),
+        has_active_package=bool(current_package_id),
+    )
     current_package = None
     if current_package_id:
         current_package = (
@@ -1111,6 +1129,7 @@ def build_project_snapshot(project_key: str) -> dict[str, Any]:
             "live_operation_status": live_operation_status,
             "approval_summary": approvals,
             "delivery_summary": delivery_summary,
+            "execution_handoff_review": execution_handoff_review,
             "operator_guidance": operator_guidance,
             "intake_workspace": intake_workspace,
             "cost_summary": cost_summary,
@@ -1325,6 +1344,21 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         cost_summary=cost_summary,
         delivery_summary=delivery_summary,
     )
+    execution_handoff_review = build_execution_handoff_review_safe(
+        scope="package",
+        project_state=project_state,
+        package=package,
+        operator_guidance=operator_guidance,
+        live_operation_status=live_operation_status,
+        review_center_context={
+            "approval_ready_context": dict((detail.get("review_header") or {})),
+        },
+        model_routing_policy=model_routing_policy,
+        delivery_summary=delivery_summary,
+        budget_status=str((cost_summary or {}).get("budget_status") or package.get("budget_status") or ""),
+        budget_reason=str((cost_summary or {}).get("budget_reason") or package.get("budget_reason") or ""),
+        has_active_package=True,
+    )
     review_center = _build_review_center_snapshot(
         package_id=package_id,
         package=package,
@@ -1337,6 +1371,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
         operator_guidance=operator_guidance,
         live_operation_status=live_operation_status,
         cost_summary=cost_summary,
+        execution_handoff_review=execution_handoff_review,
     )
     return _result(
         "ok",
@@ -1350,6 +1385,7 @@ def build_package_snapshot(package_id: str, project_key: str | None = None) -> d
             "local_analysis": local_analysis.get("local_analysis") or {},
             "package_json": package,
             "delivery_summary": delivery_summary,
+            "execution_handoff_review": execution_handoff_review,
             "timeline": timeline,
             "execution_feedback": execution_feedback,
             "cost_summary": cost_summary,
@@ -1507,6 +1543,7 @@ def _build_review_center_snapshot(
     operator_guidance: dict[str, Any],
     live_operation_status: dict[str, Any] | None = None,
     cost_summary: dict[str, Any] | None = None,
+    execution_handoff_review: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     review_header = dict(detail.get("review_header") or {})
     sections = dict(detail.get("sections") or {})
@@ -1535,6 +1572,7 @@ def _build_review_center_snapshot(
         "delivery_summary": dict(delivery_summary or {}),
         "client_safe_delivery_summary": _client_ready_delivery_summary(delivery_summary),
         "live_operation_status": dict(live_operation_status or {}),
+        "execution_handoff_review": dict(execution_handoff_review or {}),
     }
     review_payload["quick_actions"] = build_review_center_quick_actions(
         review_center=review_payload,

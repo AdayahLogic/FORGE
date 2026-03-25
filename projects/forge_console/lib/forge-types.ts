@@ -40,6 +40,25 @@ export type ForgeOperatorGuidance = {
   delivery_context_note: string;
 };
 
+export type ForgeExecutionHandoffReview = {
+  handoff_status:
+    | "not_ready"
+    | "needs_review"
+    | "awaiting_approval"
+    | "ready_for_handoff"
+    | "handoff_blocked";
+  handoff_readiness: "low" | "medium" | "high";
+  handoff_blockers: string[];
+  handoff_requirements: string[];
+  approval_posture: string;
+  review_summary: string;
+  next_handoff_action: string;
+  handoff_scope: "project" | "package";
+  budget_handoff_note: string;
+  governance_handoff_note: string;
+  routing_handoff_note: string;
+};
+
 export type ForgeLiveOperationActivity = {
   timestamp: string;
   activity_type: string;
@@ -379,6 +398,7 @@ export type ForgeReviewCenterSnapshot = {
   delivery_summary?: ForgeDeliverySummary;
   client_safe_delivery_summary?: ForgeDeliverySummary;
   live_operation_status?: ForgeLiveOperationStatus;
+  execution_handoff_review?: ForgeExecutionHandoffReview;
   quick_actions?: ForgeQuickActions;
 };
 
@@ -462,6 +482,7 @@ export type ForgeIntakeWorkspace = {
   };
   preview: ForgeIntakePreview;
   operator_guidance?: ForgeOperatorGuidance;
+  execution_handoff_review?: ForgeExecutionHandoffReview;
 };
 
 export type ForgeProjectRow = {
@@ -609,6 +630,7 @@ export type ForgeOverviewSnapshot = {
       blocked_or_deferred_count: number;
       budget_note: string;
     };
+    execution_handoff_review?: ForgeExecutionHandoffReview;
     operator_guidance?: ForgeOperatorGuidance;
     live_operation_status?: ForgeLiveOperationStatus;
     quick_actions?: ForgeQuickActions;
@@ -683,6 +705,7 @@ export type PackageDetailSnapshot = {
     budget_reason: string;
   };
   live_operation_status?: ForgeLiveOperationStatus;
+  execution_handoff_review?: ForgeExecutionHandoffReview;
   review_center: ForgeReviewCenterSnapshot;
   quick_actions?: ForgeQuickActions;
 };
@@ -708,6 +731,7 @@ export type ProjectSnapshot = {
   workflow_activity: ForgeWorkflowActivity;
   operator_guidance?: ForgeOperatorGuidance;
   live_operation_status?: ForgeLiveOperationStatus;
+  execution_handoff_review?: ForgeExecutionHandoffReview;
   approval_summary: Record<string, unknown>;
   delivery_summary?: ForgeDeliverySummary;
   intake_workspace: ForgeIntakeWorkspace | null;
