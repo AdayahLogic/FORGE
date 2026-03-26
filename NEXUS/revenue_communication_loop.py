@@ -430,6 +430,12 @@ def evaluate_sales_brain_safe(
             **closing,
             **conversation,
         }
+        if closing.get("closing_signal_type") == "confirmation":
+            updates["deal_status"] = "closed_won"
+        elif _to_text(package.get("lead_status")).lower() == "closed_lost":
+            updates["deal_status"] = "closed_lost"
+        else:
+            updates["deal_status"] = _to_text(package.get("deal_status")).lower() or "open"
         if pkg_id:
             record_execution_package_revenue_loop_safe(
                 project_path=project_path,

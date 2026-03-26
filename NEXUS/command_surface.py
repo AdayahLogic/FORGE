@@ -335,6 +335,25 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "follow_up_next_at": p.get("follow_up_next_at") or "",
         "notification_type": p.get("notification_type") or "",
         "notification_priority": p.get("notification_priority") or "",
+        "deal_status": p.get("deal_status") or "open",
+        "project_id": p.get("project_id") or "",
+        "project_created_at": p.get("project_created_at") or "",
+        "project_status": p.get("project_status") or "initialized",
+        "project_priority": p.get("project_priority") or "medium",
+        "build_required": bool(p.get("build_required")),
+        "build_status": p.get("build_status") or "pending",
+        "build_mission_id": p.get("build_mission_id") or "",
+        "build_executor": p.get("build_executor") or "codex",
+        "setup_required": bool(p.get("setup_required")),
+        "setup_status": p.get("setup_status") or "pending",
+        "setup_executor": p.get("setup_executor") or "openclaw",
+        "delivery_status": p.get("delivery_status") or "pending",
+        "delivery_type": p.get("delivery_type") or "other",
+        "delivery_requires_approval": bool(p.get("delivery_requires_approval", True)),
+        "post_delivery_status": p.get("post_delivery_status") or "pending",
+        "satisfaction_status": p.get("satisfaction_status") or "unknown",
+        "upsell_opportunity_detected": bool(p.get("upsell_opportunity_detected")),
+        "retention_follow_up_required": bool(p.get("retention_follow_up_required", True)),
     }
 
 
@@ -578,6 +597,53 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "conversation_stage": p.get("conversation_stage") or "lead",
             "conversation_last_updated_at": p.get("conversation_last_updated_at") or "",
         }
+    project_delivery_active = bool(p.get("project_id")) or str(p.get("deal_status") or "").strip().lower() in {
+        "closed_won",
+        "closed_lost",
+    }
+    if project_delivery_active:
+        sections["project"] = {
+            "deal_status": p.get("deal_status") or "open",
+            "project_id": p.get("project_id") or "",
+            "project_created_at": p.get("project_created_at") or "",
+            "project_status": p.get("project_status") or "initialized",
+            "project_requirements_summary": p.get("project_requirements_summary") or "",
+            "project_scope": p.get("project_scope") or "",
+            "project_priority": p.get("project_priority") or "medium",
+        }
+    if project_delivery_active:
+        sections["build"] = {
+            "build_required": bool(p.get("build_required")),
+            "build_status": p.get("build_status") or "pending",
+            "build_mission_id": p.get("build_mission_id") or "",
+            "build_executor": p.get("build_executor") or "codex",
+            "build_scope_summary": p.get("build_scope_summary") or "",
+            "build_files_expected": list(p.get("build_files_expected") or []),
+            "build_validation_requirements": list(p.get("build_validation_requirements") or []),
+        }
+    if project_delivery_active:
+        sections["setup"] = {
+            "setup_required": bool(p.get("setup_required")),
+            "setup_status": p.get("setup_status") or "pending",
+            "setup_executor": p.get("setup_executor") or "openclaw",
+            "setup_steps_summary": p.get("setup_steps_summary") or "",
+            "setup_environment_requirements": p.get("setup_environment_requirements") or "",
+        }
+    if project_delivery_active:
+        sections["delivery"] = {
+            "delivery_status": p.get("delivery_status") or "pending",
+            "delivery_type": p.get("delivery_type") or "other",
+            "delivery_payload_summary": p.get("delivery_payload_summary") or "",
+            "delivery_requires_approval": bool(p.get("delivery_requires_approval", True)),
+        }
+    if project_delivery_active:
+        sections["post_delivery"] = {
+            "post_delivery_status": p.get("post_delivery_status") or "pending",
+            "satisfaction_check_required": bool(p.get("satisfaction_check_required", True)),
+            "satisfaction_status": p.get("satisfaction_status") or "unknown",
+            "upsell_opportunity_detected": bool(p.get("upsell_opportunity_detected")),
+            "retention_follow_up_required": bool(p.get("retention_follow_up_required", True)),
+        }
     return sections
 
 
@@ -666,6 +732,15 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "conversation_id": p.get("conversation_id") or "",
         "conversation_stage": p.get("conversation_stage") or "lead",
         "conversation_last_updated_at": p.get("conversation_last_updated_at") or "",
+        "deal_status": p.get("deal_status") or "open",
+        "project_id": p.get("project_id") or "",
+        "project_status": p.get("project_status") or "initialized",
+        "build_status": p.get("build_status") or "pending",
+        "setup_status": p.get("setup_status") or "pending",
+        "delivery_status": p.get("delivery_status") or "pending",
+        "delivery_requires_approval": bool(p.get("delivery_requires_approval", True)),
+        "delivery_type": p.get("delivery_type") or "other",
+        "post_delivery_status": p.get("post_delivery_status") or "pending",
     }
 
 
@@ -1001,6 +1076,43 @@ def run_command(
                 if float(row.get("lead_value_estimate") or 0.0) >= 10000.0
                 or str(row.get("qualification_status") or "").strip().lower() == "high_intent"
             ]
+            projects_in_build = [
+                row
+                for row in queue_rows
+                if str(row.get("project_id") or "").strip()
+                and str(row.get("build_status") or "").strip().lower() in {"pending", "in_progress"}
+            ]
+            projects_ready_for_delivery = [
+                row
+                for row in queue_rows
+                if str(row.get("project_id") or "").strip()
+                and str(row.get("delivery_status") or "").strip().lower() == "ready"
+            ]
+            delivery_awaiting_approval = [
+                row
+                for row in queue_rows
+                if str(row.get("project_id") or "").strip()
+                and bool(row.get("delivery_requires_approval"))
+                and str(row.get("delivery_status") or "").strip().lower() in {"pending", "ready"}
+            ]
+            post_delivery_follow_ups = [
+                row
+                for row in queue_rows
+                if str(row.get("project_id") or "").strip()
+                and str(row.get("post_delivery_status") or "").strip().lower() in {"pending", "active"}
+            ]
+            delivery_approval_items = [
+                row
+                for row in queue_rows
+                if bool(row.get("delivery_requires_approval"))
+                and str(row.get("delivery_status") or "").strip().lower() in {"pending", "ready"}
+            ]
+            high_risk_actions = [
+                row
+                for row in queue_rows
+                if str(row.get("mission_risk_level") or "").strip().lower() in {"high", "critical"}
+                or str(row.get("delivery_type") or "").strip().lower() == "system_setup"
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -1045,6 +1157,16 @@ def run_command(
                         "deals_in_progress": len(deals_in_progress),
                         "closing_opportunities": len(closing_opportunities),
                         "high_value_leads": len(high_value_leads),
+                    },
+                    "execution_package_queue": {
+                        "projects_in_build": len(projects_in_build),
+                        "projects_ready_for_delivery": len(projects_ready_for_delivery),
+                        "delivery_awaiting_approval": len(delivery_awaiting_approval),
+                        "post_delivery_follow_ups": len(post_delivery_follow_ups),
+                    },
+                    "review_queue": {
+                        "delivery_approvals": len(delivery_approval_items),
+                        "high_risk_actions": len(high_risk_actions),
                     },
                 },
             )
