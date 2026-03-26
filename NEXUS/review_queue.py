@@ -30,6 +30,10 @@ def build_review_queue_entry(
     mission_stop_condition_reason: str | None = None,
     mission_requires_initial_approval: bool | None = None,
     mission_requires_final_approval: bool | None = None,
+    email_requires_approval: bool | None = None,
+    email_thread_id: str | None = None,
+    email_subject: str | None = None,
+    communication_risk_class: str | None = None,
 ) -> dict[str, Any]:
     """
     Build a normalized review queue entry from enforcement and routing state.
@@ -55,6 +59,10 @@ def build_review_queue_entry(
     m_stop_reason = str(mission_stop_condition_reason or "").strip()
     m_requires_initial = bool(mission_requires_initial_approval) if mission_requires_initial_approval is not None else True
     m_requires_final = bool(mission_requires_final_approval) if mission_requires_final_approval is not None else True
+    comm_requires_approval = bool(email_requires_approval)
+    comm_thread_id = str(email_thread_id or "").strip()
+    comm_subject = str(email_subject or "").strip()
+    comm_risk = str(communication_risk_class or m_risk or "medium").strip().lower()
 
     if m_stop_hit:
         return {
@@ -120,6 +128,32 @@ def build_review_queue_entry(
             "mission_id": m_id,
             "mission_title": m_title,
             "mission_status": m_status,
+        }
+
+    if comm_requires_approval:
+        return {
+            "queue_status": "queued",
+            "queue_type": "email_approval",
+            "queue_reason": "Outbound email requires manual approval before send.",
+            "resume_action": "approve_email_send",
+            "resume_condition": "email_send_approved",
+            "active_project": active_project or "",
+            "run_id": run_id or "",
+            "requires_human_action": True,
+            "approval_queue_item_type": "email_send_approval",
+            "approval_queue_risk_class": comm_risk,
+            "approval_queue_reason": "Outbound communication gate requires operator approval.",
+            "approval_queue_batchable": False,
+            "approval_queue_requires_initial_approval": True,
+            "approval_queue_requires_final_approval": False,
+            "approval_queue_escalation_reason": "",
+            "mission_id": m_id,
+            "mission_title": m_title,
+            "mission_status": m_status or "",
+            "email_requires_approval": True,
+            "email_thread_id": comm_thread_id,
+            "email_subject": comm_subject,
+            "communication_risk_class": comm_risk,
         }
 
     # manual_review_required / manual_review_hold

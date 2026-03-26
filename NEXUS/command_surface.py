@@ -326,6 +326,15 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "strategy_baseline_reference": p.get("strategy_baseline_reference") or "",
         "strategy_variant_reference": p.get("strategy_variant_reference") or "",
         "strategy_comparison_outcome_signal": p.get("strategy_comparison_outcome_signal") or "not_tracking",
+        "email_status": p.get("email_status") or "",
+        "email_direction": p.get("email_direction") or "",
+        "email_requires_approval": bool(p.get("email_requires_approval")),
+        "lead_status": p.get("lead_status") or "new",
+        "lead_priority": p.get("lead_priority") or "medium",
+        "follow_up_status": p.get("follow_up_status") or "not_required",
+        "follow_up_next_at": p.get("follow_up_next_at") or "",
+        "notification_type": p.get("notification_type") or "",
+        "notification_priority": p.get("notification_priority") or "",
     }
 
 
@@ -483,6 +492,50 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "summary": cursor_bridge,
             "artifacts": cursor_bridge_artifacts,
         }
+    if (
+        p.get("email_thread_id")
+        or p.get("email_message_id")
+        or p.get("email_status")
+        or list(p.get("email_threads") or [])
+    ):
+        sections["communication"] = {
+            "email_thread_id": p.get("email_thread_id") or "",
+            "email_message_id": p.get("email_message_id") or "",
+            "email_direction": p.get("email_direction") or "",
+            "email_status": p.get("email_status") or "",
+            "email_requires_approval": bool(p.get("email_requires_approval")),
+            "email_threads": [dict(item) for item in list(p.get("email_threads") or []) if isinstance(item, dict)][:20],
+        }
+    if p.get("lead_id") or p.get("lead_source") or p.get("lead_intent"):
+        sections["lead"] = {
+            "lead_id": p.get("lead_id") or "",
+            "lead_source": p.get("lead_source") or "",
+            "lead_contact_info": dict(p.get("lead_contact_info") or {}),
+            "lead_intent": p.get("lead_intent") or "",
+            "lead_status": p.get("lead_status") or "new",
+            "lead_priority": p.get("lead_priority") or "medium",
+            "lead_created_at": p.get("lead_created_at") or "",
+            "lead_temperature": p.get("lead_temperature") or "cold",
+            "lead_inferred_intent": p.get("lead_inferred_intent") or "",
+            "lead_business_type": p.get("lead_business_type") or "",
+        }
+    follow_up_status = str(p.get("follow_up_status") or "").strip().lower()
+    if bool(p.get("follow_up_required")) or follow_up_status not in {"", "not_required"} or p.get("follow_up_next_at"):
+        sections["follow_up"] = {
+            "follow_up_required": bool(p.get("follow_up_required")),
+            "follow_up_status": p.get("follow_up_status") or "not_required",
+            "follow_up_next_at": p.get("follow_up_next_at") or "",
+            "follow_up_attempt_count": int(p.get("follow_up_attempt_count") or 0),
+            "follow_up_strategy": p.get("follow_up_strategy") or "",
+            "follow_up_priority": p.get("follow_up_priority") or "medium",
+        }
+    if p.get("notification_type") or p.get("notification_message"):
+        sections["notifications"] = {
+            "notification_type": p.get("notification_type") or "",
+            "notification_priority": p.get("notification_priority") or "",
+            "notification_message": p.get("notification_message") or "",
+            "notification_timestamp": p.get("notification_timestamp") or "",
+        }
     return sections
 
 
@@ -547,6 +600,15 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "strategy_variant_type": p.get("strategy_variant_type") or "none",
         "strategy_variant_guardrail_status": p.get("strategy_variant_guardrail_status") or "disabled",
         "strategy_comparison_status": p.get("strategy_comparison_status") or "not_enabled",
+        "lead_id": p.get("lead_id") or "",
+        "lead_source": p.get("lead_source") or "",
+        "lead_status": p.get("lead_status") or "new",
+        "lead_priority": p.get("lead_priority") or "medium",
+        "email_status": p.get("email_status") or "",
+        "email_requires_approval": bool(p.get("email_requires_approval")),
+        "follow_up_status": p.get("follow_up_status") or "not_required",
+        "follow_up_required": bool(p.get("follow_up_required")),
+        "follow_up_next_at": p.get("follow_up_next_at") or "",
     }
 
 
@@ -844,6 +906,21 @@ def run_command(
                 or str(row.get("mission_status") or "").strip().lower() in ("failed", "paused", "rejected")
                 or str(row.get("autopilot_status") or "").strip().lower() in ("blocked", "escalated", "awaiting_approval")
             ]
+            leads_awaiting_response = [
+                row
+                for row in queue_rows
+                if str(row.get("lead_id") or "").strip()
+                and str(row.get("email_status") or "").strip().lower() in {"received", "approval_required", "queued_for_approval", ""}
+            ]
+            responses_awaiting_approval = [
+                row for row in queue_rows if bool(row.get("email_requires_approval")) and str(row.get("email_status") or "").strip().lower() in {"approval_required", "queued_for_approval"}
+            ]
+            follow_ups_pending = [
+                row
+                for row in queue_rows
+                if bool(row.get("follow_up_required"))
+                and str(row.get("follow_up_status") or "").strip().lower() in {"pending", "scheduled", "awaiting_approval"}
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -877,6 +954,11 @@ def run_command(
                         "executing_missions": len(executing_missions),
                         "awaiting_final_acceptance": len(awaiting_final_acceptance),
                         "blocked_or_escalated_missions": len(blocked_or_escalated),
+                    },
+                    "revenue_loop_queue_summary": {
+                        "leads_awaiting_response": len(leads_awaiting_response),
+                        "responses_awaiting_approval": len(responses_awaiting_approval),
+                        "follow_ups_pending": len(follow_ups_pending),
                     },
                 },
             )
@@ -2211,6 +2293,10 @@ def run_command(
                 "mission_id": qe.get("mission_id"),
                 "mission_title": qe.get("mission_title"),
                 "mission_status": qe.get("mission_status"),
+                "email_requires_approval": qe.get("email_requires_approval"),
+                "email_thread_id": qe.get("email_thread_id"),
+                "email_subject": qe.get("email_subject"),
+                "communication_risk_class": qe.get("communication_risk_class"),
             }
             summary_line = f"queue_status={payload.get('queue_status')}; queue_type={payload.get('queue_type')}"
             return _result(
