@@ -223,6 +223,11 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "package_kind": p.get("package_kind"),
         "package_status": p.get("package_status"),
         "review_status": p.get("review_status"),
+        "autopilot_enabled": bool(p.get("autopilot_enabled")),
+        "autopilot_status": p.get("autopilot_status") or "idle",
+        "autopilot_loop_state": p.get("autopilot_loop_state") or "idle",
+        "autopilot_current_focus": p.get("autopilot_current_focus") or "",
+        "autopilot_requires_operator_review": bool(p.get("autopilot_requires_operator_review")),
         "sealed": p.get("sealed"),
         "seal_reason": p.get("seal_reason"),
         "runtime_target_id": p.get("runtime_target_id"),
@@ -256,6 +261,20 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "execution_executor_target_id": p.get("execution_executor_target_id"),
         "execution_executor_target_name": p.get("execution_executor_target_name"),
         "execution_executor_backend_id": p.get("execution_executor_backend_id"),
+        "mission_id": p.get("mission_id") or "",
+        "mission_type": p.get("mission_type") or "project_delivery",
+        "mission_title": p.get("mission_title") or "",
+        "mission_status": p.get("mission_status") or "proposed",
+        "mission_risk_level": p.get("mission_risk_level") or "medium",
+        "executor_route": p.get("executor_route") or "",
+        "executor_route_status": p.get("executor_route_status") or "",
+        "executor_route_confidence": p.get("executor_route_confidence") or 0.0,
+        "approval_queue_item_type": p.get("approval_queue_item_type") or "",
+        "approval_queue_risk_class": p.get("approval_queue_risk_class") or "",
+        "approval_queue_requires_initial_approval": bool(p.get("approval_queue_requires_initial_approval")),
+        "approval_queue_requires_final_approval": bool(p.get("approval_queue_requires_final_approval")),
+        "mission_stop_condition_hit": bool(p.get("mission_stop_condition_hit")),
+        "mission_stop_condition_reason": p.get("mission_stop_condition_reason") or "",
         "idempotency_status": ((p.get("idempotency") or {}).get("idempotency_status") or "active"),
         "retry_policy_status": ((p.get("retry_policy") or {}).get("policy_status") or "default_no_retry"),
         "failure_class": ((p.get("failure_summary") or {}).get("failure_class") or ""),
@@ -321,6 +340,23 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "dispatch_plan_summary": dict(p.get("dispatch_plan_summary") or {}),
             "routing_summary": dict(p.get("routing_summary") or {}),
             "execution_summary": dict(p.get("execution_summary") or {}),
+            "autopilot": {
+                "autopilot_enabled": bool(p.get("autopilot_enabled")),
+                "autopilot_status": p.get("autopilot_status") or "idle",
+                "autopilot_loop_state": p.get("autopilot_loop_state") or "idle",
+                "autopilot_current_focus": p.get("autopilot_current_focus") or "",
+            },
+            "mission": {
+                "mission_id": p.get("mission_id") or "",
+                "mission_type": p.get("mission_type") or "project_delivery",
+                "mission_title": p.get("mission_title") or "",
+                "mission_status": p.get("mission_status") or "proposed",
+                "mission_risk_level": p.get("mission_risk_level") or "medium",
+                "mission_scope_boundary": dict(p.get("mission_scope_boundary") or {}),
+                "mission_allowed_actions": list(p.get("mission_allowed_actions") or []),
+                "mission_forbidden_actions": list(p.get("mission_forbidden_actions") or []),
+                "mission_allowed_executors": list(p.get("mission_allowed_executors") or []),
+            },
             "strategy_execution_policy": {
                 "strategy_execution_policy": p.get("strategy_execution_policy") or "conservative_defer_policy",
                 "strategy_execution_policy_status": p.get("strategy_execution_policy_status") or "deferred",
@@ -353,12 +389,22 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "approval_id_refs": list(p.get("approval_id_refs") or []),
             "aegis_decision": p.get("aegis_decision") or "",
             "aegis_scope": p.get("aegis_scope") or "",
+            "approval_queue_item_type": p.get("approval_queue_item_type") or "",
+            "approval_queue_risk_class": p.get("approval_queue_risk_class") or "",
+            "approval_queue_reason": p.get("approval_queue_reason") or "",
+            "approval_queue_batchable": bool(p.get("approval_queue_batchable")),
+            "approval_queue_requires_initial_approval": bool(p.get("approval_queue_requires_initial_approval")),
+            "approval_queue_requires_final_approval": bool(p.get("approval_queue_requires_final_approval")),
+            "approval_queue_escalation_reason": p.get("approval_queue_escalation_reason") or "",
         },
         "safety": {
             "sealed": bool(p.get("sealed")),
             "seal_reason": p.get("seal_reason") or "",
             "review_checklist": list(p.get("review_checklist") or []),
             "runtime_artifacts": list(p.get("runtime_artifacts") or []),
+            "mission_stop_condition_hit": bool(p.get("mission_stop_condition_hit")),
+            "mission_stop_condition_reason": p.get("mission_stop_condition_reason") or "",
+            "mission_escalation_required": bool(p.get("mission_escalation_required")),
         },
         "rollback": {
             "rollback_notes": list(p.get("rollback_notes") or []),
@@ -409,6 +455,13 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "execution_executor_target_id": p.get("execution_executor_target_id") or "",
             "execution_executor_target_name": p.get("execution_executor_target_name") or "",
             "execution_executor_backend_id": p.get("execution_executor_backend_id") or "",
+            "executor_route": p.get("executor_route") or "",
+            "executor_route_reason": p.get("executor_route_reason") or "",
+            "executor_route_confidence": p.get("executor_route_confidence") or 0.0,
+            "executor_route_status": p.get("executor_route_status") or "",
+            "executor_task_type": p.get("executor_task_type") or "",
+            "executor_task_packet": dict(p.get("executor_task_packet") or {}),
+            "executor_fallback_route": p.get("executor_fallback_route") or "",
             "execution_aegis_result": dict(p.get("execution_aegis_result") or {}),
             "execution_started_at": p.get("execution_started_at") or "",
             "execution_finished_at": p.get("execution_finished_at") or "",
@@ -441,6 +494,9 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "created_at": p.get("created_at"),
         "package_status": p.get("package_status"),
         "review_status": p.get("review_status"),
+        "autopilot_status": p.get("autopilot_status") or "idle",
+        "autopilot_loop_state": p.get("autopilot_loop_state") or "idle",
+        "autopilot_current_focus": p.get("autopilot_current_focus") or "",
         "runtime_target_id": p.get("runtime_target_id"),
         "decision_status": p.get("decision_status"),
         "eligibility_status": p.get("eligibility_status"),
@@ -448,6 +504,19 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "handoff_status": p.get("handoff_status"),
         "execution_status": p.get("execution_status"),
         "evaluation_status": p.get("evaluation_status"),
+        "mission_id": p.get("mission_id") or "",
+        "mission_type": p.get("mission_type") or "project_delivery",
+        "mission_status": p.get("mission_status") or "proposed",
+        "mission_risk_level": p.get("mission_risk_level") or "medium",
+        "executor_route": p.get("executor_route") or "",
+        "executor_route_status": p.get("executor_route_status") or "",
+        "executor_task_type": p.get("executor_task_type") or "",
+        "approval_queue_item_type": p.get("approval_queue_item_type") or "",
+        "approval_queue_risk_class": p.get("approval_queue_risk_class") or "",
+        "approval_queue_requires_initial_approval": bool(p.get("approval_queue_requires_initial_approval")),
+        "approval_queue_requires_final_approval": bool(p.get("approval_queue_requires_final_approval")),
+        "mission_stop_condition_hit": bool(p.get("mission_stop_condition_hit")),
+        "mission_stop_condition_reason": p.get("mission_stop_condition_reason") or "",
         "failure_class": ((p.get("failure_summary") or {}).get("failure_class") or ""),
         "recovery_status": ((p.get("recovery_summary") or {}).get("recovery_status") or "not_needed"),
         "retry_policy_status": ((p.get("retry_policy") or {}).get("policy_status") or "default_no_retry"),
@@ -750,6 +819,31 @@ def run_command(
                 for row in queue_rows
                 if str(row.get("revenue_activation_status") or "") == "blocked_for_revenue_action"
             ]
+            proposed_missions = [
+                row for row in queue_rows if str(row.get("mission_status") or "").strip().lower() == "proposed"
+            ]
+            awaiting_mission_approval = [
+                row
+                for row in queue_rows
+                if str(row.get("mission_status") or "").strip().lower() in ("awaiting_initial_approval",)
+            ]
+            executing_missions = [
+                row
+                for row in queue_rows
+                if str(row.get("mission_status") or "").strip().lower() in ("approved_for_execution", "executing")
+            ]
+            awaiting_final_acceptance = [
+                row
+                for row in queue_rows
+                if str(row.get("mission_status") or "").strip().lower() in ("awaiting_final_review",)
+            ]
+            blocked_or_escalated = [
+                row
+                for row in queue_rows
+                if bool(row.get("mission_stop_condition_hit"))
+                or str(row.get("mission_status") or "").strip().lower() in ("failed", "paused", "rejected")
+                or str(row.get("autopilot_status") or "").strip().lower() in ("blocked", "escalated", "awaiting_approval")
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -777,6 +871,13 @@ def run_command(
                         for row in ranked_revenue[:5]
                     ],
                     "blocked_revenue_candidates": blocked_revenue[:5],
+                    "mission_queue_summary": {
+                        "proposed_missions": len(proposed_missions),
+                        "awaiting_mission_approval": len(awaiting_mission_approval),
+                        "executing_missions": len(executing_missions),
+                        "awaiting_final_acceptance": len(awaiting_final_acceptance),
+                        "blocked_or_escalated_missions": len(blocked_or_escalated),
+                    },
                 },
             )
         except Exception as e:
@@ -2100,6 +2201,16 @@ def run_command(
                 "resume_action": qe.get("resume_action"),
                 "resume_condition": qe.get("resume_condition"),
                 "requires_human_action": qe.get("requires_human_action"),
+                "approval_queue_item_type": qe.get("approval_queue_item_type"),
+                "approval_queue_risk_class": qe.get("approval_queue_risk_class"),
+                "approval_queue_reason": qe.get("approval_queue_reason"),
+                "approval_queue_batchable": qe.get("approval_queue_batchable"),
+                "approval_queue_requires_initial_approval": qe.get("approval_queue_requires_initial_approval"),
+                "approval_queue_requires_final_approval": qe.get("approval_queue_requires_final_approval"),
+                "approval_queue_escalation_reason": qe.get("approval_queue_escalation_reason"),
+                "mission_id": qe.get("mission_id"),
+                "mission_title": qe.get("mission_title"),
+                "mission_status": qe.get("mission_status"),
             }
             summary_line = f"queue_status={payload.get('queue_status')}; queue_type={payload.get('queue_type')}"
             return _result(
