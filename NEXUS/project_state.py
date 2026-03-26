@@ -134,7 +134,13 @@ def save_project_state(
     prism_result: dict | None = None,
     last_prism_summary: dict | None = None,
     last_aegis_decision: dict | None = None,
+    autopilot_enabled: bool | None = None,
     autopilot_status: str | None = None,
+    autopilot_loop_state: str | None = None,
+    autopilot_last_run_at: str | None = None,
+    autopilot_next_run_at: str | None = None,
+    autopilot_current_focus: str | None = None,
+    autopilot_requires_operator_review: bool | None = None,
     autopilot_session_id: str | None = None,
     autopilot_project_key: str | None = None,
     autopilot_mode: str | None = None,
@@ -168,6 +174,35 @@ def save_project_state(
     approval_required_actions: list | None = None,
     project_routing_status: str | None = None,
     project_routing_result: dict | None = None,
+    mission_packet: dict | None = None,
+    mission_id: str | None = None,
+    mission_type: str | None = None,
+    mission_title: str | None = None,
+    mission_objective: str | None = None,
+    mission_scope_boundary: dict | None = None,
+    mission_allowed_actions: list | None = None,
+    mission_forbidden_actions: list | None = None,
+    mission_allowed_executors: list | None = None,
+    mission_risk_level: str | None = None,
+    mission_success_criteria: dict | None = None,
+    mission_stop_conditions: list | None = None,
+    mission_status: str | None = None,
+    mission_created_at: str | None = None,
+    mission_started_at: str | None = None,
+    mission_completed_at: str | None = None,
+    mission_failed_at: str | None = None,
+    mission_requires_initial_approval: bool | None = None,
+    mission_requires_final_approval: bool | None = None,
+    mission_stop_condition_hit: bool | None = None,
+    mission_stop_condition_reason: str | None = None,
+    mission_escalation_required: bool | None = None,
+    executor_route: str | None = None,
+    executor_route_reason: str | None = None,
+    executor_route_confidence: float | None = None,
+    executor_route_status: str | None = None,
+    executor_task_type: str | None = None,
+    executor_task_packet: dict | None = None,
+    executor_fallback_route: str | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -192,8 +227,20 @@ def save_project_state(
         prism_result = previous.get("prism_result")
     if last_prism_summary is None and isinstance(previous.get("last_prism_summary"), dict):
         last_prism_summary = previous.get("last_prism_summary")
+    if autopilot_enabled is None and isinstance(previous.get("autopilot_enabled"), bool):
+        autopilot_enabled = previous.get("autopilot_enabled")
     if autopilot_status is None and isinstance(previous.get("autopilot_status"), str):
         autopilot_status = previous.get("autopilot_status")
+    if autopilot_loop_state is None and isinstance(previous.get("autopilot_loop_state"), str):
+        autopilot_loop_state = previous.get("autopilot_loop_state")
+    if autopilot_last_run_at is None and isinstance(previous.get("autopilot_last_run_at"), str):
+        autopilot_last_run_at = previous.get("autopilot_last_run_at")
+    if autopilot_next_run_at is None and isinstance(previous.get("autopilot_next_run_at"), str):
+        autopilot_next_run_at = previous.get("autopilot_next_run_at")
+    if autopilot_current_focus is None and isinstance(previous.get("autopilot_current_focus"), str):
+        autopilot_current_focus = previous.get("autopilot_current_focus")
+    if autopilot_requires_operator_review is None and isinstance(previous.get("autopilot_requires_operator_review"), bool):
+        autopilot_requires_operator_review = previous.get("autopilot_requires_operator_review")
     if autopilot_session_id is None and isinstance(previous.get("autopilot_session_id"), str):
         autopilot_session_id = previous.get("autopilot_session_id")
     if autopilot_project_key is None and isinstance(previous.get("autopilot_project_key"), str):
@@ -260,6 +307,64 @@ def save_project_state(
         project_routing_status = previous.get("project_routing_status")
     if project_routing_result is None and isinstance(previous.get("project_routing_result"), dict):
         project_routing_result = previous.get("project_routing_result")
+    if mission_packet is None and isinstance(previous.get("mission_packet"), dict):
+        mission_packet = previous.get("mission_packet")
+    if mission_id is None and isinstance(previous.get("mission_id"), str):
+        mission_id = previous.get("mission_id")
+    if mission_type is None and isinstance(previous.get("mission_type"), str):
+        mission_type = previous.get("mission_type")
+    if mission_title is None and isinstance(previous.get("mission_title"), str):
+        mission_title = previous.get("mission_title")
+    if mission_objective is None and isinstance(previous.get("mission_objective"), str):
+        mission_objective = previous.get("mission_objective")
+    if mission_scope_boundary is None and isinstance(previous.get("mission_scope_boundary"), dict):
+        mission_scope_boundary = previous.get("mission_scope_boundary")
+    if mission_allowed_actions is None and isinstance(previous.get("mission_allowed_actions"), list):
+        mission_allowed_actions = previous.get("mission_allowed_actions")
+    if mission_forbidden_actions is None and isinstance(previous.get("mission_forbidden_actions"), list):
+        mission_forbidden_actions = previous.get("mission_forbidden_actions")
+    if mission_allowed_executors is None and isinstance(previous.get("mission_allowed_executors"), list):
+        mission_allowed_executors = previous.get("mission_allowed_executors")
+    if mission_risk_level is None and isinstance(previous.get("mission_risk_level"), str):
+        mission_risk_level = previous.get("mission_risk_level")
+    if mission_success_criteria is None and isinstance(previous.get("mission_success_criteria"), dict):
+        mission_success_criteria = previous.get("mission_success_criteria")
+    if mission_stop_conditions is None and isinstance(previous.get("mission_stop_conditions"), list):
+        mission_stop_conditions = previous.get("mission_stop_conditions")
+    if mission_status is None and isinstance(previous.get("mission_status"), str):
+        mission_status = previous.get("mission_status")
+    if mission_created_at is None and isinstance(previous.get("mission_created_at"), str):
+        mission_created_at = previous.get("mission_created_at")
+    if mission_started_at is None and isinstance(previous.get("mission_started_at"), str):
+        mission_started_at = previous.get("mission_started_at")
+    if mission_completed_at is None and isinstance(previous.get("mission_completed_at"), str):
+        mission_completed_at = previous.get("mission_completed_at")
+    if mission_failed_at is None and isinstance(previous.get("mission_failed_at"), str):
+        mission_failed_at = previous.get("mission_failed_at")
+    if mission_requires_initial_approval is None and isinstance(previous.get("mission_requires_initial_approval"), bool):
+        mission_requires_initial_approval = previous.get("mission_requires_initial_approval")
+    if mission_requires_final_approval is None and isinstance(previous.get("mission_requires_final_approval"), bool):
+        mission_requires_final_approval = previous.get("mission_requires_final_approval")
+    if mission_stop_condition_hit is None and isinstance(previous.get("mission_stop_condition_hit"), bool):
+        mission_stop_condition_hit = previous.get("mission_stop_condition_hit")
+    if mission_stop_condition_reason is None and isinstance(previous.get("mission_stop_condition_reason"), str):
+        mission_stop_condition_reason = previous.get("mission_stop_condition_reason")
+    if mission_escalation_required is None and isinstance(previous.get("mission_escalation_required"), bool):
+        mission_escalation_required = previous.get("mission_escalation_required")
+    if executor_route is None and isinstance(previous.get("executor_route"), str):
+        executor_route = previous.get("executor_route")
+    if executor_route_reason is None and isinstance(previous.get("executor_route_reason"), str):
+        executor_route_reason = previous.get("executor_route_reason")
+    if executor_route_confidence is None and isinstance(previous.get("executor_route_confidence"), (int, float)):
+        executor_route_confidence = previous.get("executor_route_confidence")
+    if executor_route_status is None and isinstance(previous.get("executor_route_status"), str):
+        executor_route_status = previous.get("executor_route_status")
+    if executor_task_type is None and isinstance(previous.get("executor_task_type"), str):
+        executor_task_type = previous.get("executor_task_type")
+    if executor_task_packet is None and isinstance(previous.get("executor_task_packet"), dict):
+        executor_task_packet = previous.get("executor_task_packet")
+    if executor_fallback_route is None and isinstance(previous.get("executor_fallback_route"), str):
+        executor_fallback_route = previous.get("executor_fallback_route")
     if project_selection_status is None and isinstance(previous.get("project_selection_status"), str):
         project_selection_status = previous.get("project_selection_status")
     if project_selection_result is None and isinstance(previous.get("project_selection_result"), dict):
@@ -412,7 +517,15 @@ def save_project_state(
         "prism_result": prism_result or {},
         "last_prism_summary": last_prism_summary or {},
         "last_aegis_decision": last_aegis_decision_normalized,
+        "autopilot_enabled": bool(autopilot_enabled) if autopilot_enabled is not None else False,
         "autopilot_status": autopilot_status,
+        "autopilot_loop_state": autopilot_loop_state,
+        "autopilot_last_run_at": autopilot_last_run_at,
+        "autopilot_next_run_at": autopilot_next_run_at,
+        "autopilot_current_focus": autopilot_current_focus,
+        "autopilot_requires_operator_review": bool(autopilot_requires_operator_review)
+        if autopilot_requires_operator_review is not None
+        else False,
         "autopilot_session_id": autopilot_session_id,
         "autopilot_project_key": autopilot_project_key,
         "autopilot_mode": autopilot_mode,
@@ -446,6 +559,45 @@ def save_project_state(
         "approval_required_actions": approval_required_actions or [],
         "project_routing_status": project_routing_status,
         "project_routing_result": project_routing_result or {},
+        "mission_packet": mission_packet or {},
+        "mission_id": mission_id,
+        "mission_type": mission_type,
+        "mission_title": mission_title,
+        "mission_objective": mission_objective,
+        "mission_scope_boundary": mission_scope_boundary or {},
+        "mission_allowed_actions": mission_allowed_actions or [],
+        "mission_forbidden_actions": mission_forbidden_actions or [],
+        "mission_allowed_executors": mission_allowed_executors or [],
+        "mission_risk_level": mission_risk_level,
+        "mission_success_criteria": mission_success_criteria or {},
+        "mission_stop_conditions": mission_stop_conditions or [],
+        "mission_status": mission_status,
+        "mission_created_at": mission_created_at,
+        "mission_started_at": mission_started_at,
+        "mission_completed_at": mission_completed_at,
+        "mission_failed_at": mission_failed_at,
+        "mission_requires_initial_approval": bool(mission_requires_initial_approval)
+        if mission_requires_initial_approval is not None
+        else True,
+        "mission_requires_final_approval": bool(mission_requires_final_approval)
+        if mission_requires_final_approval is not None
+        else True,
+        "mission_stop_condition_hit": bool(mission_stop_condition_hit)
+        if mission_stop_condition_hit is not None
+        else False,
+        "mission_stop_condition_reason": mission_stop_condition_reason,
+        "mission_escalation_required": bool(mission_escalation_required)
+        if mission_escalation_required is not None
+        else False,
+        "executor_route": executor_route,
+        "executor_route_reason": executor_route_reason,
+        "executor_route_confidence": float(executor_route_confidence)
+        if executor_route_confidence is not None
+        else 0.0,
+        "executor_route_status": executor_route_status,
+        "executor_task_type": executor_task_type,
+        "executor_task_packet": executor_task_packet or {},
+        "executor_fallback_route": executor_fallback_route,
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,
