@@ -354,6 +354,35 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "satisfaction_status": p.get("satisfaction_status") or "unknown",
         "upsell_opportunity_detected": bool(p.get("upsell_opportunity_detected")),
         "retention_follow_up_required": bool(p.get("retention_follow_up_required", True)),
+        "expected_outcome": p.get("expected_outcome") or "",
+        "expected_revenue": p.get("expected_revenue") or 0.0,
+        "expected_conversion": p.get("expected_conversion") or 0.0,
+        "actual_outcome": p.get("actual_outcome") or "",
+        "actual_revenue": p.get("actual_revenue") or 0.0,
+        "actual_conversion": p.get("actual_conversion") or 0.0,
+        "outcome_status": p.get("outcome_status") or "pending",
+        "outcome_recorded_at": p.get("outcome_recorded_at") or "",
+        "outcome_delta_score": p.get("outcome_delta_score") or 0.0,
+        "revenue_delta": p.get("revenue_delta") or 0.0,
+        "conversion_delta": p.get("conversion_delta") or 0.0,
+        "performance_score": p.get("performance_score") or 0.0,
+        "performance_category": p.get("performance_category") or "poor",
+        "performance_reason": p.get("performance_reason") or "",
+        "strategy_adjustment_required": bool(p.get("strategy_adjustment_required")),
+        "strategy_adjustment_type": p.get("strategy_adjustment_type") or "other",
+        "strategy_adjustment_reason": p.get("strategy_adjustment_reason") or "",
+        "strategy_new_recommendation": p.get("strategy_new_recommendation") or "",
+        "strategy_confidence_update": p.get("strategy_confidence_update") or 0.0,
+        "autonomy_level": int(p.get("autonomy_level") or 0),
+        "auto_approval_allowed": bool(p.get("auto_approval_allowed")),
+        "auto_approval_scope": p.get("auto_approval_scope") or "manual_review_only",
+        "auto_approval_risk_threshold": p.get("auto_approval_risk_threshold") or 0.0,
+        "auto_approval_reason": p.get("auto_approval_reason") or "",
+        "autopilot_parallel_capacity": int(p.get("autopilot_parallel_capacity") or 1),
+        "active_mission_count": int(p.get("active_mission_count") or 0),
+        "mission_priority_score": p.get("mission_priority_score") or 0.0,
+        "mission_conflict_detected": bool(p.get("mission_conflict_detected")),
+        "mission_conflict_resolution_strategy": p.get("mission_conflict_resolution_strategy") or "",
     }
 
 
@@ -644,6 +673,51 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "upsell_opportunity_detected": bool(p.get("upsell_opportunity_detected")),
             "retention_follow_up_required": bool(p.get("retention_follow_up_required", True)),
         }
+    if (
+        p.get("expected_outcome")
+        or p.get("actual_outcome")
+        or p.get("outcome_recorded_at")
+        or str(p.get("outcome_status") or "").strip().lower() in {"success", "partial", "failure"}
+    ):
+        sections["outcome"] = {
+            "expected_outcome": p.get("expected_outcome") or "",
+            "expected_revenue": p.get("expected_revenue") or 0.0,
+            "expected_conversion": p.get("expected_conversion") or 0.0,
+            "actual_outcome": p.get("actual_outcome") or "",
+            "actual_revenue": p.get("actual_revenue") or 0.0,
+            "actual_conversion": p.get("actual_conversion") or 0.0,
+            "outcome_status": p.get("outcome_status") or "pending",
+            "outcome_recorded_at": p.get("outcome_recorded_at") or "",
+        }
+        sections["performance"] = {
+            "outcome_delta_score": p.get("outcome_delta_score") or 0.0,
+            "revenue_delta": p.get("revenue_delta") or 0.0,
+            "conversion_delta": p.get("conversion_delta") or 0.0,
+            "performance_score": p.get("performance_score") or 0.0,
+            "performance_category": p.get("performance_category") or "poor",
+            "performance_reason": p.get("performance_reason") or "",
+        }
+        sections["strategy_adaptation"] = {
+            "strategy_adjustment_required": bool(p.get("strategy_adjustment_required")),
+            "strategy_adjustment_type": p.get("strategy_adjustment_type") or "other",
+            "strategy_adjustment_reason": p.get("strategy_adjustment_reason") or "",
+            "strategy_new_recommendation": p.get("strategy_new_recommendation") or "",
+            "strategy_confidence_update": p.get("strategy_confidence_update") or 0.0,
+        }
+        sections["autonomy"] = {
+            "autonomy_level": int(p.get("autonomy_level") or 0),
+            "auto_approval_allowed": bool(p.get("auto_approval_allowed")),
+            "auto_approval_scope": p.get("auto_approval_scope") or "manual_review_only",
+            "auto_approval_risk_threshold": p.get("auto_approval_risk_threshold") or 0.0,
+            "auto_approval_reason": p.get("auto_approval_reason") or "",
+        }
+        sections["mission_parallel_state"] = {
+            "autopilot_parallel_capacity": int(p.get("autopilot_parallel_capacity") or 1),
+            "active_mission_count": int(p.get("active_mission_count") or 0),
+            "mission_priority_score": p.get("mission_priority_score") or 0.0,
+            "mission_conflict_detected": bool(p.get("mission_conflict_detected")),
+            "mission_conflict_resolution_strategy": p.get("mission_conflict_resolution_strategy") or "",
+        }
     return sections
 
 
@@ -741,6 +815,18 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "delivery_requires_approval": bool(p.get("delivery_requires_approval", True)),
         "delivery_type": p.get("delivery_type") or "other",
         "post_delivery_status": p.get("post_delivery_status") or "pending",
+        "outcome_status": p.get("outcome_status") or "pending",
+        "performance_score": p.get("performance_score") or 0.0,
+        "performance_category": p.get("performance_category") or "poor",
+        "strategy_adjustment_required": bool(p.get("strategy_adjustment_required")),
+        "strategy_adjustment_type": p.get("strategy_adjustment_type") or "other",
+        "auto_approval_allowed": bool(p.get("auto_approval_allowed")),
+        "autonomy_level": int(p.get("autonomy_level") or 0),
+        "autopilot_parallel_capacity": int(p.get("autopilot_parallel_capacity") or 1),
+        "active_mission_count": int(p.get("active_mission_count") or 0),
+        "mission_priority_score": p.get("mission_priority_score") or 0.0,
+        "mission_conflict_detected": bool(p.get("mission_conflict_detected")),
+        "mission_conflict_resolution_strategy": p.get("mission_conflict_resolution_strategy") or "",
     }
 
 
@@ -1113,6 +1199,42 @@ def run_command(
                 if str(row.get("mission_risk_level") or "").strip().lower() in {"high", "critical"}
                 or str(row.get("delivery_type") or "").strip().lower() == "system_setup"
             ]
+            high_performing_strategies = [
+                row
+                for row in queue_rows
+                if float(row.get("performance_score") or 0.0) >= 0.75 and not bool(row.get("strategy_adjustment_required"))
+            ]
+            failing_strategies = [
+                row
+                for row in queue_rows
+                if float(row.get("performance_score") or 0.0) < 0.40
+                or str(row.get("outcome_status") or "").strip().lower() == "failure"
+            ]
+            missions_ready_for_auto_approval = [
+                row
+                for row in queue_rows
+                if bool(row.get("auto_approval_allowed"))
+                and str(row.get("mission_status") or "").strip().lower() in {"proposed", "awaiting_initial_approval"}
+            ]
+            missions_requiring_review = [
+                row
+                for row in queue_rows
+                if bool(row.get("strategy_adjustment_required"))
+                or bool(row.get("mission_conflict_detected"))
+                or not bool(row.get("auto_approval_allowed"))
+            ]
+            high_risk_adaptation_decisions = [
+                row
+                for row in queue_rows
+                if bool(row.get("strategy_adjustment_required"))
+                and str(row.get("mission_risk_level") or "").strip().lower() in {"high", "critical"}
+            ]
+            strategy_changes_requiring_approval = [
+                row
+                for row in queue_rows
+                if bool(row.get("strategy_adjustment_required"))
+                and str(row.get("strategy_adjustment_type") or "").strip().lower() in {"pricing", "messaging", "targeting", "follow_up"}
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -1163,10 +1285,16 @@ def run_command(
                         "projects_ready_for_delivery": len(projects_ready_for_delivery),
                         "delivery_awaiting_approval": len(delivery_awaiting_approval),
                         "post_delivery_follow_ups": len(post_delivery_follow_ups),
+                        "high_performing_strategies": len(high_performing_strategies),
+                        "failing_strategies": len(failing_strategies),
+                        "missions_ready_for_auto_approval": len(missions_ready_for_auto_approval),
+                        "missions_requiring_review": len(missions_requiring_review),
                     },
                     "review_queue": {
                         "delivery_approvals": len(delivery_approval_items),
                         "high_risk_actions": len(high_risk_actions),
+                        "high_risk_adaptation_decisions": len(high_risk_adaptation_decisions),
+                        "strategy_changes_requiring_approval": len(strategy_changes_requiring_approval),
                     },
                 },
             )
