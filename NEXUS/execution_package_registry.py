@@ -50,6 +50,7 @@ from NEXUS.execution_package_local_analysis import (
     normalize_local_analysis_summary,
 )
 from NEXUS.memory_layer import write_governed_memory_safe
+from NEXUS.outcome_adaptation_engine import evaluate_outcome_adaptation_fields
 from NEXUS.project_delivery_engine import derive_project_delivery_fields
 from NEXUS.runtimes.cursor_runtime import (
     build_cursor_bridge_result,
@@ -460,6 +461,35 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "satisfaction_status": str(normalized.get("satisfaction_status") or "unknown"),
         "upsell_opportunity_detected": bool(normalized.get("upsell_opportunity_detected")),
         "retention_follow_up_required": bool(normalized.get("retention_follow_up_required", True)),
+        "expected_outcome": str(normalized.get("expected_outcome") or ""),
+        "expected_revenue": float(normalized.get("expected_revenue") or 0.0),
+        "expected_conversion": float(normalized.get("expected_conversion") or 0.0),
+        "actual_outcome": str(normalized.get("actual_outcome") or ""),
+        "actual_revenue": float(normalized.get("actual_revenue") or 0.0),
+        "actual_conversion": float(normalized.get("actual_conversion") or 0.0),
+        "outcome_status": str(normalized.get("outcome_status") or "pending"),
+        "outcome_recorded_at": str(normalized.get("outcome_recorded_at") or ""),
+        "outcome_delta_score": float(normalized.get("outcome_delta_score") or 0.0),
+        "revenue_delta": float(normalized.get("revenue_delta") or 0.0),
+        "conversion_delta": float(normalized.get("conversion_delta") or 0.0),
+        "performance_score": float(normalized.get("performance_score") or 0.0),
+        "performance_category": str(normalized.get("performance_category") or "poor"),
+        "performance_reason": str(normalized.get("performance_reason") or ""),
+        "strategy_adjustment_required": bool(normalized.get("strategy_adjustment_required")),
+        "strategy_adjustment_type": str(normalized.get("strategy_adjustment_type") or "other"),
+        "strategy_adjustment_reason": str(normalized.get("strategy_adjustment_reason") or ""),
+        "strategy_new_recommendation": str(normalized.get("strategy_new_recommendation") or ""),
+        "strategy_confidence_update": float(normalized.get("strategy_confidence_update") or 0.0),
+        "autonomy_level": int(normalized.get("autonomy_level") or 0),
+        "auto_approval_allowed": bool(normalized.get("auto_approval_allowed")),
+        "auto_approval_scope": str(normalized.get("auto_approval_scope") or "manual_review_only"),
+        "auto_approval_risk_threshold": float(normalized.get("auto_approval_risk_threshold") or 0.0),
+        "auto_approval_reason": str(normalized.get("auto_approval_reason") or ""),
+        "autopilot_parallel_capacity": int(normalized.get("autopilot_parallel_capacity") or 1),
+        "active_mission_count": int(normalized.get("active_mission_count") or 0),
+        "mission_priority_score": float(normalized.get("mission_priority_score") or 0.0),
+        "mission_conflict_detected": bool(normalized.get("mission_conflict_detected")),
+        "mission_conflict_resolution_strategy": str(normalized.get("mission_conflict_resolution_strategy") or ""),
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -1552,6 +1582,15 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             "metadata": metadata,
         }
     )
+    phase121_125_fields = evaluate_outcome_adaptation_fields(
+        package={
+            **p,
+            "metadata": metadata,
+            **revenue_fields,
+            **strategy_policy_fields,
+            **project_delivery_fields,
+        }
+    )
 
     return {
         "package_id": package_id,
@@ -1702,6 +1741,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         **revenue_fields,
         **strategy_policy_fields,
         **project_delivery_fields,
+        **phase121_125_fields,
         "lead_source": str(p.get("lead_source") or ""),
         "lead_contact_info": dict(p.get("lead_contact_info") or {}),
         "lead_intent": str(p.get("lead_intent") or ""),
@@ -1768,7 +1808,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
 def normalize_execution_package_journal_record(record: dict[str, Any] | None) -> dict[str, Any]:
     """Normalize journal record to stable summary-only contract shape."""
     r = record or {}
-    return {
+    normalized = {
         "package_id": str(r.get("package_id") or ""),
         "project_name": str(r.get("project_name") or ""),
         "run_id": str(r.get("run_id") or ""),
@@ -2025,6 +2065,9 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "kill_switch_active": bool(r.get("kill_switch_active")),
         "budget_reason": str(r.get("budget_reason") or ""),
     }
+    phase121_125_fields = evaluate_outcome_adaptation_fields(package=normalized)
+    normalized.update(phase121_125_fields)
+    return normalized
 
 
 def _is_review_pending_package(record: dict[str, Any] | None) -> bool:
@@ -3887,6 +3930,140 @@ def record_execution_package_revenue_loop_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_revenue_loop(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist revenue loop metadata.", "package": None}
+
+
+def _outcome_recorded(package: dict[str, Any] | None) -> bool:
+    p = package or {}
+    if str(p.get("outcome_recorded_at") or "").strip():
+        return True
+    if str(p.get("actual_outcome") or "").strip():
+        return True
+    if str(p.get("outcome_status") or "").strip().lower() in {"success", "partial", "failure"}:
+        return True
+    return False
+
+
+def record_execution_package_outcome_adaptation(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    updates: dict[str, Any] | None = None,
+    now_iso: str | None = None,
+) -> dict[str, Any]:
+    """
+    Persist Phase 121-125 outcome/adaptation/autonomy fields onto a package.
+
+    High-risk actions remain approval-gated. This function only records and derives
+    policy-safe metadata; it does not execute, dispatch, or alter live runtime behavior.
+    """
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    patch = updates if isinstance(updates, dict) else {}
+
+    immutable_outcome_fields = {
+        "actual_outcome",
+        "actual_revenue",
+        "actual_conversion",
+        "outcome_status",
+        "outcome_recorded_at",
+    }
+    if _outcome_recorded(package):
+        for key in immutable_outcome_fields:
+            if key not in patch:
+                continue
+            if key in {"actual_revenue", "actual_conversion"}:
+                if abs(float(patch.get(key) or 0.0) - float(package.get(key) or 0.0)) > 1e-9:
+                    return {
+                        "status": "error",
+                        "reason": f"Outcome immutability violation: '{key}' cannot change once recorded.",
+                        "package": package,
+                    }
+                continue
+            if str(patch.get(key)) != str(package.get(key)):
+                return {
+                    "status": "error",
+                    "reason": f"Outcome immutability violation: '{key}' cannot change once recorded.",
+                    "package": package,
+                }
+
+    allowed_update_inputs = {
+        "expected_outcome",
+        "expected_revenue",
+        "expected_conversion",
+        "actual_outcome",
+        "actual_revenue",
+        "actual_conversion",
+        "outcome_status",
+        "outcome_recorded_at",
+        "strategy_variant_confidence",
+        "mission_risk_level",
+        "approval_queue_risk_class",
+        "email_requires_approval",
+        "email_direction",
+        "project_id",
+        "delivery_status",
+        "lead_priority",
+        "follow_up_status",
+        "autopilot_parallel_capacity",
+        "active_mission_count",
+        "active_missions",
+        "metadata",
+    }
+    phase_inputs = {key: patch.get(key) for key in allowed_update_inputs if key in patch}
+    metadata = dict(package.get("metadata") or {})
+    if isinstance(phase_inputs.get("metadata"), dict):
+        metadata.update(dict(phase_inputs.get("metadata") or {}))
+    phase_inputs["metadata"] = metadata
+    contextual_fields = {
+        "mission_risk_level",
+        "email_requires_approval",
+        "email_direction",
+        "project_id",
+        "delivery_status",
+        "lead_priority",
+        "follow_up_status",
+        "autopilot_parallel_capacity",
+        "active_mission_count",
+    }
+    for key in contextual_fields:
+        if key in phase_inputs:
+            package[key] = phase_inputs.get(key)
+    if "active_missions" in phase_inputs:
+        package["active_missions"] = list(phase_inputs.get("active_missions") or [])
+
+    phase_fields = evaluate_outcome_adaptation_fields(package=package, updates=phase_inputs, now_iso=now_iso)
+    package.update(phase_fields)
+    package["metadata"] = metadata
+
+    adaptation_log = list(metadata.get("outcome_adaptation_log") or [])
+    adaptation_log.append(
+        {
+            "recorded_at": str(now_iso or datetime.now(timezone.utc).isoformat()),
+            "outcome_status": package.get("outcome_status"),
+            "performance_category": package.get("performance_category"),
+            "strategy_adjustment_required": package.get("strategy_adjustment_required"),
+            "auto_approval_allowed": package.get("auto_approval_allowed"),
+            "mission_conflict_detected": package.get("mission_conflict_detected"),
+        }
+    )
+    metadata["outcome_adaptation_log"] = [entry for entry in adaptation_log if isinstance(entry, dict)][-50:]
+
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package outcome/adaptation metadata recorded.",
+    )
+
+
+def record_execution_package_outcome_adaptation_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_outcome_adaptation(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist outcome/adaptation metadata.", "package": None}
 
 
 def record_execution_package_revenue_activation(
