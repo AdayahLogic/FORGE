@@ -536,6 +536,48 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "notification_message": p.get("notification_message") or "",
             "notification_timestamp": p.get("notification_timestamp") or "",
         }
+    if p.get("lead_id") or p.get("email_thread_id") or p.get("qualification_reason"):
+        sections["qualification"] = {
+            "qualification_status": p.get("qualification_status") or "unqualified",
+            "qualification_score": p.get("qualification_score") or 0.0,
+            "qualification_reason": p.get("qualification_reason") or "",
+            "lead_value_estimate": p.get("lead_value_estimate") or 0.0,
+            "urgency_level": p.get("urgency_level") or "low",
+        }
+    if p.get("offer_type") or p.get("offer_summary"):
+        sections["offer"] = {
+            "offer_type": p.get("offer_type") or "",
+            "offer_summary": p.get("offer_summary") or "",
+            "offer_price_estimate": p.get("offer_price_estimate") or "",
+            "offer_value_proposition": p.get("offer_value_proposition") or "",
+            "offer_confidence": p.get("offer_confidence") or 0.0,
+            "offer_customization_reason": p.get("offer_customization_reason") or "",
+        }
+    if bool(p.get("objection_detected")) or p.get("objection_reason"):
+        sections["objection"] = {
+            "objection_detected": bool(p.get("objection_detected")),
+            "objection_type": p.get("objection_type") or "other",
+            "objection_reason": p.get("objection_reason") or "",
+            "objection_response_strategy": p.get("objection_response_strategy") or "",
+            "objection_response_draft": p.get("objection_response_draft") or "",
+        }
+    if bool(p.get("closing_signal_detected")) or p.get("recommended_closing_action"):
+        sections["closing"] = {
+            "closing_signal_detected": bool(p.get("closing_signal_detected")),
+            "closing_signal_type": p.get("closing_signal_type") or "none",
+            "closing_confidence": p.get("closing_confidence") or 0.0,
+            "recommended_closing_action": p.get("recommended_closing_action") or "",
+            "closing_message_draft": p.get("closing_message_draft") or "",
+        }
+    if p.get("conversation_id") or p.get("last_user_message") or p.get("last_forge_message") or list(p.get("conversation_history") or []):
+        sections["conversation"] = {
+            "conversation_id": p.get("conversation_id") or "",
+            "conversation_history": [dict(item) for item in list(p.get("conversation_history") or []) if isinstance(item, dict)][:30],
+            "last_user_message": p.get("last_user_message") or "",
+            "last_forge_message": p.get("last_forge_message") or "",
+            "conversation_stage": p.get("conversation_stage") or "lead",
+            "conversation_last_updated_at": p.get("conversation_last_updated_at") or "",
+        }
     return sections
 
 
@@ -609,6 +651,21 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "follow_up_status": p.get("follow_up_status") or "not_required",
         "follow_up_required": bool(p.get("follow_up_required")),
         "follow_up_next_at": p.get("follow_up_next_at") or "",
+        "qualification_status": p.get("qualification_status") or "unqualified",
+        "qualification_score": p.get("qualification_score") or 0.0,
+        "lead_value_estimate": p.get("lead_value_estimate") or 0.0,
+        "urgency_level": p.get("urgency_level") or "low",
+        "offer_type": p.get("offer_type") or "",
+        "offer_confidence": p.get("offer_confidence") or 0.0,
+        "objection_detected": bool(p.get("objection_detected")),
+        "objection_type": p.get("objection_type") or "other",
+        "closing_signal_detected": bool(p.get("closing_signal_detected")),
+        "closing_signal_type": p.get("closing_signal_type") or "none",
+        "closing_confidence": p.get("closing_confidence") or 0.0,
+        "recommended_closing_action": p.get("recommended_closing_action") or "",
+        "conversation_id": p.get("conversation_id") or "",
+        "conversation_stage": p.get("conversation_stage") or "lead",
+        "conversation_last_updated_at": p.get("conversation_last_updated_at") or "",
     }
 
 
@@ -921,6 +978,29 @@ def run_command(
                 if bool(row.get("follow_up_required"))
                 and str(row.get("follow_up_status") or "").strip().lower() in {"pending", "scheduled", "awaiting_approval"}
             ]
+            leads_needing_qualification = [
+                row
+                for row in queue_rows
+                if str(row.get("lead_id") or "").strip()
+                and str(row.get("qualification_status") or "").strip().lower() in {"", "unqualified", "low_intent"}
+            ]
+            deals_in_progress = [
+                row
+                for row in queue_rows
+                if str(row.get("conversation_stage") or "").strip().lower() in {"qualified", "negotiating"}
+            ]
+            closing_opportunities = [
+                row
+                for row in queue_rows
+                if bool(row.get("closing_signal_detected"))
+                or str(row.get("conversation_stage") or "").strip().lower() == "closing"
+            ]
+            high_value_leads = [
+                row
+                for row in queue_rows
+                if float(row.get("lead_value_estimate") or 0.0) >= 10000.0
+                or str(row.get("qualification_status") or "").strip().lower() == "high_intent"
+            ]
             return _result(
                 command=cmd,
                 status="ok",
@@ -959,6 +1039,12 @@ def run_command(
                         "leads_awaiting_response": len(leads_awaiting_response),
                         "responses_awaiting_approval": len(responses_awaiting_approval),
                         "follow_ups_pending": len(follow_ups_pending),
+                    },
+                    "sales_queue_summary": {
+                        "leads_needing_qualification": len(leads_needing_qualification),
+                        "deals_in_progress": len(deals_in_progress),
+                        "closing_opportunities": len(closing_opportunities),
+                        "high_value_leads": len(high_value_leads),
                     },
                 },
             )
@@ -2297,6 +2383,13 @@ def run_command(
                 "email_thread_id": qe.get("email_thread_id"),
                 "email_subject": qe.get("email_subject"),
                 "communication_risk_class": qe.get("communication_risk_class"),
+                "review_focus": {
+                    "outbound_sales_messages": bool(
+                        qe.get("email_requires_approval")
+                        and str(qe.get("approval_queue_item_type") or "").strip().lower() in {"email_send_approval", "sales_message_approval"}
+                    ),
+                    "high_risk_communications": str(qe.get("approval_queue_risk_class") or "").strip().lower() in {"high", "critical"},
+                },
             }
             summary_line = f"queue_status={payload.get('queue_status')}; queue_type={payload.get('queue_type')}"
             return _result(
