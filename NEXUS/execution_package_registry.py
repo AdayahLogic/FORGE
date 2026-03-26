@@ -337,6 +337,30 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "governance_resolution_state": metadata.get("governance_resolution_state"),
         "governance_routing_outcome": metadata.get("governance_routing_outcome"),
         "lead_id": str(normalized.get("lead_id") or ""),
+        "lead_source": str(normalized.get("lead_source") or ""),
+        "lead_contact_info": dict(normalized.get("lead_contact_info") or {}),
+        "lead_intent": str(normalized.get("lead_intent") or ""),
+        "lead_status": str(normalized.get("lead_status") or "new"),
+        "lead_priority": str(normalized.get("lead_priority") or "medium"),
+        "lead_created_at": str(normalized.get("lead_created_at") or ""),
+        "lead_temperature": str(normalized.get("lead_temperature") or "cold"),
+        "lead_inferred_intent": str(normalized.get("lead_inferred_intent") or ""),
+        "lead_business_type": str(normalized.get("lead_business_type") or ""),
+        "email_thread_id": str(normalized.get("email_thread_id") or ""),
+        "email_message_id": str(normalized.get("email_message_id") or ""),
+        "email_direction": str(normalized.get("email_direction") or ""),
+        "email_status": str(normalized.get("email_status") or ""),
+        "email_requires_approval": bool(normalized.get("email_requires_approval")),
+        "follow_up_required": bool(normalized.get("follow_up_required")),
+        "follow_up_status": str(normalized.get("follow_up_status") or "not_required"),
+        "follow_up_next_at": str(normalized.get("follow_up_next_at") or ""),
+        "follow_up_attempt_count": int(normalized.get("follow_up_attempt_count") or 0),
+        "follow_up_strategy": str(normalized.get("follow_up_strategy") or ""),
+        "follow_up_priority": str(normalized.get("follow_up_priority") or "medium"),
+        "notification_type": str(normalized.get("notification_type") or ""),
+        "notification_priority": str(normalized.get("notification_priority") or ""),
+        "notification_message": str(normalized.get("notification_message") or ""),
+        "notification_timestamp": str(normalized.get("notification_timestamp") or ""),
         "opportunity_id": str(normalized.get("opportunity_id") or ""),
         "client_id": str(normalized.get("client_id") or ""),
         "business_function": str(normalized.get("business_function") or ""),
@@ -387,6 +411,7 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "remaining_estimated_budget": float(normalized.get("remaining_estimated_budget") or 0.0),
         "kill_switch_active": bool(normalized.get("kill_switch_active")),
         "budget_reason": str(normalized.get("budget_reason") or ""),
+        "email_threads": [dict(item) for item in list(normalized.get("email_threads") or []) if isinstance(item, dict)][:20],
     }
 
 
@@ -1611,6 +1636,31 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         **budget_fields,
         **revenue_fields,
         **strategy_policy_fields,
+        "lead_source": str(p.get("lead_source") or ""),
+        "lead_contact_info": dict(p.get("lead_contact_info") or {}),
+        "lead_intent": str(p.get("lead_intent") or ""),
+        "lead_status": str(p.get("lead_status") or "new"),
+        "lead_priority": str(p.get("lead_priority") or "medium"),
+        "lead_created_at": str(p.get("lead_created_at") or ""),
+        "lead_temperature": str(p.get("lead_temperature") or "cold"),
+        "lead_inferred_intent": str(p.get("lead_inferred_intent") or ""),
+        "lead_business_type": str(p.get("lead_business_type") or ""),
+        "email_thread_id": str(p.get("email_thread_id") or ""),
+        "email_message_id": str(p.get("email_message_id") or ""),
+        "email_direction": str(p.get("email_direction") or ""),
+        "email_status": str(p.get("email_status") or ""),
+        "email_requires_approval": bool(p.get("email_requires_approval")),
+        "email_threads": [dict(item) for item in list(p.get("email_threads") or []) if isinstance(item, dict)][:20],
+        "follow_up_required": bool(p.get("follow_up_required")),
+        "follow_up_status": str(p.get("follow_up_status") or "not_required"),
+        "follow_up_next_at": str(p.get("follow_up_next_at") or ""),
+        "follow_up_attempt_count": max(0, int(p.get("follow_up_attempt_count") or 0)),
+        "follow_up_strategy": str(p.get("follow_up_strategy") or ""),
+        "follow_up_priority": str(p.get("follow_up_priority") or "medium"),
+        "notification_type": str(p.get("notification_type") or ""),
+        "notification_priority": str(p.get("notification_priority") or ""),
+        "notification_message": str(p.get("notification_message") or ""),
+        "notification_timestamp": str(p.get("notification_timestamp") or ""),
         "delivery_summary": build_delivery_summary_contract(
             {
                 **p,
@@ -1749,6 +1799,31 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
         "governance_routing_outcome": str(r.get("governance_routing_outcome") or ""),
         "lead_id": str(r.get("lead_id") or ""),
+        "lead_source": str(r.get("lead_source") or ""),
+        "lead_contact_info": dict(r.get("lead_contact_info") or {}),
+        "lead_intent": str(r.get("lead_intent") or ""),
+        "lead_status": str(r.get("lead_status") or "new"),
+        "lead_priority": str(r.get("lead_priority") or "medium"),
+        "lead_created_at": str(r.get("lead_created_at") or ""),
+        "lead_temperature": str(r.get("lead_temperature") or "cold"),
+        "lead_inferred_intent": str(r.get("lead_inferred_intent") or ""),
+        "lead_business_type": str(r.get("lead_business_type") or ""),
+        "email_thread_id": str(r.get("email_thread_id") or ""),
+        "email_message_id": str(r.get("email_message_id") or ""),
+        "email_direction": str(r.get("email_direction") or ""),
+        "email_status": str(r.get("email_status") or ""),
+        "email_requires_approval": bool(r.get("email_requires_approval")),
+        "email_threads": [dict(item) for item in list(r.get("email_threads") or []) if isinstance(item, dict)][:20],
+        "follow_up_required": bool(r.get("follow_up_required")),
+        "follow_up_status": str(r.get("follow_up_status") or "not_required"),
+        "follow_up_next_at": str(r.get("follow_up_next_at") or ""),
+        "follow_up_attempt_count": max(0, int(r.get("follow_up_attempt_count") or 0)),
+        "follow_up_strategy": str(r.get("follow_up_strategy") or ""),
+        "follow_up_priority": str(r.get("follow_up_priority") or "medium"),
+        "notification_type": str(r.get("notification_type") or ""),
+        "notification_priority": str(r.get("notification_priority") or ""),
+        "notification_message": str(r.get("notification_message") or ""),
+        "notification_timestamp": str(r.get("notification_timestamp") or ""),
         "opportunity_id": str(r.get("opportunity_id") or ""),
         "client_id": str(r.get("client_id") or ""),
         "business_function": str(r.get("business_function") or ""),
@@ -3524,6 +3599,77 @@ def record_execution_package_governance_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_governance(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package governance metadata.", "package": None}
+
+
+def record_execution_package_revenue_loop(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    updates: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """
+    Persist Phase 107-110 communication/revenue-loop metadata onto a package.
+
+    This function is storage-only. It does not dispatch messages, create network
+    side effects, or trigger execution transitions.
+    """
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    patch = updates if isinstance(updates, dict) else {}
+    allowed_fields = {
+        "lead_id",
+        "lead_source",
+        "lead_contact_info",
+        "lead_intent",
+        "lead_status",
+        "lead_priority",
+        "lead_created_at",
+        "lead_temperature",
+        "lead_inferred_intent",
+        "lead_business_type",
+        "email_thread_id",
+        "email_message_id",
+        "email_direction",
+        "email_status",
+        "email_requires_approval",
+        "email_threads",
+        "follow_up_required",
+        "follow_up_status",
+        "follow_up_next_at",
+        "follow_up_attempt_count",
+        "follow_up_strategy",
+        "follow_up_priority",
+        "notification_type",
+        "notification_priority",
+        "notification_message",
+        "notification_timestamp",
+        "approval_queue_item_type",
+        "approval_queue_risk_class",
+        "approval_queue_reason",
+    }
+    for key in allowed_fields:
+        if key in patch:
+            package[key] = patch.get(key)
+    metadata = dict(package.get("metadata") or {})
+    if isinstance(patch.get("metadata"), dict):
+        metadata.update(dict(patch.get("metadata") or {}))
+    package["metadata"] = metadata
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package communication/revenue loop metadata recorded.",
+    )
+
+
+def record_execution_package_revenue_loop_safe(**kwargs: Any) -> dict[str, Any]:
+    """Safe wrapper: never raises."""
+    try:
+        return record_execution_package_revenue_loop(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist revenue loop metadata.", "package": None}
 
 
 def record_execution_package_revenue_activation(
