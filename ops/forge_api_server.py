@@ -105,6 +105,11 @@ class AttachmentRequest(BaseModel):
     request_id: str = ""
 
 
+class BillingUnblockRequest(BaseModel):
+    customer_id: str
+    reason: str = "manual_operator_override"
+
+
 @app.get("/overview")
 def overview(_auth: None = Depends(_require_token)) -> dict[str, Any]:
     return _ok(build_studio_snapshot())
@@ -223,8 +228,8 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
     payload = await request.body()
     try:
         event = stripe_sdk.Webhook.construct_event(payload, signature, webhook_secret)  # type: ignore[attr-defined]
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
     try:
         from NEXUS.billing_engine import dispatch_webhook_event
 
@@ -239,6 +244,20 @@ async def stripe_webhook(request: Request) -> dict[str, Any]:
         "type": str(event.get("type") or ""),
         "dispatch": dispatch_result,
     }
+
+
+@app.post("/billing/unblock-customer")
+def billing_unblock(req: BillingUnblockRequest, _auth: None = Depends(_require_token)) -> dict[str, Any]:
+    from NEXUS.billing_engine import _unmark_customer_blocked
+
+    return _ok(_unmark_customer_blocked(req.customer_id, reason=req.reason))
+
+
+@app.get("/billing/blocked-customers")
+def billing_blocked_customers(_auth: None = Depends(_require_token)) -> dict[str, Any]:
+    from NEXUS.billing_engine import _read_blocked_customers
+
+    return _ok(_read_blocked_customers())
 
 
 @app.get("/health")

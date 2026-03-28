@@ -34,3 +34,24 @@ npm run dev
 ## Auth Flow
 Both Next.js middleware (`/api/forge/*`) and FastAPI enforce `x-forge-token` against `FORGE_CONSOLE_TOKEN`.
 Use the same token value in both process environments.
+
+## Billing Management
+
+### List blocked customers
+`GET /billing/blocked-customers` (requires `x-forge-token` header).
+
+### Unblock a customer manually
+`POST /billing/unblock-customer`
+
+`Content-Type: application/json`
+
+`{"customer_id":"cus_xxx","reason":"payment_resolved_manually"}`
+
+### When is a customer blocked?
+On receipt of `invoice.payment_failed` and `customer.subscription.deleted`.
+
+### When is a customer automatically unblocked?
+On receipt of `invoice.payment_succeeded`, `customer.subscription.updated` (when `status=active`), and `customer.subscription.created` (when `status=active`).
+
+### Notification channel health
+Confirm `TELEGRAM_BOT_TOKEN` and `TELEGRAM_CHAT_ID` are configured. Billing alerts route through `NEXUS/notification_router.py` once the notification router branch is merged.

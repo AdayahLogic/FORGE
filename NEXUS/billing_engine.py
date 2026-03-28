@@ -94,6 +94,22 @@ def _mark_customer_blocked(customer_id: str, reason: str) -> None:
     _write_blocked_customers(blocked)
 
 
+def _unmark_customer_blocked(customer_id: str, reason: str = "payment_resolved") -> dict[str, Any]:
+    customer = str(customer_id or "").strip()
+    if not customer:
+        return {"status": "skipped", "reason": "customer_id missing."}
+    blocked = _read_blocked_customers()
+    record = blocked.get(customer) or {}
+    blocked[customer] = {
+        **record,
+        "blocked": False,
+        "unblock_reason": str(reason or "payment_resolved").strip(),
+        "unblocked_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _write_blocked_customers(blocked)
+    return {"status": "unblocked", "customer_id": customer, "unblock_reason": reason}
+
+
 def is_customer_billing_blocked(customer_id: str) -> bool:
     customer = str(customer_id or "").strip()
     if not customer:
@@ -103,33 +119,99 @@ def is_customer_billing_blocked(customer_id: str) -> bool:
     return isinstance(record, dict) and bool(record.get("blocked"))
 
 
+def _notify_operator_safe(
+    *,
+    event_type: str,
+    message: str,
+    priority: str,
+    payload: dict[str, Any],
+) -> str:
+    try:
+        from NEXUS.notification_router import notify_operator
+
+        notify_operator(
+            event_type=event_type,
+            message=message,
+            priority=priority,
+            payload=payload,
+            source="billing_engine",
+        )
+        return "sent"
+    except Exception:
+        return "unavailable"
+
+
 def dispatch_webhook_event(event_type: str, event_data: dict[str, Any]) -> dict[str, Any]:
     """
     Handle Stripe webhook events with additive, non-destructive defaults.
     """
     normalized_event = str(event_type or "").strip()
+    unblock_events = {"invoice.payment_succeeded"}
+    subscription_active_events = {"customer.subscription.updated", "customer.subscription.created"}
+
+    if normalized_event in unblock_events:
+        customer_id = _extract_event_customer_id(event_data)
+        result = _unmark_customer_blocked(customer_id, reason=normalized_event) if customer_id else {}
+        alert_status = _notify_operator_safe(
+            event_type="billing_info",
+            message=f"Customer {customer_id or 'unknown'} unblocked on {normalized_event}.",
+            priority="info",
+            payload={
+                "customer_id": customer_id,
+                "event_type": normalized_event,
+                "event_data": dict(event_data or {}),
+            },
+        )
+        return {
+            "status": "unblocked",
+            "event_type": normalized_event,
+            "customer_id": customer_id,
+            "alert_status": alert_status,
+            "event_data_keys": sorted(list((event_data or {}).keys())),
+            **result,
+        }
+
+    if normalized_event in subscription_active_events:
+        obj = (event_data.get("object") or {}) if isinstance(event_data, dict) else {}
+        status = str(obj.get("status") or "").strip().lower() if isinstance(obj, dict) else ""
+        if status == "active":
+            customer_id = str(obj.get("customer") or "").strip() if isinstance(obj, dict) else ""
+            if customer_id:
+                _unmark_customer_blocked(customer_id, reason=normalized_event)
+            alert_status = _notify_operator_safe(
+                event_type="billing_info",
+                message=f"Customer {customer_id or 'unknown'} marked active on {normalized_event}.",
+                priority="info",
+                payload={
+                    "customer_id": customer_id,
+                    "event_type": normalized_event,
+                    "status": status,
+                    "event_data": dict(event_data or {}),
+                },
+            )
+            return {
+                "status": "noted",
+                "event_type": normalized_event,
+                "action": "unblocked_if_active",
+                "customer_id": customer_id,
+                "alert_status": alert_status,
+                "event_data_keys": sorted(list((event_data or {}).keys())),
+            }
+
     if normalized_event in {"invoice.payment_failed", "customer.subscription.deleted"}:
         customer_id = _extract_event_customer_id(event_data)
         if customer_id:
             _mark_customer_blocked(customer_id, normalized_event)
-        alert_status = "skipped"
-        try:
-            from NEXUS.notification_router import notify_operator
-
-            notify_operator(
-                event_type="billing_alert",
-                message=f"Billing event {normalized_event} for customer {customer_id or 'unknown'}.",
-                priority="critical",
-                payload={
-                    "customer_id": customer_id,
-                    "event_type": normalized_event,
-                    "event_data": dict(event_data or {}),
-                },
-                source="billing_engine",
-            )
-            alert_status = "sent"
-        except Exception:
-            alert_status = "unavailable"
+        alert_status = _notify_operator_safe(
+            event_type="billing_alert",
+            message=f"Billing event {normalized_event} for customer {customer_id or 'unknown'}.",
+            priority="critical",
+            payload={
+                "customer_id": customer_id,
+                "event_type": normalized_event,
+                "event_data": dict(event_data or {}),
+            },
+        )
         return {
             "status": "noted",
             "event_type": normalized_event,
