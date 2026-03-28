@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from NEXUS.authority_model import enforce_component_authority_safe, infer_component_name
+from NEXUS.billing_engine import is_customer_billing_blocked
 from NEXUS.budget_controls import (
     evaluate_budget_controls,
     normalize_budget_control,
@@ -2680,6 +2681,70 @@ def record_execution_package_execution(
             package=package,
             status="denied",
             reason=str(projected_budget_control.get("budget_reason") or "Budget kill switch triggered."),
+        )
+    billing_customer_id = str(
+        package.get("client_id")
+        or ((package.get("metadata") or {}).get("revenue_pipeline_context") or {}).get("client_id")
+        or ""
+    ).strip()
+    if billing_customer_id and is_customer_billing_blocked(billing_customer_id):
+        blocked_at = _utc_now_iso()
+        package["execution_status"] = "blocked"
+        package["execution_timestamp"] = blocked_at
+        package["execution_started_at"] = blocked_at
+        package["execution_finished_at"] = blocked_at
+        package["execution_actor"] = actor
+        package["execution_id"] = str(uuid.uuid4())
+        package["execution_version"] = "v1"
+        package["execution_reason"] = _normalize_execution_reason(
+            {
+                "code": "billing_blocked",
+                "message": "Customer billing is blocked due to payment failure.",
+            }
+        )
+        package["execution_receipt"] = _normalize_execution_receipt(
+            {
+                "result_status": "blocked",
+                "failure_class": "preflight_block",
+                "stderr_summary": "Customer billing is blocked due to payment failure.",
+            }
+        )
+        package["rollback_status"] = "not_needed"
+        package["rollback_timestamp"] = ""
+        package["rollback_reason"] = _normalize_rollback_reason({"code": "", "message": ""})
+        package["failure_summary"] = normalize_failure_summary(
+            summarize_failure(failure_class="preflight_block", timestamp=blocked_at)
+        )
+        package["integrity_verification"] = verify_terminal_execution_integrity(package)
+        package["recovery_summary"] = normalize_recovery_summary(
+            evaluate_recovery_summary(
+                execution_status="blocked",
+                failure_summary=package.get("failure_summary"),
+                retry_policy=package.get("retry_policy"),
+                rollback_repair=package.get("rollback_repair"),
+                integrity_verification=package.get("integrity_verification"),
+            )
+        )
+        package["billing_gate"] = {
+            "status": "blocked",
+            "customer_id": billing_customer_id,
+            "reason": "payment_failure_or_subscription_cancellation",
+            "checked_at": blocked_at,
+        }
+        package["cost_tracking"] = {
+            **projected_execution_cost,
+            "cost_source": "runtime_execution",
+            "cost_breakdown": {
+                **dict(projected_execution_cost.get("cost_breakdown") or {}),
+                "model": "forge_runtime_cost_estimator",
+            },
+        }
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="denied",
+            reason="Customer billing is blocked due to payment failure.",
         )
     execution_component = "openclaw"
     execution_authority = enforce_component_authority_safe(
