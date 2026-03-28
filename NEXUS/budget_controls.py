@@ -233,3 +233,47 @@ def summarize_journal_estimated_costs(journal_rows: list[dict[str, Any]] | None,
         "project_estimated_cost_total": round(project_total, 6),
         "session_estimated_cost_total": round(session_total, 6),
     }
+
+
+def record_billing_usage_from_cost_tracking(
+    *,
+    customer_id: Any,
+    cost_tracking: Any,
+    package_id: str = "",
+    run_id: str = "",
+    source: str = "execution_package_execution",
+) -> dict[str, Any]:
+    """
+    Emit optional Stripe usage for post-execution cost tracking.
+
+    This hook is additive and intentionally non-blocking. It never raises and
+    returns a deterministic status payload for auditability.
+    """
+    customer = str(customer_id or "").strip()
+    if not customer:
+        return {"status": "skipped", "reason": "customer_id missing."}
+    tracking = dict(cost_tracking) if isinstance(cost_tracking, dict) else {}
+    breakdown = dict(tracking.get("cost_breakdown") or {})
+    estimated_tokens = max(0, _to_float(breakdown.get("estimated_tokens"), 0.0))
+    quantity_tokens = int(round(estimated_tokens))
+    if quantity_tokens <= 0:
+        return {"status": "skipped", "reason": "No billable estimated tokens."}
+    metadata = {
+        "package_id": str(package_id or ""),
+        "run_id": str(run_id or ""),
+        "source": str(source or "execution_package_execution"),
+        "cost_source": str(tracking.get("cost_source") or ""),
+        "cost_estimate": _cost_value(tracking.get("cost_estimate")),
+    }
+    try:
+        from NEXUS.billing_engine import record_usage
+    except Exception:
+        return {"status": "error", "reason": "billing_engine import failed.", "metadata": metadata}
+    try:
+        return record_usage(
+            customer_id=customer,
+            quantity_tokens=quantity_tokens,
+            metadata=metadata,
+        )
+    except Exception as exc:
+        return {"status": "error", "reason": f"Billing usage hook failed: {exc}", "metadata": metadata}

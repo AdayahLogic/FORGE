@@ -18,6 +18,7 @@ from NEXUS.authority_model import enforce_component_authority_safe, infer_compon
 from NEXUS.budget_controls import (
     evaluate_budget_controls,
     normalize_budget_control,
+    record_billing_usage_from_cost_tracking,
     resolve_budget_caps,
     summarize_journal_estimated_costs,
 )
@@ -2866,6 +2867,18 @@ def record_execution_package_execution(
     post_journal_rows = list_execution_package_journal_entries(project_path, n=50)
     post_cost_totals = summarize_journal_estimated_costs(post_journal_rows, run_id=run_id)
     operation_cost = float(package["cost_tracking"].get("cost_estimate") or 0.0)
+    billing_customer_id = str(
+        package.get("client_id")
+        or ((package.get("metadata") or {}).get("revenue_pipeline_context") or {}).get("client_id")
+        or ""
+    )
+    package["billing_usage"] = record_billing_usage_from_cost_tracking(
+        customer_id=billing_customer_id,
+        cost_tracking=package.get("cost_tracking"),
+        package_id=package_id,
+        run_id=run_id,
+        source="execution_package_execution",
+    )
     budget_control = evaluate_budget_controls(
         budget_caps=_resolve_package_budget_caps(package, project_path),
         current_operation_cost=operation_cost,

@@ -102,14 +102,14 @@ ENGINE_REGISTRY = {
 
     # Planned engines
     "pricing_engine": {
-        "implemented": False,
-        "status": "planned",
+        "implemented": True,
+        "status": "active",
         "layer": "studio",
         "category": "business",
         "owner": "forge",
         "reusable": True,
         "products": [],
-        "description": "Future pricing strategy engine for products and subscription models.",
+        "description": "Pricing strategy engine. Active: resolves Stripe subscription item IDs per customer via billing_engine._resolve_subscription_item_id.",
     },
     "legal_engine": {
         "implemented": False,

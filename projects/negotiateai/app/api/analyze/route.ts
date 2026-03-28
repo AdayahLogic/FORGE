@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { NextResponse } from "next/server";
+import { z } from "zod";
 
 const client = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
@@ -43,18 +44,24 @@ type AIResult = {
   responses: string[];
 };
 
+const MessageSchema = z.object({
+  message: z.string().trim().min(1).max(2000),
+});
+
 export async function POST(request: Request) {
   try {
-    const body = await request.json();
-    const originalMessage = (body.message || "").trim();
-
-    if (!originalMessage) {
-      return NextResponse.json({
-        tone: "N/A",
-        strategy: "Please paste a message first.",
-        responses: [],
-      });
+    const body = MessageSchema.safeParse(await request.json());
+    if (!body.success) {
+      return NextResponse.json(
+        {
+          tone: "N/A",
+          strategy: "Please provide a valid message (1-2000 characters).",
+          responses: [],
+        },
+        { status: 400 }
+      );
     }
+    const originalMessage = body.data.message;
 
     if (containsBlockedContent(originalMessage)) {
       return NextResponse.json({

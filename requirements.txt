@@ -3,6 +3,11 @@ langchain
 openai
 python-dotenv
 pydantic
+fastapi
+uvicorn[standard]
+python-multipart
+stripe
 rich
 typer
 streamlit
+pytest==9.0.2

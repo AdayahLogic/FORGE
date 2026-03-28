@@ -1,6 +1,12 @@
 "use client";
 
-import { startTransition, useEffect, useState } from "react";
+import {
+  Component,
+  startTransition,
+  type ReactNode,
+  useEffect,
+  useState,
+} from "react";
 import {
   getClientViewSnapshot,
   getOverviewSnapshot,
@@ -24,6 +30,7 @@ import type {
 import { createInitialUiState } from "../lib/forge-ui-state";
 import { AbacusEvaluationPanel } from "./abacus-evaluation-panel";
 import { ApprovalControlCenter } from "./approval-control-center";
+import { BillingUsagePanel } from "./billing-usage-panel";
 import { ExecutionDetailDrawer } from "./execution-detail-drawer";
 import { NemoClawAdvisoryPanel } from "./nemoclaw-advisory-panel";
 import { PackageLifecycleBoard } from "./package-lifecycle-board";
@@ -31,6 +38,54 @@ import { ProjectControlPanel } from "./project-control-panel";
 import { ProjectIntakeWorkspace } from "./project-intake-workspace";
 import { ReviewCenter } from "./review-center";
 import { SystemOverview } from "./system-overview";
+
+type ConsoleErrorBoundaryProps = {
+  children: ReactNode;
+};
+
+type ConsoleErrorBoundaryState = {
+  hasError: boolean;
+  message: string;
+};
+
+class ConsoleErrorBoundary extends Component<
+  ConsoleErrorBoundaryProps,
+  ConsoleErrorBoundaryState
+> {
+  state: ConsoleErrorBoundaryState = { hasError: false, message: "" };
+
+  static getDerivedStateFromError(error: Error): ConsoleErrorBoundaryState {
+    return { hasError: true, message: error.message || "Unknown UI error." };
+  }
+
+  componentDidCatch(error: Error) {
+    console.error("ConsoleShell render error:", error);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <main className="console-root">
+          <section className="panel client-mode-panel">
+            <div className="section-title">
+              <div>
+                <div className="eyebrow">Forge Console</div>
+                <h3>UI Error Boundary Triggered</h3>
+              </div>
+              <span className="chip warn">Recovered safely</span>
+            </div>
+            <div className="audit-item muted">
+              A rendering error was captured before it could crash the full
+              operator surface.
+            </div>
+            <div className="audit-item">{this.state.message}</div>
+          </section>
+        </main>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export function ConsoleShell() {
   const [uiState, setUiState] = useState<ForgeUiState>(createInitialUiState());
@@ -417,8 +472,9 @@ export function ConsoleShell() {
   };
 
   return (
-    <main className="console-root">
-      <div className="console-grid">
+    <ConsoleErrorBoundary>
+      <main className="console-root">
+        <div className="console-grid">
         {uiState.surfaceMode === "client_safe" ? (
           <section className="panel top-band">
             <div className="section-title">
@@ -604,6 +660,7 @@ export function ConsoleShell() {
               }}
               selectedProjectKey={uiState.selectedProjectKey}
             />
+            <BillingUsagePanel overview={uiState.overviewSnapshot} />
             <AbacusEvaluationPanel detail={uiState.packageDetail} />
             <NemoClawAdvisoryPanel detail={uiState.packageDetail} />
           </div>
@@ -706,7 +763,8 @@ export function ConsoleShell() {
             />
           )}
         </div>
-      </div>
-    </main>
+        </div>
+      </main>
+    </ConsoleErrorBoundary>
   );
 }

@@ -99,8 +99,8 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "description": "Deployment and release tooling (planned).",
     },
     "billing_admin": {
-        "implemented": False,
-        "status": "planned",
+        "implemented": True,
+        "status": "active",
         "category": "admin",
         "tool_family": "billing_admin",
         "external_internal": "planned_external",
@@ -110,7 +110,7 @@ TOOL_REGISTRY: dict[str, dict[str, Any]] = {
         "tool_gateway_families": [],
         "allowed_agents": [],
         "human_review_recommended": True,
-        "description": "Billing and subscription administration (planned).",
+        "description": "Billing and subscription administration. Active: emits Stripe usage records via NEXUS/billing_engine.py.",
     },
     "analytics_export": {
         "implemented": False,

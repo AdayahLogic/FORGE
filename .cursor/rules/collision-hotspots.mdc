@@ -1,0 +1,16 @@
+---
+description: Require focused review for high-collision Forge files
+globs:
+  - "NEXUS/workflow.py"
+  - "NEXUS/governance_layer.py"
+  - "NEXUS/execution_package_registry.py"
+  - "projects/forge_console/components/console-shell.tsx"
+alwaysApply: false
+---
+
+For every change touching these files:
+
+1. Keep edits minimal and additive.
+2. Include a brief change rationale in the PR description.
+3. Require human review before merge.
+4. Run relevant tests for workflow, governance, and console stability.

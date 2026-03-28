@@ -1,18 +1,19 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { NextResponse } from "next/server";
-import { runForgeBridge } from "../../../../lib/forge-bridge";
 
 export const dynamic = "force-dynamic";
+const FORGE_API_URL = (process.env.FORGE_API_URL || "http://localhost:8000").replace(
+  /\/+$/,
+  "",
+);
+const FORGE_CONSOLE_TOKEN = process.env.FORGE_CONSOLE_TOKEN || "";
 
 export async function POST(request: Request) {
-  let tempDir = "";
   try {
     const formData = await request.formData();
     const projectKey = String(formData.get("projectKey") ?? "");
     const purpose = String(formData.get("purpose") ?? "supporting_context");
     const source = String(formData.get("source") ?? "console_upload");
+    const packageId = String(formData.get("packageId") ?? "");
     const requestId = String(formData.get("requestId") ?? "");
     const file = formData.get("file");
     if (!(file instanceof File)) {
@@ -26,30 +27,33 @@ export async function POST(request: Request) {
       );
     }
 
-    tempDir = await mkdtemp(join(tmpdir(), "forge-console-"));
-    const tempFilePath = join(tempDir, file.name);
-    const buffer = Buffer.from(await file.arrayBuffer());
-    await writeFile(tempFilePath, buffer);
+    const outbound = new FormData();
+    outbound.append("project_key", projectKey);
+    outbound.append("source", source);
+    outbound.append("purpose", purpose);
+    outbound.append("package_id", packageId);
+    outbound.append("request_id", requestId);
+    outbound.append("file", file);
 
-    const payload = await runForgeBridge([
-      "upload_attachment",
-      "--project-key",
-      projectKey,
-      "--file-path",
-      tempFilePath,
-      "--file-name",
-      file.name,
-      "--file-type",
-      file.type || "application/octet-stream",
-      "--source",
-      source,
-      "--purpose",
-      purpose,
-      "--request-id",
-      requestId,
-    ]);
+    const response = await fetch(`${FORGE_API_URL}/attachment-upload`, {
+      method: "POST",
+      headers: FORGE_CONSOLE_TOKEN
+        ? { "x-forge-token": FORGE_CONSOLE_TOKEN }
+        : undefined,
+      body: outbound,
+    });
+    const text = await response.text();
+    if (!text.trim()) {
+      throw new Error("Forge API returned an empty response.");
+    }
+    const payload = JSON.parse(text) as Record<string, unknown>;
     return NextResponse.json(payload, {
-      status: payload.status === "ok" ? 200 : 400,
+      status:
+        response.ok && payload.status === "ok"
+          ? 200
+          : response.ok
+            ? 400
+            : response.status,
     });
   } catch (error) {
     return NextResponse.json(
@@ -60,9 +64,5 @@ export async function POST(request: Request) {
       },
       { status: 500 },
     );
-  } finally {
-    if (tempDir) {
-      await rm(tempDir, { recursive: true, force: true });
-    }
   }
 }
