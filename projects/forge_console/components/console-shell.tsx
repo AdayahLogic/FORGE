@@ -30,6 +30,7 @@ import type {
 import { createInitialUiState } from "../lib/forge-ui-state";
 import { AbacusEvaluationPanel } from "./abacus-evaluation-panel";
 import { ApprovalControlCenter } from "./approval-control-center";
+import { BillingBlockedPanel } from "./billing-blocked-panel";
 import { BillingUsagePanel } from "./billing-usage-panel";
 import { ExecutionDetailDrawer } from "./execution-detail-drawer";
 import { NemoClawAdvisoryPanel } from "./nemoclaw-advisory-panel";
@@ -660,6 +661,7 @@ export function ConsoleShell() {
               }}
               selectedProjectKey={uiState.selectedProjectKey}
             />
+            <BillingBlockedPanel />
             <BillingUsagePanel overview={uiState.overviewSnapshot} />
             <AbacusEvaluationPanel detail={uiState.packageDetail} />
             <NemoClawAdvisoryPanel detail={uiState.packageDetail} />

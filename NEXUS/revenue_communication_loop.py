@@ -26,8 +26,13 @@ import os
 
 from NEXUS.approval_registry import append_approval_record_safe
 from NEXUS.console_attachment_registry import preview_intake_request_safe
-from NEXUS.execution_package_registry import read_execution_package, record_execution_package_revenue_loop_safe
+from NEXUS.execution_package_registry import read_execution_package
 from NEXUS.logging_engine import log_system_event
+
+try:
+    from NEXUS.execution_package_registry import record_execution_package_revenue_loop_safe as _record_revenue_loop_update
+except Exception:
+    _record_revenue_loop_update = None
 
 
 RESEND_API_URL = "https://api.resend.com/emails"
@@ -49,6 +54,19 @@ URGENCY_LEVELS = {"low", "medium", "high"}
 OBJECTION_TYPES = {"price", "trust", "timing", "unclear", "other"}
 CLOSING_SIGNAL_TYPES = {"interest", "readiness", "confirmation", "none"}
 CONVERSATION_STAGES = {"lead", "qualified", "negotiating", "closing", "closed", "lost"}
+
+
+def record_execution_package_revenue_loop_safe(**kwargs: Any) -> dict[str, Any]:
+    """
+    Compatibility wrapper for branches that do not expose
+    record_execution_package_revenue_loop_safe yet.
+    """
+    if callable(_record_revenue_loop_update):
+        try:
+            return _record_revenue_loop_update(**kwargs)
+        except Exception:
+            return {"status": "error", "reason": "Failed to persist revenue loop fields.", "package": None}
+    return {"status": "skipped", "reason": "Revenue loop persistence helper unavailable on this branch.", "package": None}
 
 
 def _now_iso() -> str:
