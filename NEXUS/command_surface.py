@@ -23,6 +23,7 @@ from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import select_runtime_target
 from NEXUS.execution_environment_summary import build_per_project_environment_summary
 from NEXUS.memory_layer import build_memory_layer_summary_safe, read_governed_memory_safe
+from NEXUS.integration_router import integration_status_safe
 
 from NEXUS.logging_engine import log_system_event
 
@@ -40,6 +41,7 @@ SUPPORTED_COMMANDS = frozenset({
     "project_autonomy_mode_status",
     "project_routing_status",
     "registry_status",
+    "integration_status",
     "dashboard_summary",
     "runtime_targets",
     "runtime_select",
@@ -897,6 +899,21 @@ def run_command(
         status="received",
         reason="Command invoked.",
     )
+
+    if cmd == "integration_status":
+        try:
+            payload = integration_status_safe(project_path=path)
+            integrations = dict(payload.get("integrations") or {})
+            ready_count = sum(1 for row in integrations.values() if str((row or {}).get("status") or "") == "ready")
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"integration_ready={ready_count}; total={len(integrations)}",
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
 
     if cmd == "registry_status":
         try:
