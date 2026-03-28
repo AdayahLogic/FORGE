@@ -161,6 +161,11 @@ SUPPORTED_COMMANDS = frozenset({
     "candidate_review_status",
     "review_candidate",
     "candidate_review_details",
+    # Integration bridges (Tavily / Firecrawl / ElevenLabs / Stripe)
+    "integration_status",
+    "lead_discovery",
+    "deal_payment_link",
+    "voice_generate",
 })
 
 
@@ -5854,6 +5859,82 @@ def run_command(
                 project_name=proj_name,
                 summary=f"routing_status={stored_status}; action={routing.get('selected_action')}",
                 payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in ("integration_status", "lead_discovery", "deal_payment_link", "voice_generate"):
+        try:
+            from NEXUS.integration_workflows import (
+                create_deal_payment_link_workflow,
+                generate_voice_audio_workflow,
+                integration_status_snapshot,
+                run_lead_discovery_workflow,
+            )
+
+            if cmd == "integration_status":
+                snapshot = integration_status_snapshot()
+                status_line = (
+                    f"tavily={((snapshot.get('tavily') or {}).get('status') or 'not_configured')}; "
+                    f"firecrawl={((snapshot.get('firecrawl') or {}).get('status') or 'not_configured')}; "
+                    f"elevenlabs={((snapshot.get('elevenlabs') or {}).get('status') or 'not_configured')}; "
+                    f"stripe={((snapshot.get('stripe') or {}).get('status') or 'not_configured')}"
+                )
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=status_line, payload=snapshot)
+
+            if cmd == "lead_discovery":
+                query = str(kwargs.get("query") or "").strip()
+                location = str(kwargs.get("location") or "").strip() or None
+                limit_raw = kwargs.get("limit")
+                try:
+                    limit = int(limit_raw) if limit_raw is not None else 10
+                except Exception:
+                    limit = 10
+                enrich = bool(kwargs.get("enrich", True))
+                result = run_lead_discovery_workflow(
+                    query=query,
+                    location=location,
+                    limit=limit,
+                    enrich=enrich,
+                )
+                return _result(
+                    command=cmd,
+                    status="ok" if result.get("status") == "ready" else "error",
+                    project_name=proj_name,
+                    summary=(
+                        f"status={result.get('status')}; leads={len(result.get('results') or [])}; "
+                        f"enriched={len(result.get('enriched_results') or [])}"
+                    ),
+                    payload=result,
+                )
+
+            if cmd == "deal_payment_link":
+                result = create_deal_payment_link_workflow(
+                    approval_granted=bool(kwargs.get("approval_granted", False)),
+                    product_name=kwargs.get("product_name"),
+                    price_cents=kwargs.get("price_cents"),
+                    currency=kwargs.get("currency"),
+                )
+                return _result(
+                    command=cmd,
+                    status="ok" if result.get("status") == "ready" else "error",
+                    project_name=proj_name,
+                    summary=f"status={result.get('status')}; payment_url={'yes' if bool(result.get('payment_url')) else 'no'}",
+                    payload=result,
+                )
+
+            result = generate_voice_audio_workflow(
+                text=str(kwargs.get("text") or ""),
+                explicit_request=bool(kwargs.get("explicit_request", False)),
+                voice_id=kwargs.get("voice_id"),
+                model_id=kwargs.get("model_id"),
+            )
+            return _result(
+                command=cmd,
+                status="ok" if result.get("status") == "ready" else "error",
+                project_name=proj_name,
+                summary=f"status={result.get('status')}; audio_path={result.get('audio_path') or ''}",
+                payload=result,
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
