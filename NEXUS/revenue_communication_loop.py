@@ -79,6 +79,37 @@ def _append_jsonl(project_path: str | None, file_name: str, payload: dict[str, A
         return False
 
 
+def _route_operator_event_safe(
+    *,
+    project_path: str | None,
+    event_type: str,
+    event_message: str,
+    event_priority: str = "normal",
+    event_title: str | None = None,
+    payload: dict[str, Any] | None = None,
+    dedupe_key: str | None = None,
+) -> dict[str, Any]:
+    """
+    Best-effort bridge into unified notification router.
+    Never raises and never blocks core revenue-loop behavior.
+    """
+    try:
+        from NEXUS.notification_router import notify_operator_safe as _notify_operator_router_safe
+
+        return _notify_operator_router_safe(
+            event_type=event_type,
+            message=event_message,
+            priority=event_priority,
+            payload=payload or {},
+            event_title=event_title,
+            event_source="revenue_communication_loop",
+            project_path=project_path,
+            dedupe_key=dedupe_key,
+        )
+    except Exception:
+        return {}
+
+
 def _to_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -585,6 +616,18 @@ def ingest_email_lead_safe(
             package_id=package_id,
             inbound_email=normalized,
         )
+        _route_operator_event_safe(
+            project_path=project_path,
+            event_type="new_lead",
+            event_title="New Lead Discovered",
+            event_message=(
+                f"Inbound lead from {_to_text(normalized.get('sender')) or 'unknown sender'}: "
+                f"{_to_text(normalized.get('subject')) or 'no subject'}"
+            ),
+            event_priority="normal",
+            payload={"package_id": _to_text(package_id), "lead_id": _to_text(lead.get("lead_id"))},
+            dedupe_key=f"new_lead:{_to_text(lead.get('lead_id'))}",
+        )
         return {
             "status": "ok",
             "reason": "Inbound email lead ingested.",
@@ -640,6 +683,17 @@ def inject_manual_lead_safe(
         )
         if package_id:
             record_execution_package_revenue_loop_safe(project_path=project_path, package_id=package_id, updates=lead)
+        _route_operator_event_safe(
+            project_path=project_path,
+            event_type="new_lead",
+            event_title="New Manual Lead",
+            event_message=(
+                f"Manual lead injected for {_to_text(lead.get('lead_contact_info', {}).get('contact_email')) or 'unknown contact'}."
+            ),
+            event_priority="normal",
+            payload={"package_id": _to_text(package_id), "lead_id": _to_text(lead.get("lead_id"))},
+            dedupe_key=f"manual_lead:{_to_text(lead.get('lead_id'))}",
+        )
         return {"status": "ok", "reason": "Manual lead injected.", "lead": lead}
     except Exception as exc:
         return {"status": "error", "reason": f"Manual lead injection failed: {exc}", "lead": {}}
@@ -756,6 +810,21 @@ def send_email_safe(
                 package_id=pkg_id,
                 outbound_message=body_text,
             )
+        _route_operator_event_safe(
+            project_path=project_path,
+            event_type="approval_required",
+            event_title="Approval Required",
+            event_message=(
+                f"Outbound email requires approval before send to {_to_text(to_email) or 'recipient'}."
+            ),
+            event_priority="high",
+            payload={
+                "package_id": pkg_id,
+                "approval_id": _to_text(approval.get("approval_id")),
+                "to_email": _to_text(to_email),
+            },
+            dedupe_key=f"approval_required:{pkg_id}:{_to_text(approval.get('approval_id'))}",
+        )
         return {"status": "approval_required", "reason": "Approval required before outbound email send.", "approval_id": approval.get("approval_id")}
 
     resend_api_key = _to_text(os.environ.get("RESEND_API_KEY"))
