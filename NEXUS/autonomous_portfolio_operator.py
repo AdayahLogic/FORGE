@@ -680,6 +680,17 @@ def run_autonomous_portfolio_tick(
         allocation_result=allocation,
         execute_actions=execute_actions,
     )
+    allocation_behavior_effect = {
+        "enforced": bool(str(enforcement.get("enforcement_status") or "").strip().lower() == "enforced"),
+        "change_count": len(enforcement.get("changes") or []),
+        "changed_projects": sorted(
+            {
+                _normalize_project_id(change.get("project_id"))
+                for change in (enforcement.get("changes") or [])
+                if isinstance(change, dict)
+            }
+        ),
+    }
     conflict = resolve_mission_conflicts_safe(
         missions=missions,
         allocation_result=allocation,
@@ -714,6 +725,7 @@ def run_autonomous_portfolio_tick(
         "missions_generated": missions,
         "allocation_result": allocation,
         "allocation_enforcement_result": enforcement,
+        "allocation_behavior_effect": allocation_behavior_effect,
         "conflict_result": conflict,
         "execution_result": execution,
         "escalations": escalations,
