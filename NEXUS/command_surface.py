@@ -23,6 +23,14 @@ from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import select_runtime_target
 from NEXUS.execution_environment_summary import build_per_project_environment_summary
 from NEXUS.memory_layer import build_memory_layer_summary_safe, read_governed_memory_safe
+from NEXUS.execution_truth import build_execution_truth_snapshot
+from NEXUS.execution_receipt_registry import (
+    get_execution_receipt,
+    read_execution_receipt_journal_tail,
+)
+from NEXUS.execution_verification_registry import read_execution_verification_journal_tail
+from NEXUS.approval_triage import build_approval_triage_summary_safe
+from NEXUS.operator_inbox import build_operator_inbox_safe
 
 from NEXUS.logging_engine import log_system_event
 
@@ -61,6 +69,11 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_evaluation_status",
     "execution_package_local_analysis",
     "execution_package_local_analysis_status",
+    "execution_truth_status",
+    "execution_receipt_details",
+    "verification_status",
+    "approval_triage_status",
+    "operator_inbox",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -255,9 +268,13 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "handoff_executor_target_id": p.get("handoff_executor_target_id"),
         "handoff_executor_target_name": p.get("handoff_executor_target_name"),
         "execution_status": p.get("execution_status"),
+        "execution_truth_status": p.get("execution_truth_status") or "",
         "execution_timestamp": p.get("execution_timestamp"),
         "execution_reason": p.get("execution_reason") or {"code": "", "message": ""},
         "execution_id": p.get("execution_id"),
+        "execution_receipt_id": p.get("execution_receipt_id") or "",
+        "verification_status": p.get("verification_status") or "pending",
+        "verification_id": p.get("verification_id") or "",
         "execution_executor_target_id": p.get("execution_executor_target_id"),
         "execution_executor_target_name": p.get("execution_executor_target_name"),
         "execution_executor_backend_id": p.get("execution_executor_backend_id"),
@@ -503,11 +520,13 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
         },
         "execution": {
             "execution_status": p.get("execution_status") or "pending",
+            "execution_truth_status": p.get("execution_truth_status") or "",
             "execution_timestamp": p.get("execution_timestamp") or "",
             "execution_actor": p.get("execution_actor") or "",
             "execution_id": p.get("execution_id") or "",
             "execution_reason": p.get("execution_reason") or {"code": "", "message": ""},
             "execution_receipt": dict(p.get("execution_receipt") or {}),
+            "execution_receipt_id": p.get("execution_receipt_id") or "",
             "execution_version": p.get("execution_version") or "v1",
             "execution_executor_target_id": p.get("execution_executor_target_id") or "",
             "execution_executor_target_name": p.get("execution_executor_target_name") or "",
@@ -525,6 +544,9 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "rollback_status": p.get("rollback_status") or "not_needed",
             "rollback_timestamp": p.get("rollback_timestamp") or "",
             "rollback_reason": p.get("rollback_reason") or {"code": "", "message": ""},
+            "verification_status": p.get("verification_status") or "pending",
+            "verification_id": p.get("verification_id") or "",
+            "verification_summary": p.get("verification_summary") or "",
             "retry_policy": dict(p.get("retry_policy") or {}),
             "idempotency": dict(p.get("idempotency") or {}),
             "failure_summary": dict(p.get("failure_summary") or {}),
@@ -738,6 +760,9 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "release_status": p.get("release_status"),
         "handoff_status": p.get("handoff_status"),
         "execution_status": p.get("execution_status"),
+        "execution_truth_status": p.get("execution_truth_status"),
+        "verification_status": p.get("verification_status"),
+        "execution_receipt_id": p.get("execution_receipt_id"),
         "evaluation_status": p.get("evaluation_status"),
         "mission_id": p.get("mission_id") or "",
         "mission_type": p.get("mission_type") or "project_delivery",
@@ -1036,7 +1061,16 @@ def run_command(
             dr_exec_status = dispatch_result_val.get("execution_status")
             execution_package_id = loaded.get("execution_package_id") or dispatch_result_val.get("execution_package_id")
             execution_package_path = loaded.get("execution_package_path") or dispatch_result_val.get("execution_package_path")
-            summary_line = f"dispatch_status={dispatch_status_val}; result_status={dr_status}; execution_status={dr_exec_status}"
+            dispatch_truth = build_execution_truth_snapshot(
+                project_state=loaded,
+                package=None,
+                receipt={},
+                verification={},
+            )
+            summary_line = (
+                f"dispatch_status={dispatch_status_val}; result_status={dr_status}; "
+                f"execution_status={dr_exec_status}; truth={dispatch_truth.get('execution_truth_status')}"
+            )
             return _result(
                 command=cmd,
                 status="ok",
@@ -1047,12 +1081,186 @@ def run_command(
                     "runtime_target": (dispatch_result_val.get("runtime_target") or dispatch_result_val.get("runtime")),
                     "execution_package_id": execution_package_id,
                     "execution_package_path": execution_package_path,
+                    "execution_truth_status": dispatch_truth.get("execution_truth_status"),
+                    "dispatch_truth_status": dispatch_truth.get("dispatch_truth_status"),
                     "dispatch_result": {
                         "status": dr_status,
                         "execution_status": dr_exec_status,
+                        "execution_truth_status": dispatch_result_val.get("execution_truth_status")
+                        or dispatch_truth.get("dispatch_truth_status"),
                         "message": dispatch_result_val.get("message"),
                     },
                 },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "execution_truth_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            loaded = load_project_state(path)
+            if "load_error" in loaded:
+                return _result(command=cmd, status="error", project_name=proj_name, summary=loaded.get("load_error"), payload=loaded)
+            package_id = str(loaded.get("execution_package_id") or "").strip()
+            package = read_execution_package(project_path=path, package_id=package_id) if package_id else {}
+            receipts = read_execution_receipt_journal_tail(project_path=path, n=10)
+            verifications = read_execution_verification_journal_tail(project_path=path, n=10)
+            truth = build_execution_truth_snapshot(
+                project_state=loaded,
+                package=package,
+                receipt=receipts[-1] if receipts else {},
+                verification=verifications[-1] if verifications else {},
+            )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"truth={truth.get('execution_truth_status')}; verification={truth.get('verification_status')}",
+                payload={
+                    **truth,
+                    "execution_package_id": package_id,
+                    "latest_receipt_id": str((receipts[-1] if receipts else {}).get("receipt_id") or "").strip(),
+                    "latest_verification_id": str((verifications[-1] if verifications else {}).get("verification_id") or "").strip(),
+                },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "execution_receipt_details":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            receipt_id = str(kwargs.get("receipt_id") or "").strip()
+            execution_package_id = str(kwargs.get("execution_package_id") or "").strip()
+            rows = read_execution_receipt_journal_tail(project_path=path, n=200)
+            receipt = None
+            if receipt_id:
+                receipt = get_execution_receipt(project_path=path, receipt_id=receipt_id)
+            elif execution_package_id:
+                for row in reversed(rows):
+                    if str(row.get("execution_package_id") or "").strip() == execution_package_id:
+                        receipt = row
+                        break
+            elif rows:
+                receipt = rows[-1]
+            if not receipt:
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary="No execution receipt found.",
+                    payload={"receipt": None, "count": len(rows)},
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"receipt_id={receipt.get('receipt_id')}; execution_status={receipt.get('execution_status')}",
+                payload={"receipt": receipt, "count": len(rows)},
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "verification_status":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            execution_package_id = str(kwargs.get("execution_package_id") or "").strip()
+            rows = read_execution_verification_journal_tail(project_path=path, n=200)
+            latest = rows[-1] if rows else {}
+            if execution_package_id:
+                for row in reversed(rows):
+                    if str(row.get("execution_package_id") or "").strip() == execution_package_id:
+                        latest = row
+                        break
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"verification_status={str(latest.get('verification_status') or 'pending').strip()}",
+                payload={
+                    "verification": latest or {},
+                    "verification_count": len(rows),
+                    "execution_package_id": execution_package_id or str((latest or {}).get("execution_package_id") or "").strip(),
+                },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "approval_triage_status":
+        try:
+            proj_path = path
+            if not proj_path and proj_name:
+                key = str(proj_name).strip().lower()
+                if key in PROJECTS:
+                    proj_path = PROJECTS[key].get("path")
+            summary_data = build_approval_triage_summary_safe(project_path=proj_path, n=max(20, min(int(n or 200), 500)))
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"pending={summary_data.get('pending_count', 0)}; "
+                    f"high={summary_data.get('high_priority_count', 0)}; "
+                    f"batch_groups={len(summary_data.get('batch_groups') or [])}"
+                ),
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "operator_inbox":
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            loaded = load_project_state(path)
+            package_id = str(loaded.get("execution_package_id") or "").strip()
+            package = read_execution_package(project_path=path, package_id=package_id) if package_id else {}
+            inbox = build_operator_inbox_safe(
+                project_name=proj_name,
+                project_path=path,
+                project_state=loaded,
+                package=package,
+            )
+            return _result(
+                command=cmd,
+                status="ok" if inbox.get("operator_inbox_status") == "ok" else "error",
+                project_name=proj_name,
+                summary=(
+                    f"inbox_items={inbox.get('inbox_count', 0)}; "
+                    f"truth={inbox.get('execution_truth_status')}; "
+                    f"verification={inbox.get('verification_status')}"
+                ),
+                payload=inbox,
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
@@ -1235,6 +1443,10 @@ def run_command(
                 if bool(row.get("strategy_adjustment_required"))
                 and str(row.get("strategy_adjustment_type") or "").strip().lower() in {"pricing", "messaging", "targeting", "follow_up"}
             ]
+            truth_breakdown: dict[str, int] = {}
+            for row in queue_rows:
+                truth_key = str(row.get("execution_truth_status") or "simulated").strip().lower() or "simulated"
+                truth_breakdown[truth_key] = int(truth_breakdown.get(truth_key) or 0) + 1
             return _result(
                 command=cmd,
                 status="ok",
@@ -1246,6 +1458,7 @@ def run_command(
                     "project_path": path,
                     "count": len(packages),
                     "pending_count": pending_count,
+                    "truth_breakdown": truth_breakdown,
                     "packages": queue_rows,
                     "top_revenue_candidates": [
                         {
@@ -4793,6 +5006,7 @@ def run_command(
         try:
             from NEXUS.approval_summary import build_approval_summary_safe
             summary_data = build_approval_summary_safe(n_recent=20, n_tail=100)
+            triage_data = build_approval_triage_summary_safe(project_path=path, n=200)
             if path or proj_name:
                 proj_path = path
                 if not proj_path and proj_name:
@@ -4803,6 +5017,9 @@ def run_command(
                     from NEXUS.approval_registry import get_pending_approvals
                     pending = get_pending_approvals(project_path=proj_path, n=50)
                     summary_data["pending_for_project"] = pending
+                    summary_data["triage_for_project"] = build_approval_triage_summary_safe(project_path=proj_path, n=200)
+            else:
+                summary_data["triage_for_project"] = triage_data
             payload = summary_data
             summary_line = f"approval_status={payload.get('approval_status')}; pending_count={payload.get('pending_count_total')}"
             return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)

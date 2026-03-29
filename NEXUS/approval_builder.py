@@ -91,6 +91,18 @@ def build_approval_record(
         "aegis_decision": aegis.get("aegis_decision"),
         "aegis_scope": aegis.get("aegis_scope"),
     }
+    triage_category = "risky_external" if (
+        approval_type in ("aegis_policy", "communication", "billing")
+        or risk_level in ("high", "critical")
+        or sensitivity in ("high", "critical")
+    ) else ("internal_controlled" if approval_type in ("dispatch_plan", "execution_gate", "tool_sensitivity") else "internal_low_risk")
+    triage_priority = "high" if triage_category == "risky_external" else ("medium" if triage_category == "internal_controlled" else "low")
+    triage_batchable = triage_category == "internal_low_risk"
+    triage_batch_key = (
+        f"{triage_category}:{approval_type}:{runtime_target_id or 'unknown'}"
+        if triage_batchable
+        else ""
+    )
 
     return {
         "approval_id": uuid.uuid4().hex[:16],
@@ -105,6 +117,10 @@ def build_approval_record(
         "risk_level": risk_level,
         "sensitivity": sensitivity,
         "context": context,
+        "triage_category": triage_category,
+        "triage_priority": triage_priority,
+        "triage_batchable": triage_batchable,
+        "triage_batch_key": triage_batch_key,
         "decision": None,
         "decision_timestamp": None,
     }
