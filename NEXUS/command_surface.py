@@ -111,6 +111,10 @@ SUPPORTED_COMMANDS = frozenset({
     "genesis_rank",
     # Controlled studio loop (Phase 12): bounded selection only.
     "studio_loop_tick",
+    # Phase 10: autonomous portfolio operator + continuous loop.
+    "portfolio_autonomy_tick",
+    "portfolio_autonomy_loop",
+    "portfolio_autonomy_kill_switch",
     "prism_evaluate",
     "prism_status",
     "project_onboard",
@@ -3679,6 +3683,87 @@ def run_command(
                 f"execution_started={result.get('execution_started')}"
             )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "portfolio_autonomy_tick":
+        try:
+            from NEXUS.autonomous_portfolio_operator import run_autonomous_portfolio_tick_safe
+
+            result = run_autonomous_portfolio_tick_safe(
+                parallel_capacity=kwargs.get("parallel_capacity", 2),
+                execute_actions=bool(kwargs.get("execute_actions", True)),
+                persist_trace=bool(kwargs.get("persist_trace", False)),
+                intelligence_signals=kwargs.get("intelligence_signals") or {},
+                operator_controls=kwargs.get("operator_controls") or {},
+                trigger="command_surface_tick",
+            )
+            summary_line = (
+                f"tick_status={result.get('tick_status')}; "
+                f"missions={len(result.get('missions_generated') or [])}; "
+                f"escalations={len(result.get('escalations') or [])}; "
+                f"stop_reason={result.get('stop_reason')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "portfolio_autonomy_loop":
+        try:
+            from NEXUS.autonomous_portfolio_operator import run_autonomous_portfolio_loop_safe
+
+            result = run_autonomous_portfolio_loop_safe(
+                max_ticks=kwargs.get("max_ticks", 3),
+                max_runtime_seconds=kwargs.get("max_runtime_seconds", 60),
+                max_operations=kwargs.get("max_operations", 50),
+                wake_interval_seconds=kwargs.get("wake_interval_seconds", 0.0),
+                parallel_capacity=kwargs.get("parallel_capacity", 2),
+                execute_actions=bool(kwargs.get("execute_actions", True)),
+                persist_trace=bool(kwargs.get("persist_trace", False)),
+                intelligence_signals=kwargs.get("intelligence_signals") or {},
+                operator_controls=kwargs.get("operator_controls") or {},
+                stop_on_escalation=bool(kwargs.get("stop_on_escalation", False)),
+                trigger="command_surface_loop",
+            )
+            summary_line = (
+                f"loop_status={result.get('loop_status')}; "
+                f"ticks={result.get('ticks_run')}/{result.get('max_ticks')}; "
+                f"operations={result.get('operations_used')}/{result.get('max_operations')}; "
+                f"stop_reason={result.get('stop_reason')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=result)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "portfolio_autonomy_kill_switch":
+        try:
+            from NEXUS.autonomous_portfolio_operator import (
+                get_portfolio_kill_switch_status,
+                set_portfolio_kill_switch_safe,
+            )
+
+            action = str(kwargs.get("action") or "status").strip().lower()
+            if action in ("enable", "on", "set_on"):
+                payload = set_portfolio_kill_switch_safe(
+                    enabled=True,
+                    reason=str(kwargs.get("reason") or "operator_requested_kill_switch"),
+                    source="command_surface",
+                )
+            elif action in ("disable", "off", "set_off", "clear"):
+                payload = set_portfolio_kill_switch_safe(
+                    enabled=False,
+                    reason=str(kwargs.get("reason") or "operator_cleared_kill_switch"),
+                    source="command_surface",
+                )
+            else:
+                payload = get_portfolio_kill_switch_status()
+
+            summary_line = (
+                f"kill_switch_enabled={payload.get('enabled')}; "
+                f"source={payload.get('source')}; "
+                f"reason={payload.get('reason')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 

@@ -1373,6 +1373,31 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
                 "stop_reason": "Safe fallback; no execution performed.",
             }
 
+        # Phase 10: autonomous portfolio operator visibility (evaluation-only in dashboard).
+        try:
+            from NEXUS.autonomous_portfolio_operator import run_autonomous_portfolio_tick_safe
+
+            autonomous_portfolio_operator_summary = run_autonomous_portfolio_tick_safe(
+                states_by_project=states_by_project,
+                intelligence_signals={},
+                execute_actions=False,
+                persist_trace=False,
+                trigger="dashboard_snapshot",
+            )
+        except Exception:
+            autonomous_portfolio_operator_summary = {
+                "tick_status": "error_fallback",
+                "stop_reason": "autonomous_portfolio_operator_summary_unavailable",
+                "bounded": True,
+                "interruptible": True,
+                "observable": True,
+                "missions_generated": [],
+                "allocation_result": {"allocation_mode": "error_fallback", "allocations_by_project": {}},
+                "conflict_result": {"conflict_status": "error_fallback", "conflicts": []},
+                "execution_result": {"execution_status": "error_fallback", "results": []},
+                "escalations": [],
+            }
+
         # GENESIS (Phase 10): lightweight dashboard visibility.
         # Do not run GENESIS here; just expose the latest persisted signals.
         try:
@@ -1646,6 +1671,18 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "executed_command": None,
             "executed_result_summary": None,
             "stop_reason": "Safe fallback; no execution performed.",
+        }
+        autonomous_portfolio_operator_summary = {
+            "tick_status": "error_fallback",
+            "stop_reason": "autonomous_portfolio_operator_summary_unavailable",
+            "bounded": True,
+            "interruptible": True,
+            "observable": True,
+            "missions_generated": [],
+            "allocation_result": {"allocation_mode": "error_fallback", "allocations_by_project": {}},
+            "conflict_result": {"conflict_status": "error_fallback", "conflicts": []},
+            "execution_result": {"execution_status": "error_fallback", "results": []},
+            "escalations": [],
         }
         prism_result = {}
         last_aegis_decision = None
@@ -2055,6 +2092,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "genesis_summary": genesis_summary,
         # Phase 12: bounded studio loop (selection-only).
         "studio_loop_summary": studio_loop_summary,
+        # Phase 10: autonomous portfolio operator (evaluation snapshot).
+        "autonomous_portfolio_operator_summary": autonomous_portfolio_operator_summary,
         # Phase 12: priority-project signals for cross-intelligence (read-only).
         "prism_result": prism_result,
         "last_aegis_decision": last_aegis_decision,
