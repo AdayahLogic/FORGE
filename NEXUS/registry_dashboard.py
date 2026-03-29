@@ -1692,6 +1692,27 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     blocked_local_analysis_count_total = sum(v.get("blocked", 0) for v in execution_package_local_analysis_counts_by_project.values())
     error_local_analysis_count_total = sum(v.get("error_fallback", 0) for v in execution_package_local_analysis_counts_by_project.values())
     portfolio_selection = evaluate_project_selection(states_by_project=states_by_project)
+    self_optimization_status_by_project = {
+        key: str((loaded or {}).get("self_optimization_status") or "none")
+        for key, loaded in states_by_project.items()
+    }
+    strategy_promotion_status_by_project = {
+        key: str((loaded or {}).get("strategy_promotion_status") or "none")
+        for key, loaded in states_by_project.items()
+    }
+    autonomous_portfolio_status_by_project = {
+        key: str((loaded or {}).get("autonomous_portfolio_status") or "none")
+        for key, loaded in states_by_project.items()
+    }
+    self_optimization_status_count: dict[str, int] = {}
+    strategy_promotion_status_count: dict[str, int] = {}
+    autonomous_portfolio_status_count: dict[str, int] = {}
+    for status in self_optimization_status_by_project.values():
+        self_optimization_status_count[status] = self_optimization_status_count.get(status, 0) + 1
+    for status in strategy_promotion_status_by_project.values():
+        strategy_promotion_status_count[status] = strategy_promotion_status_count.get(status, 0) + 1
+    for status in autonomous_portfolio_status_by_project.values():
+        autonomous_portfolio_status_count[status] = autonomous_portfolio_status_count.get(status, 0) + 1
 
     return {
         "summary_generated_at": now,
@@ -2024,6 +2045,14 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
         "change_gate_status_count": change_gate_status_count,
         # Forge OS Sprint 5 additions (summary-only).
         "portfolio_summary": portfolio_summary,
+        "phase_convergence_summary": {
+            "self_optimization_status_by_project": self_optimization_status_by_project,
+            "self_optimization_status_count": self_optimization_status_count,
+            "strategy_promotion_status_by_project": strategy_promotion_status_by_project,
+            "strategy_promotion_status_count": strategy_promotion_status_count,
+            "autonomous_portfolio_status_by_project": autonomous_portfolio_status_by_project,
+            "autonomous_portfolio_status_count": autonomous_portfolio_status_count,
+        },
         "runtime_infrastructure_summary": runtime_infrastructure_summary,
         "execution_environment_summary": execution_environment_summary,
         "approval_summary": approval_summary,

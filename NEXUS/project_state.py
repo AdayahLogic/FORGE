@@ -121,6 +121,21 @@ def save_project_state(
     autonomy_result: dict | None = None,
     guardrail_status: str | None = None,
     guardrail_result: dict | None = None,
+    mission_status: str | None = None,
+    mission_packet: dict | None = None,
+    execution_truth_status: str | None = None,
+    execution_truth_snapshot: dict | None = None,
+    execution_verification_summary: dict | None = None,
+    revenue_follow_up_status: str | None = None,
+    revenue_follow_up_summary: dict | None = None,
+    outcome_verification_status: str | None = None,
+    outcome_verification_summary: dict | None = None,
+    self_optimization_status: str | None = None,
+    self_optimization_result: dict | None = None,
+    strategy_promotion_status: str | None = None,
+    strategy_promotion_result: dict | None = None,
+    autonomous_portfolio_status: str | None = None,
+    autonomous_portfolio_result: dict | None = None,
     runtime_router_result: dict | None = None,
     model_router_result: dict | None = None,
     deployment_preflight_result: dict | None = None,
@@ -260,6 +275,36 @@ def save_project_state(
         project_routing_status = previous.get("project_routing_status")
     if project_routing_result is None and isinstance(previous.get("project_routing_result"), dict):
         project_routing_result = previous.get("project_routing_result")
+    if mission_status is None and isinstance(previous.get("mission_status"), str):
+        mission_status = previous.get("mission_status")
+    if mission_packet is None and isinstance(previous.get("mission_packet"), dict):
+        mission_packet = previous.get("mission_packet")
+    if execution_truth_status is None and isinstance(previous.get("execution_truth_status"), str):
+        execution_truth_status = previous.get("execution_truth_status")
+    if execution_truth_snapshot is None and isinstance(previous.get("execution_truth_snapshot"), dict):
+        execution_truth_snapshot = previous.get("execution_truth_snapshot")
+    if execution_verification_summary is None and isinstance(previous.get("execution_verification_summary"), dict):
+        execution_verification_summary = previous.get("execution_verification_summary")
+    if revenue_follow_up_status is None and isinstance(previous.get("revenue_follow_up_status"), str):
+        revenue_follow_up_status = previous.get("revenue_follow_up_status")
+    if revenue_follow_up_summary is None and isinstance(previous.get("revenue_follow_up_summary"), dict):
+        revenue_follow_up_summary = previous.get("revenue_follow_up_summary")
+    if outcome_verification_status is None and isinstance(previous.get("outcome_verification_status"), str):
+        outcome_verification_status = previous.get("outcome_verification_status")
+    if outcome_verification_summary is None and isinstance(previous.get("outcome_verification_summary"), dict):
+        outcome_verification_summary = previous.get("outcome_verification_summary")
+    if self_optimization_status is None and isinstance(previous.get("self_optimization_status"), str):
+        self_optimization_status = previous.get("self_optimization_status")
+    if self_optimization_result is None and isinstance(previous.get("self_optimization_result"), dict):
+        self_optimization_result = previous.get("self_optimization_result")
+    if strategy_promotion_status is None and isinstance(previous.get("strategy_promotion_status"), str):
+        strategy_promotion_status = previous.get("strategy_promotion_status")
+    if strategy_promotion_result is None and isinstance(previous.get("strategy_promotion_result"), dict):
+        strategy_promotion_result = previous.get("strategy_promotion_result")
+    if autonomous_portfolio_status is None and isinstance(previous.get("autonomous_portfolio_status"), str):
+        autonomous_portfolio_status = previous.get("autonomous_portfolio_status")
+    if autonomous_portfolio_result is None and isinstance(previous.get("autonomous_portfolio_result"), dict):
+        autonomous_portfolio_result = previous.get("autonomous_portfolio_result")
     if project_selection_status is None and isinstance(previous.get("project_selection_status"), str):
         project_selection_status = previous.get("project_selection_status")
     if project_selection_result is None and isinstance(previous.get("project_selection_result"), dict):
@@ -398,6 +443,21 @@ def save_project_state(
         "autonomy_result": autonomy_result or {},
         "guardrail_status": guardrail_status,
         "guardrail_result": guardrail_result or {},
+        "mission_status": mission_status,
+        "mission_packet": mission_packet or {},
+        "execution_truth_status": execution_truth_status,
+        "execution_truth_snapshot": execution_truth_snapshot or {},
+        "execution_verification_summary": execution_verification_summary or {},
+        "revenue_follow_up_status": revenue_follow_up_status,
+        "revenue_follow_up_summary": revenue_follow_up_summary or {},
+        "outcome_verification_status": outcome_verification_status,
+        "outcome_verification_summary": outcome_verification_summary or {},
+        "self_optimization_status": self_optimization_status,
+        "self_optimization_result": self_optimization_result or {},
+        "strategy_promotion_status": strategy_promotion_status,
+        "strategy_promotion_result": strategy_promotion_result or {},
+        "autonomous_portfolio_status": autonomous_portfolio_status,
+        "autonomous_portfolio_result": autonomous_portfolio_result or {},
         "runtime_router_result": runtime_router_result or {},
         "model_router_result": model_router_result or {},
         "deployment_preflight_result": deployment_preflight_result or {},
