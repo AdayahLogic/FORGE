@@ -111,6 +111,12 @@ SUPPORTED_COMMANDS = frozenset({
     "strategy_evolution",
     "strategy_versions",
     "optimization_status",
+    "strategy_promotion_status",
+    "strategy_experiments",
+    "strategy_comparison",
+    "rollout_status",
+    "rollback_history",
+    "active_strategy",
     "runtime_infrastructure",
     "execution_environment",
     "memory_status",
@@ -4387,6 +4393,117 @@ def run_command(
                 f"optimization_status={payload.get('optimization_status')}; "
                 f"analyze={((loop.get('analyze') or {}).get('status') if isinstance(loop.get('analyze'), dict) else 'n/a')}; "
                 f"apply={((loop.get('apply') or {}).get('applied') if isinstance(loop.get('apply'), dict) else False)}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "strategy_promotion_status":
+        try:
+            from NEXUS.strategy_promotion_engine import (
+                read_strategy_promotion_status_safe,
+                run_strategy_promotion_cycle_safe,
+            )
+
+            refresh = bool(kwargs.get("refresh", False))
+            if refresh:
+                candidate_version_id = str(kwargs.get("candidate_version_id") or "").strip()
+                baseline_version_id = str(kwargs.get("baseline_version_id") or "").strip() or None
+                rollout_scope = str(kwargs.get("rollout_scope") or "per_project").strip()
+                rollout_percentage = int(kwargs.get("rollout_percentage") or 0)
+                risk_level = str(kwargs.get("risk_level") or "medium").strip().lower()
+                approval_status = str(kwargs.get("approval_status") or "approved").strip().lower()
+                allowed_action_types = kwargs.get("allowed_action_types")
+                if isinstance(allowed_action_types, str):
+                    allowed_action_types = [part.strip() for part in allowed_action_types.split(",") if part.strip()]
+                payload = run_strategy_promotion_cycle_safe(
+                    candidate_version_id=candidate_version_id,
+                    baseline_version_id=baseline_version_id,
+                    risk_level=risk_level,
+                    approval_status=approval_status,
+                    rollout_scope=rollout_scope,
+                    rollout_percentage=rollout_percentage,
+                    allowed_action_types=allowed_action_types if isinstance(allowed_action_types, list) else None,
+                )
+            else:
+                payload = read_strategy_promotion_status_safe()
+            promotion = payload.get("promotion") if isinstance(payload.get("promotion"), dict) else {}
+            summary_line = (
+                f"strategy_promotion_status={payload.get('strategy_promotion_status')}; "
+                f"decision={promotion.get('promotion_decision')}; "
+                f"confidence={promotion.get('promotion_confidence')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "strategy_experiments":
+        try:
+            from NEXUS.strategy_promotion_engine import list_strategy_experiments_safe
+
+            limit = max(1, min(int(kwargs.get("n") or 20), 100))
+            payload = list_strategy_experiments_safe(n=limit)
+            summary_line = (
+                f"strategy_experiments_status={payload.get('strategy_experiments_status')}; "
+                f"count={payload.get('experiment_count')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "strategy_comparison":
+        try:
+            from NEXUS.strategy_promotion_engine import list_strategy_comparisons_safe
+
+            limit = max(1, min(int(kwargs.get("n") or 20), 100))
+            payload = list_strategy_comparisons_safe(n=limit)
+            summary_line = (
+                f"strategy_comparison_status={payload.get('strategy_comparison_status')}; "
+                f"count={payload.get('comparison_count')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "rollout_status":
+        try:
+            from NEXUS.strategy_promotion_engine import read_rollout_status_safe
+
+            payload = read_rollout_status_safe()
+            summary_line = (
+                f"rollout_status={payload.get('rollout_status')}; "
+                f"rollout_percentage={payload.get('rollout_percentage')}; "
+                f"controller={payload.get('controller_status')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "rollback_history":
+        try:
+            from NEXUS.strategy_promotion_engine import list_rollback_history_safe
+
+            limit = max(1, min(int(kwargs.get("n") or 20), 100))
+            payload = list_rollback_history_safe(n=limit)
+            summary_line = (
+                f"rollback_history_status={payload.get('rollback_history_status')}; "
+                f"count={payload.get('rollback_count')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "active_strategy":
+        try:
+            from NEXUS.strategy_promotion_engine import read_active_strategy_with_lifecycle_safe
+
+            payload = read_active_strategy_with_lifecycle_safe()
+            active = payload.get("active_strategy") if isinstance(payload.get("active_strategy"), dict) else {}
+            lifecycle = payload.get("active_lifecycle") if isinstance(payload.get("active_lifecycle"), dict) else {}
+            summary_line = (
+                f"active_strategy_status={payload.get('active_strategy_status')}; "
+                f"active_strategy={active.get('active_strategy_version_id')}; "
+                f"lifecycle={lifecycle.get('lifecycle_status')}"
             )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:

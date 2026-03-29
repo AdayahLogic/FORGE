@@ -13,6 +13,8 @@ from NEXUS.studio_config import LOGS_DIR
 SELF_OPTIMIZATION_VERSION = "1.0"
 STRATEGY_VERSION_LOG = "strategy_versions.jsonl"
 OPTIMIZATION_STATUS_FILE = "optimization_status.json"
+STRATEGY_LIFECYCLE_FILE = "strategy_lifecycle.json"
+VALID_STRATEGY_LIFECYCLE = {"candidate", "testing", "active", "deprecated", "failed", "rolled_back"}
 
 DEFAULT_DYNAMIC_WEIGHTS: dict[str, float] = {
     "execution_reliability": 0.23,
@@ -73,6 +75,10 @@ def _optimization_status_path(custom_store_dir: str | None = None) -> Path:
     return _strategy_store_dir(custom_store_dir) / OPTIMIZATION_STATUS_FILE
 
 
+def _strategy_lifecycle_path(custom_store_dir: str | None = None) -> Path:
+    return _strategy_store_dir(custom_store_dir) / STRATEGY_LIFECYCLE_FILE
+
+
 def _read_jsonl(path: Path, limit: int = 200) -> list[dict[str, Any]]:
     if not path.exists():
         return []
@@ -103,15 +109,115 @@ def _append_jsonl(path: Path, payload: dict[str, Any]) -> bool:
         return False
 
 
+def _read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+        if isinstance(parsed, dict):
+            return parsed
+    except Exception:
+        pass
+    return {}
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> bool:
+    try:
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def _normalize_lifecycle_status(status: Any, *, default: str = "candidate") -> str:
+    normalized = str(status or "").strip().lower()
+    return normalized if normalized in VALID_STRATEGY_LIFECYCLE else default
+
+
+def read_strategy_lifecycle_registry(*, strategy_store_dir: str | None = None) -> dict[str, Any]:
+    payload = _read_json(_strategy_lifecycle_path(strategy_store_dir))
+    versions = payload.get("versions") if isinstance(payload.get("versions"), dict) else {}
+    return {
+        "strategy_lifecycle_status": "ok",
+        "recorded_at": str(payload.get("recorded_at") or _utc_now_iso()),
+        "versions": versions,
+        "valid_statuses": sorted(VALID_STRATEGY_LIFECYCLE),
+    }
+
+
+def update_strategy_lifecycle(
+    *,
+    strategy_version_id: str,
+    lifecycle_status: str,
+    reason: str = "",
+    promotion_decision: dict[str, Any] | None = None,
+    rollback_event: dict[str, Any] | None = None,
+    performance_snapshot: dict[str, Any] | None = None,
+    strategy_store_dir: str | None = None,
+) -> dict[str, Any]:
+    version_id = str(strategy_version_id or "").strip()
+    if not version_id:
+        return {"status": "error", "reason": "strategy_version_id is required.", "entry": {}}
+
+    lifecycle_payload = _read_json(_strategy_lifecycle_path(strategy_store_dir))
+    versions = lifecycle_payload.get("versions") if isinstance(lifecycle_payload.get("versions"), dict) else {}
+    existing = versions.get(version_id) if isinstance(versions.get(version_id), dict) else {}
+    status = _normalize_lifecycle_status(lifecycle_status, default="candidate")
+    now = _utc_now_iso()
+    entry = {
+        "strategy_version_id": version_id,
+        "lifecycle_status": status,
+        "updated_at": now,
+        "performance_history": list(existing.get("performance_history") or []),
+        "promotion_decisions": list(existing.get("promotion_decisions") or []),
+        "rollback_history": list(existing.get("rollback_history") or []),
+    }
+
+    if isinstance(performance_snapshot, dict) and performance_snapshot:
+        entry["performance_history"] = (entry["performance_history"] + [dict(performance_snapshot)])[-40:]
+    if isinstance(promotion_decision, dict) and promotion_decision:
+        entry["promotion_decisions"] = (entry["promotion_decisions"] + [dict(promotion_decision)])[-40:]
+    if isinstance(rollback_event, dict) and rollback_event:
+        entry["rollback_history"] = (entry["rollback_history"] + [dict(rollback_event)])[-40:]
+    if reason:
+        entry["last_reason"] = str(reason).strip()
+
+    versions[version_id] = entry
+    lifecycle_payload["recorded_at"] = now
+    lifecycle_payload["versions"] = versions
+    written = _write_json(_strategy_lifecycle_path(strategy_store_dir), lifecycle_payload)
+    return {
+        "status": "ok" if written else "error",
+        "reason": "Strategy lifecycle updated." if written else "Failed to persist strategy lifecycle state.",
+        "entry": entry if written else {},
+    }
+
+
 def list_strategy_versions(*, n: int = 20, strategy_store_dir: str | None = None) -> dict[str, Any]:
     path = _strategy_log_path(strategy_store_dir)
     rows = _read_jsonl(path, limit=max(20, n * 3))
-    rows.sort(key=lambda r: str(r.get("recorded_at") or ""), reverse=True)
+    lifecycle_registry = read_strategy_lifecycle_registry(strategy_store_dir=strategy_store_dir)
+    lifecycle_versions = (
+        lifecycle_registry.get("versions")
+        if isinstance(lifecycle_registry, dict) and isinstance(lifecycle_registry.get("versions"), dict)
+        else {}
+    )
+    enriched_rows: list[dict[str, Any]] = []
+    for row in rows:
+        version_id = str(row.get("strategy_version_id") or "")
+        lifecycle = lifecycle_versions.get(version_id) if isinstance(lifecycle_versions.get(version_id), dict) else {}
+        merged = dict(row)
+        merged["lifecycle_status"] = str(lifecycle.get("lifecycle_status") or row.get("lifecycle_status") or "candidate")
+        merged["performance_history"] = list(lifecycle.get("performance_history") or row.get("performance_history") or [])
+        merged["promotion_decisions"] = list(lifecycle.get("promotion_decisions") or row.get("promotion_decisions") or [])
+        merged["rollback_history"] = list(lifecycle.get("rollback_history") or row.get("rollback_history") or [])
+        enriched_rows.append(merged)
+    enriched_rows.sort(key=lambda r: str(r.get("recorded_at") or ""), reverse=True)
     return {
         "strategy_versions_status": "ok",
         "strategy_contract_version": SELF_OPTIMIZATION_VERSION,
-        "strategy_version_count": len(rows[: max(1, n)]),
-        "strategy_versions": rows[: max(1, n)],
+        "strategy_version_count": len(enriched_rows[: max(1, n)]),
+        "strategy_versions": enriched_rows[: max(1, n)],
     }
 
 
@@ -156,6 +262,7 @@ def record_strategy_version(
         "strategy_version_id": strategy_version_id,
         "recorded_at": ts,
         "strategy_contract_version": SELF_OPTIMIZATION_VERSION,
+        "lifecycle_status": "candidate",
         "change_summary": str(change_summary or "").strip(),
         "reason": str(reason or "").strip(),
         "changed_fields": changed_fields,
@@ -167,8 +274,19 @@ def record_strategy_version(
         "bounded": True,
         "governance_required": True,
         "safe_to_apply": True,
+        "performance_history": [dict(metrics_after or metrics_before or {})] if (metrics_before or metrics_after) else [],
+        "promotion_decisions": [],
+        "rollback_history": [],
     }
     written = _append_jsonl(_strategy_log_path(strategy_store_dir), payload)
+    if written:
+        update_strategy_lifecycle(
+            strategy_version_id=strategy_version_id,
+            lifecycle_status="candidate",
+            reason="Version recorded and queued for governed promotion.",
+            performance_snapshot=dict(metrics_after or metrics_before or {}),
+            strategy_store_dir=strategy_store_dir,
+        )
     return {
         "status": "ok" if written else "error",
         "reason": "Strategy version recorded." if written else "Failed to write strategy version log.",
@@ -837,4 +955,27 @@ def read_optimization_status_safe(**kwargs: Any) -> dict[str, Any]:
             "governed": True,
             "transparent": True,
             "reversible": True,
+        }
+
+
+def read_strategy_lifecycle_registry_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return read_strategy_lifecycle_registry(**kwargs)
+    except Exception:
+        return {
+            "strategy_lifecycle_status": "error_fallback",
+            "recorded_at": _utc_now_iso(),
+            "versions": {},
+            "valid_statuses": sorted(VALID_STRATEGY_LIFECYCLE),
+        }
+
+
+def update_strategy_lifecycle_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return update_strategy_lifecycle(**kwargs)
+    except Exception:
+        return {
+            "status": "error_fallback",
+            "reason": "Failed to update strategy lifecycle.",
+            "entry": {},
         }
