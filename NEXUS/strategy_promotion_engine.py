@@ -26,6 +26,7 @@ EXPERIMENT_MODES = {"shadow", "controlled_rollout", "full_activation"}
 VALIDATION_STATUSES = {"candidate_wins", "baseline_wins", "inconclusive", "regression_detected"}
 ALLOWED_ACTION_TYPES = {"analysis", "scoring", "routing", "follow_up", "execution_policy", "prioritization"}
 ROLLOUT_RAMP = [10, 25, 50, 100]
+ROLLOUT_SCOPES = {"per_mission", "per_project", "per_action_type"}
 
 
 def _utc_now_iso() -> str:
@@ -157,6 +158,18 @@ def _resolve_risk_profile(
         "allowed_action_types": [item for item in allowed if item in ALLOWED_ACTION_TYPES],
         "disallowed_action_types": disallowed,
     }
+
+
+def _normalize_rollout_scope(value: Any) -> str:
+    scope = str(value or "").strip().lower()
+    aliases = {
+        "mission": "per_mission",
+        "project": "per_project",
+        "action_type": "per_action_type",
+        "action": "per_action_type",
+    }
+    scope = aliases.get(scope, scope)
+    return scope if scope in ROLLOUT_SCOPES else "per_project"
 
 
 def evaluate_change_promotion_decision(
@@ -309,6 +322,7 @@ def start_strategy_experiment(
     if normalized_mode not in EXPERIMENT_MODES:
         normalized_mode = "shadow"
     pct = int(_clamp(float(rollout_percentage), 0.0, 100.0))
+    normalized_scope = _normalize_rollout_scope(rollout_scope)
     payload = {
         "experiment_status": "ok",
         "recorded_at": _utc_now_iso(),
@@ -317,7 +331,7 @@ def start_strategy_experiment(
         "candidate_version_id": str(candidate_version_id or "").strip(),
         "baseline_version_id": str(baseline_version_id or "").strip(),
         "rollout_percentage": pct if normalized_mode == "controlled_rollout" else (100 if normalized_mode == "full_activation" else 0),
-        "rollout_scope": str(rollout_scope or "per_project").strip(),
+        "rollout_scope": normalized_scope,
         "safe_external_behavior": True,
         "decision_effective": normalized_mode != "shadow",
     }
@@ -365,6 +379,7 @@ def update_rollout_controller(
         next_pct = max(0, min(current, 10))
         rollout_status = "reduced"
 
+    normalized_scope = _normalize_rollout_scope(rollout_scope)
     payload = {
         "rollout_status": "ok",
         "recorded_at": _utc_now_iso(),
@@ -372,7 +387,7 @@ def update_rollout_controller(
         "baseline_version_id": str(baseline_version_id or "").strip(),
         "rollout_percentage": next_pct,
         "previous_rollout_percentage": current,
-        "rollout_scope": str(rollout_scope or "per_project").strip(),
+        "rollout_scope": normalized_scope,
         "ramp_rule": "10->25->50->100",
         "validation_status": validation,
         "degradation_detected": bool(degradation_detected),
