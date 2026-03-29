@@ -51,6 +51,15 @@ from NEXUS.execution_package_local_analysis import (
 from NEXUS.memory_layer import write_governed_memory_safe
 from NEXUS.outcome_adaptation_engine import evaluate_outcome_adaptation_fields
 from NEXUS.project_delivery_engine import derive_project_delivery_fields
+from NEXUS.execution_truth import resolve_package_truth
+from NEXUS.execution_receipt_registry import (
+    append_execution_receipt_safe,
+    build_execution_receipt_from_package,
+)
+from NEXUS.execution_verification_registry import (
+    append_execution_verification_safe,
+    build_verification_from_receipt,
+)
 from NEXUS.runtimes.cursor_runtime import (
     build_cursor_bridge_result,
     normalize_cursor_artifact_return,
@@ -1701,6 +1710,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "execution_id": str(p.get("execution_id") or ""),
         "execution_reason": _normalize_execution_reason(p.get("execution_reason")),
         "execution_receipt": _normalize_execution_receipt(p.get("execution_receipt")),
+        "execution_receipt_id": str(p.get("execution_receipt_id") or ""),
         "execution_version": str(p.get("execution_version") or "v1"),
         "execution_executor_target_id": str(p.get("execution_executor_target_id") or ""),
         "execution_executor_target_name": str(p.get("execution_executor_target_name") or ""),
@@ -1733,6 +1743,9 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "local_analysis_reason": normalize_local_analysis_reason(p.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(p.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
+        "verification_status": str(p.get("verification_status") or "pending").strip().lower(),
+        "verification_id": str(p.get("verification_id") or ""),
+        "verification_summary": str(p.get("verification_summary") or ""),
         "cost_tracking": normalized_cost_tracking,
         "budget_caps": budget_caps,
         "budget_control": budget_control,
@@ -1801,6 +1814,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
                 "metadata": metadata,
             }
         ),
+        "execution_truth_status": resolve_package_truth(p),
     }
 
 
@@ -1901,6 +1915,7 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "execution_executor_target_name": str(r.get("execution_executor_target_name") or ""),
         "execution_executor_backend_id": _normalize_executor_backend_id(r.get("execution_executor_backend_id")),
         "execution_receipt": _summarize_execution_receipt(r.get("execution_receipt")),
+        "execution_receipt_id": str(r.get("execution_receipt_id") or ""),
         "rollback_status": str(r.get("rollback_status") or "not_needed").strip().lower(),
         "rollback_timestamp": str(r.get("rollback_timestamp") or ""),
         "rollback_reason": _normalize_rollback_reason(r.get("rollback_reason")),
@@ -1926,6 +1941,10 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "local_analysis_reason": normalize_local_analysis_reason(r.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(r.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(r.get("local_analysis_summary")),
+        "verification_status": str(r.get("verification_status") or "pending").strip().lower(),
+        "verification_id": str(r.get("verification_id") or ""),
+        "verification_summary": str(r.get("verification_summary") or ""),
+        "execution_truth_status": resolve_package_truth(r),
         "governance_conflict_status": str(r.get("governance_conflict_status") or ""),
         "governance_conflict_type": str(r.get("governance_conflict_type") or ""),
         "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
@@ -3550,6 +3569,42 @@ def record_execution_package_execution(
     package["budget_caps"] = budget_control.get("budget_caps") or _resolve_package_budget_caps(package, project_path)
     package["budget_control"] = budget_control
     package.update(_budget_fields_from_control(budget_control))
+    receipt_result = append_execution_receipt_safe(
+        project_path=project_path,
+        record=build_execution_receipt_from_package(package=package, mission_id=package.get("project_name")),
+    )
+    receipt = receipt_result.get("receipt") if isinstance(receipt_result.get("receipt"), dict) else {}
+    package["execution_receipt_id"] = str(receipt.get("receipt_id") or package.get("execution_receipt_id") or "")
+    verification_result = append_execution_verification_safe(
+        project_path=project_path,
+        record=build_verification_from_receipt(receipt=receipt, package=package),
+    )
+    verification = verification_result.get("verification") if isinstance(verification_result.get("verification"), dict) else {}
+    package["verification_id"] = str(verification.get("verification_id") or package.get("verification_id") or "")
+    package["verification_status"] = str(verification.get("verification_status") or package.get("verification_status") or "pending")
+    package["verification_summary"] = str(verification.get("verification_summary") or package.get("verification_summary") or "")
+    package["execution_truth_status"] = resolve_package_truth(package)
+    metadata = dict(package.get("metadata") or {})
+    degraded = list(metadata.get("degraded_reporting") or [])
+    if receipt_result.get("status") != "ok":
+        degraded.append(
+            {
+                "layer": "execution_receipt_registry",
+                "status": str(receipt_result.get("status") or "degraded"),
+                "reason": str(receipt_result.get("reason") or ""),
+            }
+        )
+    if verification_result.get("status") != "ok":
+        degraded.append(
+            {
+                "layer": "execution_verification_registry",
+                "status": str(verification_result.get("status") or "degraded"),
+                "reason": str(verification_result.get("reason") or ""),
+            }
+        )
+    if degraded:
+        metadata["degraded_reporting"] = degraded[:20]
+    package["metadata"] = metadata
 
     return _persist_package_update(
         project_path=project_path,

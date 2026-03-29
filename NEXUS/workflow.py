@@ -58,6 +58,7 @@ from NEXUS.heartbeat_loop import evaluate_heartbeat_safe
 from NEXUS.cycle_scheduler import evaluate_cycle_scheduler_safe
 from NEXUS.recovery_engine import evaluate_recovery_outcome_safe
 from NEXUS.reexecution_engine import evaluate_reexecution_outcome_safe
+from NEXUS.execution_truth import build_execution_truth_snapshot
 
 
 def route_project(state: StudioState):
@@ -99,6 +100,8 @@ def load_persistent_project_state(state: StudioState):
         state.autonomy_stop_rail_config = dict(loaded.get("autonomy_stop_rail_config") or {})
         state.autonomy_current_counts = dict(loaded.get("autonomy_current_counts") or {})
         state.autonomy_governance_trace = dict(loaded.get("autonomy_governance_trace") or {})
+        state.execution_truth_status = loaded.get("execution_truth_status")
+        state.verification_status = loaded.get("verification_status")
 
     if loaded:
         state.notes = "Previous project state loaded."
@@ -349,6 +352,19 @@ def runtime_dispatch_node(state: StudioState):
         state.runtime_execution_status = (state.dispatch_result or {}).get("execution_status")
         state.execution_package_id = (state.dispatch_result or {}).get("execution_package_id")
         state.execution_package_path = (state.dispatch_result or {}).get("execution_package_path")
+        truth_snapshot = build_execution_truth_snapshot(
+            project_state={
+                "dispatch_status": state.dispatch_status,
+                "dispatch_result": state.dispatch_result,
+            },
+            package=None,
+            receipt=None,
+            verification=None,
+        )
+        state.execution_truth_status = truth_snapshot.get("execution_truth_status")
+        state.verification_status = truth_snapshot.get("verification_status")
+        if isinstance(state.dispatch_result, dict):
+            state.dispatch_result["execution_truth_status"] = truth_snapshot.get("dispatch_truth_status")
         if "runtime_target" not in state.dispatch_result and result.get("runtime_target"):
             state.dispatch_result = {**state.dispatch_result, "runtime_target": result.get("runtime_target")}
     except Exception:
@@ -366,6 +382,8 @@ def runtime_dispatch_node(state: StudioState):
         state.execution_package_id = None
         state.execution_package_path = None
         state.runtime_execution_status = "failed"
+        state.execution_truth_status = "failed"
+        state.verification_status = "pending"
 
     # Phase 15: outcome-learning after dispatch result (passive observer).
     try:
@@ -1380,6 +1398,8 @@ def save_persistent_project_state_node(state: StudioState):
             execution_package_id=state.execution_package_id,
             execution_package_path=state.execution_package_path,
             runtime_execution_status=state.runtime_execution_status,
+            execution_truth_status=state.execution_truth_status,
+            verification_status=state.verification_status,
             automation_status=state.automation_status,
             automation_result=state.automation_result,
             agent_selection_summary=state.agent_selection_summary,
