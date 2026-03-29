@@ -1,0 +1,136 @@
+"""
+Execution truth taxonomy and resolution helpers.
+
+This layer is additive and does not replace legacy status fields. It provides
+an explicit truth vocabulary so simulation/preparation states cannot be
+misread as verified execution.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+
+EXECUTION_TRUTH_STATES = {
+    "simulated",
+    "prepared",
+    "queued_for_review",
+    "approved_not_executed",
+    "handed_off",
+    "executed_unverified",
+    "executed_verified",
+    "failed",
+    "blocked",
+    "rolled_back",
+}
+
+
+def _text(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
+def normalize_truth_status(value: Any, *, fallback: str = "simulated") -> str:
+    normalized = _text(value)
+    if normalized in EXECUTION_TRUTH_STATES:
+        return normalized
+    return fallback if fallback in EXECUTION_TRUTH_STATES else "simulated"
+
+
+def resolve_dispatch_truth(
+    *,
+    dispatch_status: Any,
+    dispatch_result: dict[str, Any] | None = None,
+) -> str:
+    result = dispatch_result if isinstance(dispatch_result, dict) else {}
+    d_status = _text(dispatch_status)
+    r_status = _text(result.get("status"))
+    execution_mode = _text(result.get("execution_mode"))
+    execution_status = _text(result.get("execution_status"))
+
+    if d_status in {"error"} or r_status in {"error"} or execution_status in {"failed"}:
+        return "failed"
+    if d_status in {"blocked"} or r_status in {"blocked"} or execution_status == "blocked":
+        return "blocked"
+    if execution_status in {"rolled_back"}:
+        return "rolled_back"
+    if execution_status in {"succeeded", "completed"}:
+        return "executed_unverified"
+    if execution_status in {"ready"}:
+        return "approved_not_executed"
+    if execution_status in {"queued"}:
+        if execution_mode == "manual_only":
+            return "queued_for_review"
+        return "handed_off"
+    if execution_status in {"simulated_execution"}:
+        return "simulated"
+    if r_status in {"accepted"} and execution_mode in {"manual_only"}:
+        return "prepared"
+    if d_status in {"accepted"} and execution_mode in {"safe_simulation"}:
+        return "simulated"
+    return "simulated"
+
+
+def resolve_package_truth(package: dict[str, Any] | None) -> str:
+    p = package if isinstance(package, dict) else {}
+    review_status = _text(p.get("review_status"))
+    decision_status = _text(p.get("decision_status"))
+    handoff_status = _text(p.get("handoff_status"))
+    execution_status = _text(p.get("execution_status"))
+    verification_status = _text(p.get("verification_status"))
+
+    if execution_status in {"failed"}:
+        return "failed"
+    if execution_status in {"blocked"}:
+        return "blocked"
+    if execution_status in {"rolled_back"}:
+        return "rolled_back"
+    if execution_status in {"succeeded", "completed"}:
+        if verification_status in {"verified", "passed"}:
+            return "executed_verified"
+        return "executed_unverified"
+    if handoff_status in {"authorized"}:
+        return "handed_off"
+    if decision_status in {"approved"}:
+        return "approved_not_executed"
+    if review_status in {"pending", "review_pending", "ready_for_review"}:
+        return "queued_for_review"
+    if _text(p.get("package_status")) in {"review_pending", "pending"}:
+        return "prepared"
+    return "simulated"
+
+
+def build_execution_truth_snapshot(
+    *,
+    project_state: dict[str, Any] | None = None,
+    package: dict[str, Any] | None = None,
+    receipt: dict[str, Any] | None = None,
+    verification: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    state = project_state if isinstance(project_state, dict) else {}
+    receipt_payload = receipt if isinstance(receipt, dict) else {}
+    verification_payload = verification if isinstance(verification, dict) else {}
+
+    dispatch_truth = resolve_dispatch_truth(
+        dispatch_status=state.get("dispatch_status"),
+        dispatch_result=state.get("dispatch_result") if isinstance(state.get("dispatch_result"), dict) else {},
+    )
+    package_truth = resolve_package_truth(package)
+    verification_status = _text(
+        verification_payload.get("verification_status")
+        or receipt_payload.get("verification_status")
+        or (package or {}).get("verification_status")
+    )
+
+    overall = package_truth if package_truth != "simulated" else dispatch_truth
+    if overall == "executed_unverified" and verification_status in {"verified", "passed"}:
+        overall = "executed_verified"
+    if overall == "executed_unverified" and verification_status in {"failed", "verification_failed"}:
+        overall = "failed"
+
+    return {
+        "execution_truth_status": normalize_truth_status(overall),
+        "dispatch_truth_status": normalize_truth_status(dispatch_truth),
+        "package_truth_status": normalize_truth_status(package_truth),
+        "verification_status": verification_status or "pending",
+        "execution_mode": _text(((state.get("dispatch_result") or {}) if isinstance(state.get("dispatch_result"), dict) else {}).get("execution_mode")),
+    }
