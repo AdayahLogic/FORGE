@@ -13,6 +13,7 @@ from NEXUS.approval_triage import build_approval_triage_summary_safe
 from NEXUS.execution_truth import build_execution_truth_snapshot
 from NEXUS.execution_receipt_registry import read_execution_receipt_journal_tail
 from NEXUS.execution_verification_registry import read_execution_verification_journal_tail
+from NEXUS.integration_readiness_registry import build_integration_readiness_summary
 
 
 def _text(value: Any) -> str:
@@ -43,6 +44,7 @@ def build_operator_inbox(
         receipt=latest_receipt,
         verification=latest_verification,
     )
+    integration_readiness = build_integration_readiness_summary(project_path=project_path)
 
     items: list[dict[str, Any]] = []
     review_queue = dict(state.get("review_queue_entry") or {})
@@ -127,6 +129,18 @@ def build_operator_inbox(
                 "batchable": False,
             }
         )
+    degraded_integrations = int(integration_readiness.get("degraded_count") or 0)
+    if degraded_integrations > 0:
+        items.append(
+            {
+                "inbox_item_type": "integration_readiness",
+                "priority_score": 82,
+                "priority": "high",
+                "title": "Integration readiness degraded",
+                "reason": f"{degraded_integrations} integration(s) are not fully ready; external live actions remain constrained.",
+                "batchable": False,
+            }
+        )
 
     items.sort(key=lambda row: int(row.get("priority_score") or 0), reverse=True)
     return {
@@ -141,6 +155,12 @@ def build_operator_inbox(
             "high_priority_count": triage.get("high_priority_count", 0),
             "stale_pending_count": triage.get("stale_pending_count", 0),
             "risky_external_count": triage.get("risky_external_count", 0),
+        },
+        "integration_readiness_summary": {
+            "integration_count": integration_readiness.get("integration_count", 0),
+            "ready_count": integration_readiness.get("ready_count", 0),
+            "degraded_count": integration_readiness.get("degraded_count", 0),
+            "governed_only_count": integration_readiness.get("governed_only_count", 0),
         },
     }
 

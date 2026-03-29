@@ -31,6 +31,12 @@ from NEXUS.execution_receipt_registry import (
 from NEXUS.execution_verification_registry import read_execution_verification_journal_tail
 from NEXUS.approval_triage import build_approval_triage_summary_safe
 from NEXUS.operator_inbox import build_operator_inbox_safe
+from NEXUS.executor_backend_registry import (
+    build_executor_backend_registry_summary,
+    build_executor_backend_status,
+)
+from NEXUS.integration_readiness_registry import build_integration_readiness_summary
+from NEXUS.delivery_backbone import build_delivery_backbone_contract
 
 from NEXUS.logging_engine import log_system_event
 
@@ -74,6 +80,11 @@ SUPPORTED_COMMANDS = frozenset({
     "verification_status",
     "approval_triage_status",
     "operator_inbox",
+    "runtime_backend_status",
+    "integration_readiness",
+    "delivery_status",
+    "executor_handoff_status",
+    "delivery_verification_status",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -367,6 +378,9 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "delivery_status": p.get("delivery_status") or "pending",
         "delivery_type": p.get("delivery_type") or "other",
         "delivery_requires_approval": bool(p.get("delivery_requires_approval", True)),
+        "delivery_readiness_state": p.get("delivery_readiness_state") or "not_ready",
+        "delivery_verification_status": p.get("delivery_verification_status") or "pending",
+        "delivery_completed_truth": bool(p.get("delivery_completed_truth")),
         "post_delivery_status": p.get("post_delivery_status") or "pending",
         "satisfaction_status": p.get("satisfaction_status") or "unknown",
         "upsell_opportunity_detected": bool(p.get("upsell_opportunity_detected")),
@@ -686,6 +700,11 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "delivery_type": p.get("delivery_type") or "other",
             "delivery_payload_summary": p.get("delivery_payload_summary") or "",
             "delivery_requires_approval": bool(p.get("delivery_requires_approval", True)),
+            "delivery_readiness_state": p.get("delivery_readiness_state") or "not_ready",
+            "delivery_verification_status": p.get("delivery_verification_status") or "pending",
+            "delivery_completed_truth": bool(p.get("delivery_completed_truth")),
+            "delivery_artifact_refs": list(p.get("delivery_artifact_refs") or []),
+            "delivery_evidence_summary": p.get("delivery_evidence_summary") or "",
         }
     if project_delivery_active:
         sections["post_delivery"] = {
@@ -763,6 +782,11 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "execution_truth_status": p.get("execution_truth_status"),
         "verification_status": p.get("verification_status"),
         "execution_receipt_id": p.get("execution_receipt_id"),
+        "delivery_readiness_state": p.get("delivery_readiness_state") or "not_ready",
+        "delivery_verification_status": p.get("delivery_verification_status") or "pending",
+        "delivery_completed_truth": bool(p.get("delivery_completed_truth")),
+        "executor_backend_readiness": ((p.get("executor_backend_status") or {}).get("readiness_state") or ""),
+        "handoff_contract_status": ((p.get("executor_handoff_contract") or {}).get("contract_status") or ""),
         "evaluation_status": p.get("evaluation_status"),
         "mission_id": p.get("mission_id") or "",
         "mission_type": p.get("mission_type") or "project_delivery",
@@ -983,6 +1007,155 @@ def run_command(
             )
         except Exception as e:
             return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "runtime_backend_status":
+        try:
+            backend_id = str(kwargs.get("backend_id") or kwargs.get("executor_target_id") or "").strip().lower()
+            if backend_id:
+                resolved = build_executor_backend_status(backend_id=backend_id, project_path=path)
+                payload = {
+                    "status": resolved.get("backend_status"),
+                    "reason": resolved.get("reason"),
+                    "backend": resolved.get("backend") or {},
+                }
+                backend = payload.get("backend") or {}
+                return _result(
+                    command=cmd,
+                    status="ok" if payload.get("status") == "ok" else "error",
+                    project_name=proj_name,
+                    summary=(
+                        f"backend={backend.get('backend_id')}; readiness={backend.get('readiness_state')}; "
+                        f"safe_to_execute={backend.get('safe_to_execute')}"
+                    ),
+                    payload=payload,
+                )
+            summary_data = build_executor_backend_registry_summary(project_path=path)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"backends={summary_data.get('backend_count', 0)}; "
+                    f"ready={summary_data.get('ready_count', 0)}; "
+                    f"degraded={summary_data.get('degraded_count', 0)}"
+                ),
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "integration_readiness":
+        try:
+            summary_data = build_integration_readiness_summary(project_path=path)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"integrations={summary_data.get('integration_count', 0)}; "
+                    f"ready={summary_data.get('ready_count', 0)}; "
+                    f"governed_only={summary_data.get('governed_only_count', 0)}"
+                ),
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in ("delivery_status", "executor_handoff_status", "delivery_verification_status"):
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            loaded = load_project_state(path)
+            package_id = str(kwargs.get("execution_package_id") or loaded.get("execution_package_id") or "").strip()
+            package = read_execution_package(project_path=path, package_id=package_id) if package_id else {}
+            if not package:
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary="No execution package found.",
+                    payload={"execution_package_id": package_id, "package": None},
+                )
+            verification_rows = read_execution_verification_journal_tail(project_path=path, n=200)
+            latest_verification = {}
+            for row in reversed(verification_rows):
+                if str(row.get("execution_package_id") or "").strip() == str(package.get("package_id") or "").strip():
+                    latest_verification = row
+                    break
+            receipt_rows = read_execution_receipt_journal_tail(project_path=path, n=200)
+            latest_receipt = {}
+            for row in reversed(receipt_rows):
+                if str(row.get("execution_package_id") or "").strip() == str(package.get("package_id") or "").strip():
+                    latest_receipt = row
+                    break
+            delivery_contract = build_delivery_backbone_contract(
+                package=package,
+                receipt=latest_receipt,
+                verification=latest_verification,
+            )
+            if cmd == "delivery_status":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=(
+                        f"delivery_readiness={delivery_contract.get('delivery_readiness_state')}; "
+                        f"completed_truth={delivery_contract.get('delivery_completed_truth')}"
+                    ),
+                    payload={
+                        "execution_package_id": package.get("package_id"),
+                        "delivery_status": package.get("delivery_status"),
+                        "delivery_requires_approval": package.get("delivery_requires_approval"),
+                        "delivery_backbone": delivery_contract,
+                        "delivery_summary": package.get("delivery_summary") or {},
+                    },
+                )
+            if cmd == "executor_handoff_status":
+                contract = dict(package.get("executor_handoff_contract") or {})
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=(
+                        f"handoff={package.get('handoff_status')}; "
+                        f"executed={contract.get('backend_executed')}"
+                    ),
+                    payload={
+                        "execution_package_id": package.get("package_id"),
+                        "handoff_status": package.get("handoff_status"),
+                        "execution_status": package.get("execution_status"),
+                        "executor_backend_status": package.get("executor_backend_status") or {},
+                        "executor_handoff_contract": contract,
+                        "execution_receipt_id": package.get("execution_receipt_id"),
+                        "verification_id": package.get("verification_id"),
+                    },
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"delivery_verification={delivery_contract.get('delivery_verification_status')}; "
+                    f"verification={str((latest_verification or {}).get('verification_status') or package.get('verification_status') or 'pending')}"
+                ),
+                payload={
+                    "execution_package_id": package.get("package_id"),
+                    "delivery_verification_status": delivery_contract.get("delivery_verification_status"),
+                    "delivery_evidence_present": delivery_contract.get("delivery_evidence_present"),
+                    "verification": latest_verification or {},
+                    "verification_status": str((latest_verification or {}).get("verification_status") or package.get("verification_status") or "pending"),
+                },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "runtime_select":
         try:
