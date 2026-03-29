@@ -107,6 +107,10 @@ SUPPORTED_COMMANDS = frozenset({
     "operator_snapshot",
     "forge_os_snapshot",
     "portfolio_status",
+    "strategy_performance",
+    "strategy_evolution",
+    "strategy_versions",
+    "optimization_status",
     "runtime_infrastructure",
     "execution_environment",
     "memory_status",
@@ -4223,12 +4227,22 @@ def run_command(
                 "active_projects": 0,
                 "blocked_projects": 0,
                 "priority_project": None,
+                "portfolio_priority_score": 0.0,
+                "project_performance_score": {},
+                "resource_allocation_signals": [],
+                "focus_candidates": [],
+                "pause_candidates": [],
                 "portfolio_reason": "Forge portfolio summary unavailable.",
             }
             payload = dashboard_summary.get("portfolio_summary") if isinstance(dashboard_summary, dict) else None
             if not isinstance(payload, dict) or not payload:
                 payload = fallback
-            summary_line = f"portfolio_status={payload.get('portfolio_status')}; active={payload.get('active_projects')}; blocked={payload.get('blocked_projects')}; priority={payload.get('priority_project')}"
+            summary_line = (
+                f"portfolio_status={payload.get('portfolio_status')}; "
+                f"active={payload.get('active_projects')}; blocked={payload.get('blocked_projects')}; "
+                f"priority={payload.get('priority_project')}; "
+                f"portfolio_priority_score={payload.get('portfolio_priority_score')}"
+            )
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:
             return _result(
@@ -4242,10 +4256,141 @@ def run_command(
                     "active_projects": 0,
                     "blocked_projects": 0,
                     "priority_project": None,
+                    "portfolio_priority_score": 0.0,
+                    "project_performance_score": {},
+                    "resource_allocation_signals": [],
+                    "focus_candidates": [],
+                    "pause_candidates": [],
                     "portfolio_reason": "Forge portfolio summary failed.",
                     "error": str(e),
                 },
             )
+
+    if cmd == "strategy_performance":
+        try:
+            from NEXUS.self_optimization_engine import analyze_strategy_performance_safe
+
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    loaded = load_project_state(p)
+                    if isinstance(loaded, dict) and "load_error" not in loaded:
+                        states_by_project[key] = loaded
+
+            payload = analyze_strategy_performance_safe(states_by_project=states_by_project)
+            summary_line = (
+                f"strategy_performance_status={payload.get('strategy_performance_status')}; "
+                f"effectiveness={payload.get('strategy_effectiveness_score')}; "
+                f"projects={((payload.get('analysis_window') or {}).get('project_count'))}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "strategy_evolution":
+        try:
+            from NEXUS.self_optimization_engine import (
+                analyze_strategy_performance_safe,
+                evolve_strategy_safe,
+                get_latest_strategy_weights,
+                record_strategy_version,
+            )
+
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                p = PROJECTS[key].get("path")
+                if p:
+                    loaded = load_project_state(p)
+                    if isinstance(loaded, dict) and "load_error" not in loaded:
+                        states_by_project[key] = loaded
+
+            performance = analyze_strategy_performance_safe(states_by_project=states_by_project)
+            latest_weights = get_latest_strategy_weights()
+            evolution = evolve_strategy_safe(
+                performance_summary=performance,
+                current_weights=(latest_weights.get("weights") if isinstance(latest_weights, dict) else {}),
+            )
+            apply_changes = bool(kwargs.get("apply_changes", False))
+            version_result = {
+                "status": "not_applied",
+                "reason": "Dry-run only. Set apply_changes=true for governed persistence.",
+                "strategy_version": None,
+            }
+            if apply_changes:
+                previous_weights = latest_weights.get("weights") if isinstance(latest_weights, dict) else {}
+                new_weights = (evolution.get("proposed_weight_adjustment") or {}).get("weights_proposed")
+                version_result = record_strategy_version(
+                    reason="Operator-approved strategy evolution command.",
+                    change_summary=f"mode={evolution.get('evolution_mode')}; score={performance.get('strategy_effectiveness_score')}",
+                    previous_weights=previous_weights if isinstance(previous_weights, dict) else {},
+                    new_weights=new_weights if isinstance(new_weights, dict) else previous_weights,
+                    metrics_before=performance.get("metrics") if isinstance(performance.get("metrics"), dict) else {},
+                    metrics_after={},
+                    reversible_to=str(latest_weights.get("strategy_version_id") or "strategy-v0-default"),
+                )
+            payload = {
+                "strategy_performance": performance,
+                "strategy_evolution": evolution,
+                "apply_changes": apply_changes,
+                "version_result": version_result,
+            }
+            summary_line = (
+                f"strategy_evolution_status={evolution.get('strategy_evolution_status')}; "
+                f"mode={evolution.get('evolution_mode')}; "
+                f"applied={bool((version_result or {}).get('status') == 'ok')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "strategy_versions":
+        try:
+            from NEXUS.self_optimization_engine import list_strategy_versions
+
+            limit = max(1, min(int(kwargs.get("n") or 20), 100))
+            payload = list_strategy_versions(n=limit)
+            summary_line = (
+                f"strategy_versions_status={payload.get('strategy_versions_status')}; "
+                f"count={payload.get('strategy_version_count')}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "optimization_status":
+        try:
+            from NEXUS.self_optimization_engine import (
+                read_optimization_status_safe,
+                run_self_optimization_feedback_loop_safe,
+            )
+
+            refresh = bool(kwargs.get("refresh", False))
+            apply_changes = bool(kwargs.get("apply_changes", False))
+            if refresh:
+                states_by_project: dict[str, dict[str, Any]] = {}
+                for key in PROJECTS:
+                    p = PROJECTS[key].get("path")
+                    if p:
+                        loaded = load_project_state(p)
+                        if isinstance(loaded, dict) and "load_error" not in loaded:
+                            states_by_project[key] = loaded
+                payload = run_self_optimization_feedback_loop_safe(
+                    states_by_project=states_by_project,
+                    apply_changes=apply_changes,
+                )
+            else:
+                payload = read_optimization_status_safe()
+
+            loop = payload.get("loop") if isinstance(payload.get("loop"), dict) else {}
+            summary_line = (
+                f"optimization_status={payload.get('optimization_status')}; "
+                f"analyze={((loop.get('analyze') or {}).get('status') if isinstance(loop.get('analyze'), dict) else 'n/a')}; "
+                f"apply={((loop.get('apply') or {}).get('applied') if isinstance(loop.get('apply'), dict) else False)}"
+            )
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
 
     if cmd == "runtime_infrastructure":
         try:
@@ -4422,6 +4567,11 @@ def run_command(
                 "active_projects": 0,
                 "blocked_projects": 0,
                 "priority_project": None,
+                "portfolio_priority_score": 0.0,
+                "project_performance_score": {},
+                "resource_allocation_signals": [],
+                "focus_candidates": [],
+                "pause_candidates": [],
                 "portfolio_reason": "Forge portfolio summary unavailable.",
             }
             fallback_runtime = {
@@ -4501,6 +4651,11 @@ def run_command(
                 "active_projects": 0,
                 "blocked_projects": 0,
                 "priority_project": None,
+                "portfolio_priority_score": 0.0,
+                "project_performance_score": {},
+                "resource_allocation_signals": [],
+                "focus_candidates": [],
+                "pause_candidates": [],
                 "portfolio_reason": "Forge portfolio summary unavailable.",
             }
             fallback_runtime = {
@@ -5621,11 +5776,11 @@ def run_command(
             from NEXUS.approval_registry import read_approval_journal_tail
             from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch, read_patch_proposal_resolution_tail
             from NEXUS.approval_staleness import evaluate_approval_staleness, evaluate_proposal_approval_staleness
-            from NEXUS.registry import PROJECTS
+            from NEXUS.registry import PROJECTS as _PROJECTS
             trace: dict[str, Any] = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "hours_since": 0.0}
             if approval_id:
-                for proj_key in PROJECTS:
-                    p = PROJECTS[proj_key].get("path")
+                for proj_key in _PROJECTS:
+                    p = _PROJECTS[proj_key].get("path")
                     if p:
                         tail = read_approval_journal_tail(project_path=p, n=200)
                         for r in tail:
@@ -5667,8 +5822,8 @@ def run_command(
                             trace["lifecycle"] = {}
                     aid = trace["resolution"].get("approval_id") if trace["resolution"] else None
                     if aid:
-                        for proj_key in PROJECTS:
-                            p = PROJECTS[proj_key].get("path")
+                        for proj_key in _PROJECTS:
+                            p = _PROJECTS[proj_key].get("path")
                             if p:
                                 atail = read_approval_journal_tail(project_path=p, n=100)
                                 for ar in atail:
@@ -5690,12 +5845,12 @@ def run_command(
             from NEXUS.approval_summary import build_approval_summary_safe
             from NEXUS.approval_lifecycle import evaluate_approval_lifecycle, evaluate_resolution_lifecycle
             from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch
-            from NEXUS.registry import PROJECTS
+            from NEXUS.registry import PROJECTS as _PROJECTS
             summary = build_approval_summary_safe(n_recent=30, n_tail=100)
             lifecycle_items: list[dict[str, Any]] = []
             if approval_id:
-                for proj_key in PROJECTS:
-                    p = PROJECTS.get(proj_key, {}).get("path")
+                for proj_key in _PROJECTS:
+                    p = _PROJECTS.get(proj_key, {}).get("path")
                     if p:
                         from NEXUS.approval_registry import read_approval_journal_tail
                         tail = read_approval_journal_tail(project_path=p, n=100)
@@ -5733,12 +5888,12 @@ def run_command(
         try:
             from NEXUS.approval_summary import build_approval_summary_safe
             from NEXUS.approval_lifecycle import get_reapproval_required_count
-            from NEXUS.registry import PROJECTS
+            from NEXUS.registry import PROJECTS as _PROJECTS
             summary = build_approval_summary_safe(n_recent=20, n_tail=100)
             reapproval_count = summary.get("reapproval_required_count", 0)
             items: list[dict[str, Any]] = []
-            for proj_key in PROJECTS:
-                path = PROJECTS.get(proj_key, {}).get("path")
+            for proj_key in _PROJECTS:
+                path = _PROJECTS.get(proj_key, {}).get("path")
                 if not path:
                     continue
                 from NEXUS.patch_proposal_registry import read_patch_proposal_resolution_tail
@@ -5813,8 +5968,9 @@ def run_command(
     if cmd in ("runtime_isolation_status", "sandbox_posture"):
         try:
             from NEXUS.runtime_isolation import build_runtime_isolation_posture_safe
-            from NEXUS.registry_dashboard import build_registry_dashboard_summary
-            dash = build_registry_dashboard_summary()
+            from NEXUS.registry_dashboard import build_registry_dashboard_summary as _build_registry_dashboard_summary
+
+            dash = _build_registry_dashboard_summary()
             exec_env = dash.get("execution_environment_summary") or {}
             data = build_runtime_isolation_posture_safe(
                 execution_environment_summary=exec_env,
