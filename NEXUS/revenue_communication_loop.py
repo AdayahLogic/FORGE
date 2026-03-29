@@ -27,6 +27,7 @@ import os
 from NEXUS.approval_registry import append_approval_record_safe
 from NEXUS.console_attachment_registry import preview_intake_request_safe
 from NEXUS.execution_package_registry import read_execution_package, record_execution_package_revenue_loop_safe
+from NEXUS.communication_receipt_registry import append_communication_receipt_safe
 from NEXUS.logging_engine import log_system_event
 
 
@@ -81,6 +82,56 @@ def _append_jsonl(project_path: str | None, file_name: str, payload: dict[str, A
 
 def _to_text(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _append_communication_receipt_event(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    package: dict[str, Any] | None,
+    send_status: str,
+    approval_id: str = "",
+    approval_required: bool = False,
+    send_requested_at: str = "",
+    send_attempted_at: str = "",
+    send_receipt_at: str = "",
+    response_received_at: str = "",
+    blocked_reason: str = "",
+    failure_reason: str = "",
+    operator_actor: str = "",
+    email_thread_id: str = "",
+    email_message_id: str = "",
+    system_inferred: bool = True,
+    evidence: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    p = package if isinstance(package, dict) else {}
+    return append_communication_receipt_safe(
+        project_path=project_path,
+        record={
+            "project_name": _to_text(p.get("project_name")),
+            "run_id": _to_text(p.get("run_id")),
+            "mission_id": _to_text(p.get("mission_id") or p.get("project_name")),
+            "execution_package_id": _to_text(package_id),
+            "deal_id": _to_text(p.get("deal_id") or p.get("lead_id")),
+            "lead_id": _to_text(p.get("lead_id")),
+            "email_thread_id": _to_text(email_thread_id or p.get("email_thread_id")),
+            "email_message_id": _to_text(email_message_id or p.get("email_message_id")),
+            "channel": "email",
+            "direction": "outbound" if send_status != "response_received" else "inbound",
+            "send_status": send_status,
+            "approval_id": _to_text(approval_id),
+            "approval_required": bool(approval_required),
+            "send_requested_at": _to_text(send_requested_at),
+            "send_attempted_at": _to_text(send_attempted_at),
+            "send_receipt_at": _to_text(send_receipt_at),
+            "response_received_at": _to_text(response_received_at),
+            "blocked_reason": _to_text(blocked_reason),
+            "failure_reason": _to_text(failure_reason),
+            "operator_actor": _to_text(operator_actor),
+            "system_inferred": bool(system_inferred),
+            "evidence": [dict(item) for item in list(evidence or []) if isinstance(item, dict)],
+        },
+    )
 
 
 def _normalize_email_direction(value: Any) -> str:
@@ -562,6 +613,18 @@ def ingest_email_lead_safe(
             metadata={"package_id": package_id or "", "lead_id": lead.get("lead_id"), "lead_source": "inbound_email"},
         )
         if package_id:
+            package_snapshot = read_execution_package(project_path=project_path, package_id=package_id)
+            _append_communication_receipt_event(
+                project_path=project_path,
+                package_id=package_id,
+                package=package_snapshot,
+                send_status="response_received",
+                response_received_at=normalized.get("timestamp") or _now_iso(),
+                email_thread_id=lead.get("email_thread_id") or "",
+                email_message_id=lead.get("email_message_id") or "",
+                system_inferred=True,
+                evidence=[{"evidence_type": "inbound_email", "sender": normalized.get("sender") or ""}],
+            )
             record_execution_package_revenue_loop_safe(
                 project_path=project_path,
                 package_id=package_id,
@@ -578,6 +641,8 @@ def ingest_email_lead_safe(
                             "timestamp": normalized.get("timestamp") or _now_iso(),
                         }
                     ],
+                    "communication_send_status": "response_received",
+                    "communication_response_received_at": normalized.get("timestamp") or _now_iso(),
                 },
             )
         sales_brain = evaluate_sales_brain_safe(
@@ -698,6 +763,8 @@ def send_email_safe(
     record instead.
     """
     pkg_id = _to_text(package_id)
+    package_snapshot = read_execution_package(project_path=project_path, package_id=pkg_id) if pkg_id else {}
+    package_snapshot = package_snapshot or {}
     normalized_thread_id = _to_text(thread_id)
     now = _now_iso()
     email_record = {
@@ -737,6 +804,18 @@ def send_email_safe(
             metadata={"package_id": pkg_id, "approval_id": approval.get("approval_id"), "to_email": _to_text(to_email)},
         )
         if pkg_id:
+            _append_communication_receipt_event(
+                project_path=project_path,
+                package_id=pkg_id,
+                package=package_snapshot,
+                send_status="approval_required",
+                approval_id=_to_text(approval.get("approval_id")),
+                approval_required=True,
+                blocked_reason="approval_required",
+                operator_actor=_to_text(approval_actor) or "revenue_communication_loop",
+                email_thread_id=normalized_thread_id,
+                evidence=[{"evidence_type": "approval_record", "approval_id": _to_text(approval.get("approval_id"))}],
+            )
             record_execution_package_revenue_loop_safe(
                 project_path=project_path,
                 package_id=pkg_id,
@@ -746,6 +825,11 @@ def send_email_safe(
                     "email_direction": "outbound",
                     "email_status": "approval_required",
                     "email_requires_approval": True,
+                    "communication_send_status": "approval_required",
+                    "communication_send_requested_at": now,
+                    "communication_send_attempted_at": "",
+                    "communication_send_receipt_at": "",
+                    "communication_send_receipt_exists": False,
                     "approval_queue_item_type": "email_send_approval",
                     "approval_queue_risk_class": risk_level,
                     "approval_queue_reason": "Outbound email requires approval before send.",
@@ -765,6 +849,18 @@ def send_email_safe(
         email_record.update({"status": "failed", "message": reason})
         _append_jsonl(project_path, EMAIL_AUDIT_FILE, email_record)
         if pkg_id:
+            _append_communication_receipt_event(
+                project_path=project_path,
+                package_id=pkg_id,
+                package=package_snapshot,
+                send_status="send_failed",
+                approval_required=True,
+                send_requested_at=now,
+                send_attempted_at=now,
+                failure_reason=reason,
+                operator_actor=_to_text(approval_actor),
+                email_thread_id=normalized_thread_id,
+            )
             record_execution_package_revenue_loop_safe(
                 project_path=project_path,
                 package_id=pkg_id,
@@ -774,6 +870,11 @@ def send_email_safe(
                     "email_direction": "outbound",
                     "email_status": "failed",
                     "email_requires_approval": True,
+                    "communication_send_status": "send_failed",
+                    "communication_send_requested_at": now,
+                    "communication_send_attempted_at": now,
+                    "communication_send_receipt_at": "",
+                    "communication_send_receipt_exists": False,
                 },
             )
         return {"status": "error", "reason": reason, "email_message_id": ""}
@@ -803,6 +904,20 @@ def send_email_safe(
         email_record.update({"status": "sent", "message_id": message_id})
         _append_jsonl(project_path, EMAIL_AUDIT_FILE, email_record)
         if pkg_id:
+            _append_communication_receipt_event(
+                project_path=project_path,
+                package_id=pkg_id,
+                package=package_snapshot,
+                send_status="send_receipt_exists",
+                approval_required=True,
+                send_requested_at=now,
+                send_attempted_at=now,
+                send_receipt_at=now,
+                operator_actor=_to_text(approval_actor),
+                email_thread_id=normalized_thread_id,
+                email_message_id=message_id,
+                evidence=[{"evidence_type": "resend_message_id", "message_id": message_id}],
+            )
             record_execution_package_revenue_loop_safe(
                 project_path=project_path,
                 package_id=pkg_id,
@@ -812,6 +927,11 @@ def send_email_safe(
                     "email_direction": "outbound",
                     "email_status": "sent",
                     "email_requires_approval": True,
+                    "communication_send_status": "send_receipt_exists",
+                    "communication_send_requested_at": now,
+                    "communication_send_attempted_at": now,
+                    "communication_send_receipt_at": now,
+                    "communication_send_receipt_exists": True,
                 },
             )
             evaluate_sales_brain_safe(
@@ -830,6 +950,18 @@ def send_email_safe(
         email_record.update({"status": "failed", "message": detail[:500]})
         _append_jsonl(project_path, EMAIL_AUDIT_FILE, email_record)
         if pkg_id:
+            _append_communication_receipt_event(
+                project_path=project_path,
+                package_id=pkg_id,
+                package=package_snapshot,
+                send_status="send_failed",
+                approval_required=True,
+                send_requested_at=now,
+                send_attempted_at=now,
+                failure_reason=detail[:500],
+                operator_actor=_to_text(approval_actor),
+                email_thread_id=normalized_thread_id,
+            )
             record_execution_package_revenue_loop_safe(
                 project_path=project_path,
                 package_id=pkg_id,
@@ -839,6 +971,11 @@ def send_email_safe(
                     "email_direction": "outbound",
                     "email_status": "failed",
                     "email_requires_approval": True,
+                    "communication_send_status": "send_failed",
+                    "communication_send_requested_at": now,
+                    "communication_send_attempted_at": now,
+                    "communication_send_receipt_at": "",
+                    "communication_send_receipt_exists": False,
                 },
             )
         return {"status": "error", "reason": f"Resend send failed: {detail[:500]}", "email_message_id": ""}
@@ -873,7 +1010,21 @@ def schedule_follow_up_safe(
         elapsed = now - last_dt
         should_follow_up = elapsed >= timedelta(hours=max(1, int(no_response_hours)))
         escalated = attempt_count >= max(1, int(max_attempts))
-        follow_up_status = "escalated" if escalated else "scheduled" if should_follow_up else "pending"
+        awaiting_approval = bool(package.get("email_requires_approval")) and _to_text(package.get("email_status")).lower() in {"approval_required", "queued_for_approval"}
+        blocked = _to_text(package.get("deal_status")).lower() in {"closed_lost"} or bool(package.get("mission_stop_condition_hit"))
+        reengagement_opportunity = bool(should_follow_up or package.get("upsell_opportunity_detected")) or (
+            _to_text(package.get("delivery_status")).lower() == "delivered"
+            and _to_text(package.get("post_delivery_status")).lower() in {"active", "pending"}
+        )
+        follow_up_status = (
+            "escalated"
+            if escalated or blocked
+            else "awaiting_approval"
+            if awaiting_approval
+            else "scheduled"
+            if should_follow_up
+            else "pending"
+        )
         next_at = (
             now.isoformat()
             if should_follow_up and not escalated
@@ -912,12 +1063,23 @@ def schedule_follow_up_safe(
         response_summary = dict(preview.get("response_summary") or {})
 
         updates = {
-            "follow_up_required": bool(should_follow_up),
+            "follow_up_required": bool(should_follow_up or reengagement_opportunity),
             "follow_up_status": _normalize_follow_up_status(follow_up_status),
             "follow_up_next_at": _to_text(next_at),
-            "follow_up_attempt_count": attempt_count,
+            "follow_up_attempt_count": (attempt_count + 1) if should_follow_up else attempt_count,
             "follow_up_strategy": _to_text(follow_up_strategy) or "email_response_nudge",
             "follow_up_priority": _normalize_lead_priority(follow_up_priority),
+            "follow_up_retry_limit": max(1, int(max_attempts)),
+            "follow_up_reason": (
+                "Deal blocked or stop-condition escalation."
+                if blocked
+                else "Awaiting approval before follow-up send."
+                if awaiting_approval
+                else "No response window exceeded; follow-up scheduled."
+                if should_follow_up
+                else "Follow-up monitoring in progress."
+            ),
+            "follow_up_reengagement_ready": bool(reengagement_opportunity),
         }
         if pkg_id:
             record_execution_package_revenue_loop_safe(project_path=project_path, package_id=pkg_id, updates=updates)

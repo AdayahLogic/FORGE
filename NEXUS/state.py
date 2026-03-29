@@ -80,6 +80,8 @@ class StudioState(BaseModel):
     execution_package_id: Optional[str] = None
     execution_package_path: Optional[str] = None
     runtime_execution_status: Optional[str] = None
+    execution_truth_status: Optional[str] = None
+    verification_status: Optional[str] = None
     automation_status: Optional[str] = None
     automation_result: Dict[str, Any] = {}
     governance_status: Optional[str] = None

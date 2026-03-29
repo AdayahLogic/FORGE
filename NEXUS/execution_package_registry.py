@@ -51,6 +51,23 @@ from NEXUS.execution_package_local_analysis import (
 from NEXUS.memory_layer import write_governed_memory_safe
 from NEXUS.outcome_adaptation_engine import evaluate_outcome_adaptation_fields
 from NEXUS.project_delivery_engine import derive_project_delivery_fields
+from NEXUS.delivery_backbone import build_delivery_backbone_contract
+from NEXUS.executor_backend_registry import build_executor_backend_status
+from NEXUS.executor_handoff_contract import build_executor_handoff_contract
+from NEXUS.execution_truth import resolve_package_truth
+from NEXUS.execution_receipt_registry import (
+    append_execution_receipt_safe,
+    build_execution_receipt_from_package,
+)
+from NEXUS.execution_verification_registry import (
+    append_execution_verification_safe,
+    build_verification_from_receipt,
+)
+from NEXUS.outcome_verifier_registry import (
+    append_outcome_verification_safe,
+    build_outcome_verification_from_package,
+    get_latest_outcome_verification,
+)
 from NEXUS.runtimes.cursor_runtime import (
     build_cursor_bridge_result,
     normalize_cursor_artifact_return,
@@ -295,6 +312,8 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "handoff_version": normalized.get("handoff_version"),
         "handoff_executor_target_id": normalized.get("handoff_executor_target_id"),
         "handoff_executor_target_name": normalized.get("handoff_executor_target_name"),
+        "executor_handoff_contract": normalized.get("executor_handoff_contract"),
+        "executor_backend_status": normalized.get("executor_backend_status"),
         "execution_status": normalized.get("execution_status"),
         "execution_timestamp": normalized.get("execution_timestamp"),
         "execution_actor": normalized.get("execution_actor"),
@@ -456,6 +475,14 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "delivery_payload_summary": str(normalized.get("delivery_payload_summary") or ""),
         "delivery_requires_approval": bool(normalized.get("delivery_requires_approval", True)),
         "post_delivery_status": str(normalized.get("post_delivery_status") or "pending"),
+        "delivery_readiness_state": str(normalized.get("delivery_readiness_state") or "not_ready"),
+        "delivery_artifact_refs": [dict(item) for item in list(normalized.get("delivery_artifact_refs") or []) if isinstance(item, dict)][:50],
+        "delivery_evidence_present": bool(normalized.get("delivery_evidence_present", False)),
+        "delivery_verification_status": str(normalized.get("delivery_verification_status") or "pending"),
+        "delivery_approval_required_status": str(normalized.get("delivery_approval_required_status") or "required"),
+        "delivery_completed_truth": bool(normalized.get("delivery_completed_truth", False)),
+        "post_delivery_handoff_ready": bool(normalized.get("post_delivery_handoff_ready", False)),
+        "delivery_evidence_summary": str(normalized.get("delivery_evidence_summary") or ""),
         "satisfaction_check_required": bool(normalized.get("satisfaction_check_required", True)),
         "satisfaction_status": str(normalized.get("satisfaction_status") or "unknown"),
         "upsell_opportunity_detected": bool(normalized.get("upsell_opportunity_detected")),
@@ -1590,6 +1617,35 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             **project_delivery_fields,
         }
     )
+    handoff_target = str(p.get("handoff_executor_target_id") or p.get("execution_executor_target_id") or p.get("runtime_target_id") or "")
+    backend_status = build_executor_backend_status(
+        backend_id=handoff_target,
+        project_path=str(p.get("project_path") or ""),
+    )
+    handoff_contract = build_executor_handoff_contract(
+        package=p,
+        backend_status=backend_status,
+        receipt={
+            "receipt_id": p.get("execution_receipt_id"),
+            "execution_status": p.get("execution_status"),
+        },
+        verification={
+            "verification_id": p.get("verification_id"),
+            "verification_status": p.get("verification_status"),
+        },
+    )
+    delivery_backbone = build_delivery_backbone_contract(
+        package={
+            **p,
+            **project_delivery_fields,
+            "runtime_artifacts": [x for x in runtime_artifacts[:20] if isinstance(x, dict)],
+            "verification_status": str(p.get("verification_status") or "pending"),
+        },
+    )
+    outcome_verification = get_latest_outcome_verification(
+        project_path=str(p.get("project_path") or ""),
+        execution_package_id=package_id,
+    ) or {}
 
     return {
         "package_id": package_id,
@@ -1695,12 +1751,15 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "handoff_executor_target_id": str(p.get("handoff_executor_target_id") or ""),
         "handoff_executor_target_name": str(p.get("handoff_executor_target_name") or ""),
         "handoff_aegis_result": _normalize_handoff_aegis_result(p.get("handoff_aegis_result")),
+        "executor_handoff_contract": handoff_contract,
+        "executor_backend_status": backend_status.get("backend") if isinstance(backend_status, dict) else {},
         "execution_status": str(p.get("execution_status") or "pending").strip().lower(),
         "execution_timestamp": str(p.get("execution_timestamp") or ""),
         "execution_actor": str(p.get("execution_actor") or ""),
         "execution_id": str(p.get("execution_id") or ""),
         "execution_reason": _normalize_execution_reason(p.get("execution_reason")),
         "execution_receipt": _normalize_execution_receipt(p.get("execution_receipt")),
+        "execution_receipt_id": str(p.get("execution_receipt_id") or ""),
         "execution_version": str(p.get("execution_version") or "v1"),
         "execution_executor_target_id": str(p.get("execution_executor_target_id") or ""),
         "execution_executor_target_name": str(p.get("execution_executor_target_name") or ""),
@@ -1733,6 +1792,9 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "local_analysis_reason": normalize_local_analysis_reason(p.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(p.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
+        "verification_status": str(p.get("verification_status") or "pending").strip().lower(),
+        "verification_id": str(p.get("verification_id") or ""),
+        "verification_summary": str(p.get("verification_summary") or ""),
         "cost_tracking": normalized_cost_tracking,
         "budget_caps": budget_caps,
         "budget_control": budget_control,
@@ -1755,13 +1817,22 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "email_direction": str(p.get("email_direction") or ""),
         "email_status": str(p.get("email_status") or ""),
         "email_requires_approval": bool(p.get("email_requires_approval")),
+        "communication_send_status": str(p.get("communication_send_status") or ""),
+        "communication_send_requested_at": str(p.get("communication_send_requested_at") or ""),
+        "communication_send_attempted_at": str(p.get("communication_send_attempted_at") or ""),
+        "communication_send_receipt_at": str(p.get("communication_send_receipt_at") or ""),
+        "communication_send_receipt_exists": bool(p.get("communication_send_receipt_exists", False)),
+        "communication_response_received_at": str(p.get("communication_response_received_at") or ""),
         "email_threads": [dict(item) for item in list(p.get("email_threads") or []) if isinstance(item, dict)][:20],
         "follow_up_required": bool(p.get("follow_up_required")),
         "follow_up_status": str(p.get("follow_up_status") or "not_required"),
         "follow_up_next_at": str(p.get("follow_up_next_at") or ""),
         "follow_up_attempt_count": max(0, int(p.get("follow_up_attempt_count") or 0)),
+        "follow_up_retry_limit": max(0, int(p.get("follow_up_retry_limit") or 0)),
         "follow_up_strategy": str(p.get("follow_up_strategy") or ""),
         "follow_up_priority": str(p.get("follow_up_priority") or "medium"),
+        "follow_up_reason": str(p.get("follow_up_reason") or ""),
+        "follow_up_reengagement_ready": bool(p.get("follow_up_reengagement_ready", False)),
         "qualification_status": str(p.get("qualification_status") or "unqualified"),
         "qualification_score": _normalize_revenue_ratio(p.get("qualification_score"), fallback=0.0),
         "qualification_reason": str(p.get("qualification_reason") or ""),
@@ -1801,6 +1872,12 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
                 "metadata": metadata,
             }
         ),
+        **delivery_backbone,
+        "outcome_verification_id": str(outcome_verification.get("outcome_verification_id") or p.get("outcome_verification_id") or ""),
+        "outcome_verification_status": str(outcome_verification.get("verification_status") or p.get("outcome_verification_status") or ""),
+        "outcome_verification_confidence": float(outcome_verification.get("confidence") or p.get("outcome_verification_confidence") or 0.0),
+        "outcome_operator_confirmed": bool(outcome_verification.get("operator_confirmed", p.get("outcome_operator_confirmed", False))),
+        "execution_truth_status": resolve_package_truth(p),
     }
 
 
@@ -1891,6 +1968,8 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "handoff_version": str(r.get("handoff_version") or "v1"),
         "handoff_executor_target_id": str(r.get("handoff_executor_target_id") or ""),
         "handoff_executor_target_name": str(r.get("handoff_executor_target_name") or ""),
+        "executor_handoff_contract": dict(r.get("executor_handoff_contract") or {}),
+        "executor_backend_status": dict(r.get("executor_backend_status") or {}),
         "execution_status": str(r.get("execution_status") or "pending").strip().lower(),
         "execution_timestamp": str(r.get("execution_timestamp") or ""),
         "execution_actor": str(r.get("execution_actor") or ""),
@@ -1901,6 +1980,7 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "execution_executor_target_name": str(r.get("execution_executor_target_name") or ""),
         "execution_executor_backend_id": _normalize_executor_backend_id(r.get("execution_executor_backend_id")),
         "execution_receipt": _summarize_execution_receipt(r.get("execution_receipt")),
+        "execution_receipt_id": str(r.get("execution_receipt_id") or ""),
         "rollback_status": str(r.get("rollback_status") or "not_needed").strip().lower(),
         "rollback_timestamp": str(r.get("rollback_timestamp") or ""),
         "rollback_reason": _normalize_rollback_reason(r.get("rollback_reason")),
@@ -1926,6 +2006,18 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "local_analysis_reason": normalize_local_analysis_reason(r.get("local_analysis_reason")),
         "local_analysis_basis": normalize_local_analysis_basis(r.get("local_analysis_basis")),
         "local_analysis_summary": normalize_local_analysis_summary(r.get("local_analysis_summary")),
+        "verification_status": str(r.get("verification_status") or "pending").strip().lower(),
+        "verification_id": str(r.get("verification_id") or ""),
+        "verification_summary": str(r.get("verification_summary") or ""),
+        "delivery_readiness_state": str(r.get("delivery_readiness_state") or "not_ready"),
+        "delivery_artifact_refs": [dict(item) for item in list(r.get("delivery_artifact_refs") or []) if isinstance(item, dict)][:50],
+        "delivery_evidence_present": bool(r.get("delivery_evidence_present", False)),
+        "delivery_verification_status": str(r.get("delivery_verification_status") or "pending"),
+        "delivery_approval_required_status": str(r.get("delivery_approval_required_status") or "required"),
+        "delivery_completed_truth": bool(r.get("delivery_completed_truth", False)),
+        "post_delivery_handoff_ready": bool(r.get("post_delivery_handoff_ready", False)),
+        "delivery_evidence_summary": str(r.get("delivery_evidence_summary") or ""),
+        "execution_truth_status": resolve_package_truth(r),
         "governance_conflict_status": str(r.get("governance_conflict_status") or ""),
         "governance_conflict_type": str(r.get("governance_conflict_type") or ""),
         "governance_resolution_state": str(r.get("governance_resolution_state") or ""),
@@ -1945,13 +2037,22 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "email_direction": str(r.get("email_direction") or ""),
         "email_status": str(r.get("email_status") or ""),
         "email_requires_approval": bool(r.get("email_requires_approval")),
+        "communication_send_status": str(r.get("communication_send_status") or ""),
+        "communication_send_requested_at": str(r.get("communication_send_requested_at") or ""),
+        "communication_send_attempted_at": str(r.get("communication_send_attempted_at") or ""),
+        "communication_send_receipt_at": str(r.get("communication_send_receipt_at") or ""),
+        "communication_send_receipt_exists": bool(r.get("communication_send_receipt_exists", False)),
+        "communication_response_received_at": str(r.get("communication_response_received_at") or ""),
         "email_threads": [dict(item) for item in list(r.get("email_threads") or []) if isinstance(item, dict)][:20],
         "follow_up_required": bool(r.get("follow_up_required")),
         "follow_up_status": str(r.get("follow_up_status") or "not_required"),
         "follow_up_next_at": str(r.get("follow_up_next_at") or ""),
         "follow_up_attempt_count": max(0, int(r.get("follow_up_attempt_count") or 0)),
+        "follow_up_retry_limit": max(0, int(r.get("follow_up_retry_limit") or 0)),
         "follow_up_strategy": str(r.get("follow_up_strategy") or ""),
         "follow_up_priority": str(r.get("follow_up_priority") or "medium"),
+        "follow_up_reason": str(r.get("follow_up_reason") or ""),
+        "follow_up_reengagement_ready": bool(r.get("follow_up_reengagement_ready", False)),
         "qualification_status": str(r.get("qualification_status") or "unqualified"),
         "qualification_score": _normalize_revenue_ratio(r.get("qualification_score"), fallback=0.0),
         "qualification_reason": str(r.get("qualification_reason") or ""),
@@ -2053,6 +2154,10 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "satisfaction_status": str(r.get("satisfaction_status") or "unknown"),
         "upsell_opportunity_detected": bool(r.get("upsell_opportunity_detected")),
         "retention_follow_up_required": bool(r.get("retention_follow_up_required", True)),
+        "outcome_verification_id": str(r.get("outcome_verification_id") or ""),
+        "outcome_verification_status": str(r.get("outcome_verification_status") or ""),
+        "outcome_verification_confidence": float(r.get("outcome_verification_confidence") or 0.0),
+        "outcome_operator_confirmed": bool(r.get("outcome_operator_confirmed", False)),
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -3550,6 +3655,42 @@ def record_execution_package_execution(
     package["budget_caps"] = budget_control.get("budget_caps") or _resolve_package_budget_caps(package, project_path)
     package["budget_control"] = budget_control
     package.update(_budget_fields_from_control(budget_control))
+    receipt_result = append_execution_receipt_safe(
+        project_path=project_path,
+        record=build_execution_receipt_from_package(package=package, mission_id=package.get("project_name")),
+    )
+    receipt = receipt_result.get("receipt") if isinstance(receipt_result.get("receipt"), dict) else {}
+    package["execution_receipt_id"] = str(receipt.get("receipt_id") or package.get("execution_receipt_id") or "")
+    verification_result = append_execution_verification_safe(
+        project_path=project_path,
+        record=build_verification_from_receipt(receipt=receipt, package=package),
+    )
+    verification = verification_result.get("verification") if isinstance(verification_result.get("verification"), dict) else {}
+    package["verification_id"] = str(verification.get("verification_id") or package.get("verification_id") or "")
+    package["verification_status"] = str(verification.get("verification_status") or package.get("verification_status") or "pending")
+    package["verification_summary"] = str(verification.get("verification_summary") or package.get("verification_summary") or "")
+    package["execution_truth_status"] = resolve_package_truth(package)
+    metadata = dict(package.get("metadata") or {})
+    degraded = list(metadata.get("degraded_reporting") or [])
+    if receipt_result.get("status") != "ok":
+        degraded.append(
+            {
+                "layer": "execution_receipt_registry",
+                "status": str(receipt_result.get("status") or "degraded"),
+                "reason": str(receipt_result.get("reason") or ""),
+            }
+        )
+    if verification_result.get("status") != "ok":
+        degraded.append(
+            {
+                "layer": "execution_verification_registry",
+                "status": str(verification_result.get("status") or "degraded"),
+                "reason": str(verification_result.get("reason") or ""),
+            }
+        )
+    if degraded:
+        metadata["degraded_reporting"] = degraded[:20]
+    package["metadata"] = metadata
 
     return _persist_package_update(
         project_path=project_path,
@@ -3825,13 +3966,22 @@ def record_execution_package_revenue_loop(
         "email_direction",
         "email_status",
         "email_requires_approval",
+        "communication_send_status",
+        "communication_send_requested_at",
+        "communication_send_attempted_at",
+        "communication_send_receipt_at",
+        "communication_send_receipt_exists",
+        "communication_response_received_at",
         "email_threads",
         "follow_up_required",
         "follow_up_status",
         "follow_up_next_at",
         "follow_up_attempt_count",
+        "follow_up_retry_limit",
         "follow_up_strategy",
         "follow_up_priority",
+        "follow_up_reason",
+        "follow_up_reengagement_ready",
         "qualification_status",
         "qualification_score",
         "qualification_reason",
@@ -3995,6 +4145,8 @@ def record_execution_package_outcome_adaptation(
         "autopilot_parallel_capacity",
         "active_mission_count",
         "active_missions",
+        "operator_confirmed_outcome",
+        "outcome_operator_confirmed",
         "metadata",
     }
     phase_inputs = {key: patch.get(key) for key in allowed_update_inputs if key in patch}
@@ -4022,6 +4174,19 @@ def record_execution_package_outcome_adaptation(
     phase_fields = evaluate_outcome_adaptation_fields(package=package, updates=phase_inputs, now_iso=now_iso)
     package.update(phase_fields)
     package["metadata"] = metadata
+    outcome_verification = build_outcome_verification_from_package(
+        package=package,
+        operator_confirmed=bool(patch.get("operator_confirmed_outcome") or patch.get("outcome_operator_confirmed")),
+    )
+    outcome_write = append_outcome_verification_safe(
+        project_path=project_path,
+        record=outcome_verification,
+    )
+    latest_outcome = dict((outcome_write or {}).get("outcome") or outcome_verification)
+    package["outcome_verification_id"] = str(latest_outcome.get("outcome_verification_id") or "")
+    package["outcome_verification_status"] = str(latest_outcome.get("verification_status") or "")
+    package["outcome_verification_confidence"] = float(latest_outcome.get("confidence") or 0.0)
+    package["outcome_operator_confirmed"] = bool(latest_outcome.get("operator_confirmed", False))
 
     adaptation_log = list(metadata.get("outcome_adaptation_log") or [])
     adaptation_log.append(

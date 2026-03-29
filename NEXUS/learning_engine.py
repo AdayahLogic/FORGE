@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import Any
 
 from NEXUS.learning_models import normalize_learning_record
+from NEXUS.outcome_verifier_registry import get_latest_outcome_verification
 
 
 def _safe_get(d: Any, key: str, default: Any = None) -> Any:
@@ -191,6 +192,18 @@ def _derive_performance_impact(state: Any) -> int:
     return 0
 
 
+def _latest_verified_outcome_snapshot(state: Any) -> dict[str, Any]:
+    project_path = _safe_get(state, "project_path")
+    package_id = _safe_get(state, "execution_package_id")
+    if not project_path:
+        return {}
+    record = get_latest_outcome_verification(
+        project_path=str(project_path),
+        execution_package_id=str(package_id or ""),
+    )
+    return dict(record or {})
+
+
 def build_outcome_learning_record(
     *,
     state: Any,
@@ -218,6 +231,12 @@ def build_outcome_learning_record(
 
     error_summary = _extract_error_summary(state)
     performance_impact = _derive_performance_impact(state)
+    latest_outcome = _latest_verified_outcome_snapshot(state)
+    if latest_outcome:
+        try:
+            performance_impact = int(round(float(latest_outcome.get("performance_delta") or performance_impact)))
+        except Exception:
+            pass
 
     review_queue_entry = _safe_as_dict(_safe_get(state, "review_queue_entry") or {})
     human_review_required = False
@@ -266,6 +285,12 @@ def build_outcome_learning_record(
             "execution_status": dispatch_result_map.get("execution_status"),
             "files_updated": bool(file_mod_summary_map),
             "file_modification_summary_present": bool(file_mod_summary_map),
+            "latest_outcome_verification": {
+                "outcome_verification_id": latest_outcome.get("outcome_verification_id") if latest_outcome else "",
+                "verification_status": latest_outcome.get("verification_status") if latest_outcome else "",
+                "success_classification": latest_outcome.get("success_classification") if latest_outcome else "",
+                "performance_delta": latest_outcome.get("performance_delta") if latest_outcome else 0.0,
+            },
         },
         "tags": tags,
     }

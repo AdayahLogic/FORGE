@@ -17,6 +17,7 @@ from NEXUS.runtime_execution import (
     build_runtime_execution_skipped,
     build_runtime_execution_result,
 )
+from NEXUS.execution_truth import resolve_dispatch_truth
 from NEXUS.runtime_target_selector import select_runtime_target
 
 
@@ -118,11 +119,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 "authority_trace": nexus_trace,
             },
         )
-        return {
+        result_payload = {
             "dispatch_status": "blocked",
             "runtime_target": runtime_target_id or "",
             "dispatch_result": blocked,
         }
+        blocked["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=blocked,
+        )
+        return result_payload
 
     selection = select_runtime_target(
         requested_target_id=runtime_target_id or None,
@@ -144,11 +150,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         )
         skipped["authority_trace"] = nexus_trace
         skipped["runtime_target_selection"] = selection_snapshot
-        return {
+        result_payload = {
             "dispatch_status": "skipped",
             "runtime_target": selected_target_id or runtime_target_id,
             "dispatch_result": skipped,
         }
+        skipped["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=skipped,
+        )
+        return result_payload
 
     if selection_snapshot.get("status") == "unavailable":
         unavailable = build_runtime_execution_skipped(
@@ -160,11 +171,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         unavailable["next_action"] = "select_supported_runtime"
         unavailable["authority_trace"] = nexus_trace
         unavailable["runtime_target_selection"] = selection_snapshot
-        return {
+        result_payload = {
             "dispatch_status": "skipped",
             "runtime_target": runtime_target_id or "",
             "dispatch_result": unavailable,
         }
+        unavailable["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=unavailable,
+        )
+        return result_payload
 
     if selection_snapshot.get("status") == "denied":
         blocked = build_runtime_execution_result(
@@ -181,11 +197,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 "runtime_target_selection": selection_snapshot,
             },
         )
-        return {
+        result_payload = {
             "dispatch_status": "blocked",
             "runtime_target": runtime_target_id or "",
             "dispatch_result": blocked,
         }
+        blocked["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=blocked,
+        )
+        return result_payload
 
     runtime_target_id = selected_target_id
 
@@ -225,11 +246,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             if isinstance(blocked, dict):
                 blocked["aegis"] = aegis_res
                 blocked["runtime_target_selection"] = selection_snapshot
-            return {
+            result_payload = {
                 "dispatch_status": "blocked",
                 "runtime_target": runtime_target_id,
                 "dispatch_result": blocked,
             }
+            blocked["execution_truth_status"] = resolve_dispatch_truth(
+                dispatch_status=result_payload.get("dispatch_status"),
+                dispatch_result=blocked,
+            )
+            return result_payload
 
         if aegis_decision == "approval_required":
             # Phase 18: create approval record and persist before blocking
@@ -277,11 +303,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                     queued["execution_package_id"] = package_id
                     queued["execution_package_path"] = package_path
                     queued["package_review_required"] = True
-            return {
+            result_payload = {
                 "dispatch_status": "skipped",
                 "runtime_target": runtime_target_id,
                 "dispatch_result": queued,
             }
+            queued["execution_truth_status"] = resolve_dispatch_truth(
+                dispatch_status=result_payload.get("dispatch_status"),
+                dispatch_result=queued,
+            )
+            return result_payload
 
         # Phase 18: when AEGIS allows but dispatch plan requires human approval, gate before execution
         if aegis_decision == "allow" and bool(exec_block.get("requires_human_approval")):
@@ -329,11 +360,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                     gated["execution_package_id"] = package_id
                     gated["execution_package_path"] = package_path
                     gated["package_review_required"] = True
-            return {
+            result_payload = {
                 "dispatch_status": "skipped",
                 "runtime_target": runtime_target_id,
                 "dispatch_result": gated,
             }
+            gated["execution_truth_status"] = resolve_dispatch_truth(
+                dispatch_status=result_payload.get("dispatch_status"),
+                dispatch_result=gated,
+            )
+            return result_payload
 
         if aegis_decision == "allow" and runtime_target_id == "windows_review_package":
             package_id, package_path = _create_review_only_execution_package(
@@ -362,11 +398,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                     packaged["execution_package_id"] = package_id
                     packaged["execution_package_path"] = package_path
                     packaged["package_review_required"] = True
-            return {
+            result_payload = {
                 "dispatch_status": "accepted",
                 "runtime_target": runtime_target_id,
                 "dispatch_result": packaged,
             }
+            packaged["execution_truth_status"] = resolve_dispatch_truth(
+                dispatch_status=result_payload.get("dispatch_status"),
+                dispatch_result=packaged,
+            )
+            return result_payload
     except Exception:
         aegis_bypass_denial = build_authority_denial(
             denied_action="bypass_aegis_for_governed_dispatch",
@@ -390,11 +431,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                 "runtime_target_selection": selection_snapshot,
             },
         )
-        return {
+        result_payload = {
             "dispatch_status": "blocked",
             "runtime_target": runtime_target_id,
             "dispatch_result": blocked,
         }
+        blocked["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=blocked,
+        )
+        return result_payload
     adapter = RUNTIME_ADAPTERS.get(runtime_target_id)
     if not adapter:
         no_adapter = build_runtime_execution_skipped(
@@ -410,11 +456,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             no_adapter["aegis"] = aegis_res
         no_adapter["authority_trace"] = nexus_trace
         no_adapter["runtime_target_selection"] = selection_snapshot
-        return {
+        result_payload = {
             "dispatch_status": "no_adapter",
             "runtime_target": runtime_target_id,
             "dispatch_result": no_adapter,
         }
+        no_adapter["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=no_adapter,
+        )
+        return result_payload
     try:
         dispatch_result = adapter(dispatch_plan)
         # Adapters already return normalized schema in Step 59; enforce minimal keys just in case.
@@ -468,11 +519,16 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
                     "Governed Cursor bridge handoff prepared and linked to a sealed execution package."
                 )
                 dispatch_result["next_action"] = "review_execution_package"
-        return {
+        result_payload = {
             "dispatch_status": "accepted",
             "runtime_target": runtime_target_id,
             "dispatch_result": dispatch_result,
         }
+        dispatch_result["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=dispatch_result,
+        )
+        return result_payload
     except Exception as e:
         err = build_runtime_execution_error(
             runtime=runtime_target_id,
@@ -484,8 +540,13 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         if isinstance(err, dict):
             err["authority_trace"] = nexus_trace
             err["runtime_target_selection"] = selection_snapshot
-        return {
+        result_payload = {
             "dispatch_status": "error",
             "runtime_target": runtime_target_id,
             "dispatch_result": err,
         }
+        err["execution_truth_status"] = resolve_dispatch_truth(
+            dispatch_status=result_payload.get("dispatch_status"),
+            dispatch_result=err,
+        )
+        return result_payload

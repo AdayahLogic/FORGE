@@ -36,6 +36,7 @@ from NEXUS.helix_contracts import (
     build_helix_review_dispatch_plan,
     validate_helix_contract_envelope,
 )
+from NEXUS.helix_outcome_inputs import build_helix_outcome_inputs
 
 # Stop reasons
 STOP_APPROVAL_BLOCKED = "approval_blocked"
@@ -99,6 +100,7 @@ def run_helix_pipeline(
     stop_reason = ""
     pipeline_status = "planned"
     execution_package_refs: list[str] = []
+    helix_outcome_inputs: dict[str, Any] = {}
     helix_contract: dict[str, Any] = {}
     contract_validation: dict[str, Any] = {}
     authority_trace = evaluate_component_authority_safe(
@@ -145,6 +147,7 @@ def run_helix_pipeline(
             "autonomy_id_refs": [],
             "product_id_refs": [],
             "execution_package_refs": [],
+            "helix_outcome_inputs": {},
             "helix_contract": {},
             "contract_validation": {"contract_status": "invalid", "validation_path": "blocked_before_package_binding"},
             "authority_trace": authority_trace,
@@ -184,6 +187,7 @@ def run_helix_pipeline(
             "autonomy_id_refs": [],
             "product_id_refs": [],
             "execution_package_refs": [],
+            "helix_outcome_inputs": {},
             "helix_contract": {},
             "contract_validation": {"contract_status": "invalid", "validation_path": "blocked_before_package_binding"},
             "authority_trace": authority_trace,
@@ -415,6 +419,11 @@ def run_helix_pipeline(
             contract_validation=contract_validation,
         )
 
+    try:
+        helix_outcome_inputs = build_helix_outcome_inputs(project_path=project_path, n=200)
+    except Exception:
+        helix_outcome_inputs = {}
+
     record = normalize_helix_record({
         "helix_id": helix_id,
         "run_id": run_id,
@@ -434,6 +443,7 @@ def run_helix_pipeline(
         "autonomy_id_refs": autonomy_id_refs,
         "product_id_refs": product_id_refs,
         "execution_package_refs": execution_package_refs,
+        "helix_outcome_inputs": helix_outcome_inputs,
         "helix_contract": helix_contract,
         "contract_validation": contract_validation,
         "authority_trace": authority_trace,
@@ -656,6 +666,7 @@ def run_helix_pipeline(
             "critic_repair_recommended": critic_repair_recommended,
             "repair_strategy_category": repair_strategy,
             "has_patch_payload": repair_metadata.get("has_patch_payload", False),
+            "helix_outcome_inputs": helix_outcome_inputs,
         }
         if requires_surgeon:
             downstream["repair_artifact_patch_readiness"] = repair_metadata.get("patch_readiness", "unknown")
