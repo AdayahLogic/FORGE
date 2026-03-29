@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from NEXUS.self_optimization_engine import build_portfolio_intelligence_safe
+
 
 def build_portfolio_summary(
     *,
@@ -33,6 +35,11 @@ def build_portfolio_summary(
     active_projects = int(coord.get("active_project_count") or 0)
     blocked_projects = int(coord.get("blocked_project_count") or 0)
     priority_project = coord.get("priority_project")
+    portfolio_intelligence = build_portfolio_intelligence_safe(states_by_project=states)
+    ranked_projects = list(portfolio_intelligence.get("project_performance") or [])
+    intelligent_priority_project = portfolio_intelligence.get("priority_project")
+    if intelligent_priority_project:
+        priority_project = intelligent_priority_project
 
     coordination_status = str(coord.get("coordination_status") or "").strip().lower()
     driver_status = str(driver.get("driver_status") or "").strip().lower()
@@ -61,6 +68,15 @@ def build_portfolio_summary(
         "blocked_projects": int(blocked_projects),
         "priority_project": priority_project if priority_project else None,
         "portfolio_reason": str(reason),
+        "portfolio_priority_score": float(portfolio_intelligence.get("portfolio_priority_score") or 0.0),
+        "project_performance_score": {
+            str(row.get("project_id") or ""): float(row.get("project_performance_score") or 0.0)
+            for row in ranked_projects
+            if str(row.get("project_id") or "").strip()
+        },
+        "resource_allocation_signals": list(portfolio_intelligence.get("resource_allocation_signals") or []),
+        "focus_candidates": list(portfolio_intelligence.get("focus_candidates") or []),
+        "pause_candidates": list(portfolio_intelligence.get("pause_candidates") or []),
     }
 
 
@@ -87,5 +103,10 @@ def build_portfolio_summary_safe(
             "blocked_projects": 0,
             "priority_project": None,
             "portfolio_reason": "Portfolio summary evaluation failed.",
+            "portfolio_priority_score": 0.0,
+            "project_performance_score": {},
+            "resource_allocation_signals": [],
+            "focus_candidates": [],
+            "pause_candidates": [],
         }
 
