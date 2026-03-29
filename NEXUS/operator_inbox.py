@@ -14,6 +14,8 @@ from NEXUS.execution_truth import build_execution_truth_snapshot
 from NEXUS.execution_receipt_registry import read_execution_receipt_journal_tail
 from NEXUS.execution_verification_registry import read_execution_verification_journal_tail
 from NEXUS.integration_readiness_registry import build_integration_readiness_summary
+from NEXUS.revenue_followup_scheduler import build_follow_up_status_summary, build_stalled_deals_summary
+from NEXUS.outcome_verifier_registry import build_performance_summary
 
 
 def _text(value: Any) -> str:
@@ -45,6 +47,9 @@ def build_operator_inbox(
         verification=latest_verification,
     )
     integration_readiness = build_integration_readiness_summary(project_path=project_path)
+    follow_up = build_follow_up_status_summary(project_path=project_path, n=200)
+    stalled = build_stalled_deals_summary(project_path=project_path, n=200)
+    performance = build_performance_summary(project_path=project_path, n=200)
 
     items: list[dict[str, Any]] = []
     review_queue = dict(state.get("review_queue_entry") or {})
@@ -141,6 +146,42 @@ def build_operator_inbox(
                 "batchable": False,
             }
         )
+    stale_followups = int(follow_up.get("stale_follow_up_count") or 0)
+    if stale_followups > 0:
+        items.append(
+            {
+                "inbox_item_type": "stale_follow_up",
+                "priority_score": 84,
+                "priority": "high",
+                "title": "Stale follow-ups pending",
+                "reason": f"{stale_followups} follow-up(s) are overdue and require governed re-engagement planning.",
+                "batchable": False,
+            }
+        )
+    stalled_count = int(stalled.get("stalled_deals_count") or 0)
+    if stalled_count > 0:
+        items.append(
+            {
+                "inbox_item_type": "stalled_deals",
+                "priority_score": 83,
+                "priority": "high" if stalled_count >= 2 else "medium",
+                "title": "Stalled deal queue",
+                "reason": f"{stalled_count} deal(s) meet stall criteria; no auto-contact is performed.",
+                "batchable": False,
+            }
+        )
+    failing = int(performance.get("failing_count") or 0)
+    if failing > 0:
+        items.append(
+            {
+                "inbox_item_type": "performance_regression",
+                "priority_score": 80,
+                "priority": "medium",
+                "title": "Outcome performance regression",
+                "reason": f"{failing} verified outcome(s) indicate negative or failed performance.",
+                "batchable": True,
+            }
+        )
 
     items.sort(key=lambda row: int(row.get("priority_score") or 0), reverse=True)
     return {
@@ -161,6 +202,19 @@ def build_operator_inbox(
             "ready_count": integration_readiness.get("ready_count", 0),
             "degraded_count": integration_readiness.get("degraded_count", 0),
             "governed_only_count": integration_readiness.get("governed_only_count", 0),
+        },
+        "follow_up_summary": {
+            "follow_up_count": follow_up.get("follow_up_count", 0),
+            "stale_follow_up_count": follow_up.get("stale_follow_up_count", 0),
+            "reengagement_count": follow_up.get("reengagement_count", 0),
+        },
+        "stalled_deal_summary": {
+            "stalled_deals_count": stalled.get("stalled_deals_count", 0),
+        },
+        "performance_summary": {
+            "count": performance.get("count", 0),
+            "failing_count": performance.get("failing_count", 0),
+            "avg_performance_delta": performance.get("avg_performance_delta", 0.0),
         },
     }
 

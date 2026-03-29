@@ -99,6 +99,7 @@ def normalize_helix_record(record: dict[str, Any]) -> dict[str, Any]:
         "autonomy_id_refs": normalize_ref_list(r.get("autonomy_id_refs")),
         "product_id_refs": normalize_ref_list(r.get("product_id_refs")),
         "execution_package_refs": normalize_ref_list(r.get("execution_package_refs")),
+        "helix_outcome_inputs": r.get("helix_outcome_inputs") if isinstance(r.get("helix_outcome_inputs"), dict) else {},
         "helix_contract": r.get("helix_contract") if isinstance(r.get("helix_contract"), dict) else {},
         "contract_validation": r.get("contract_validation") if isinstance(r.get("contract_validation"), dict) else {},
         "authority_trace": r.get("authority_trace") if isinstance(r.get("authority_trace"), dict) else {},

@@ -37,6 +37,16 @@ from NEXUS.executor_backend_registry import (
 )
 from NEXUS.integration_readiness_registry import build_integration_readiness_summary
 from NEXUS.delivery_backbone import build_delivery_backbone_contract
+from NEXUS.revenue_followup_scheduler import (
+    build_follow_up_status_summary,
+    build_reengagement_queue_summary,
+    build_stalled_deals_summary,
+)
+from NEXUS.outcome_verifier_registry import (
+    build_performance_summary,
+    get_latest_outcome_verification,
+)
+from NEXUS.helix_outcome_inputs import build_helix_outcome_inputs
 
 from NEXUS.logging_engine import log_system_event
 
@@ -85,6 +95,12 @@ SUPPORTED_COMMANDS = frozenset({
     "delivery_status",
     "executor_handoff_status",
     "delivery_verification_status",
+    "follow_up_status",
+    "stalled_deals",
+    "reengagement_queue",
+    "outcome_verification_status",
+    "performance_summary",
+    "helix_outcome_inputs",
     "automation_status",
     "agent_status",
     "governance_status",
@@ -357,10 +373,14 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "email_status": p.get("email_status") or "",
         "email_direction": p.get("email_direction") or "",
         "email_requires_approval": bool(p.get("email_requires_approval")),
+        "communication_send_status": p.get("communication_send_status") or "",
+        "communication_send_receipt_exists": bool(p.get("communication_send_receipt_exists")),
         "lead_status": p.get("lead_status") or "new",
         "lead_priority": p.get("lead_priority") or "medium",
         "follow_up_status": p.get("follow_up_status") or "not_required",
         "follow_up_next_at": p.get("follow_up_next_at") or "",
+        "follow_up_reason": p.get("follow_up_reason") or "",
+        "follow_up_reengagement_ready": bool(p.get("follow_up_reengagement_ready")),
         "notification_type": p.get("notification_type") or "",
         "notification_priority": p.get("notification_priority") or "",
         "deal_status": p.get("deal_status") or "open",
@@ -392,6 +412,7 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "actual_revenue": p.get("actual_revenue") or 0.0,
         "actual_conversion": p.get("actual_conversion") or 0.0,
         "outcome_status": p.get("outcome_status") or "pending",
+        "outcome_verification_status": p.get("outcome_verification_status") or "",
         "outcome_recorded_at": p.get("outcome_recorded_at") or "",
         "outcome_delta_score": p.get("outcome_delta_score") or 0.0,
         "revenue_delta": p.get("revenue_delta") or 0.0,
@@ -588,6 +609,12 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "email_direction": p.get("email_direction") or "",
             "email_status": p.get("email_status") or "",
             "email_requires_approval": bool(p.get("email_requires_approval")),
+            "communication_send_status": p.get("communication_send_status") or "",
+            "communication_send_requested_at": p.get("communication_send_requested_at") or "",
+            "communication_send_attempted_at": p.get("communication_send_attempted_at") or "",
+            "communication_send_receipt_at": p.get("communication_send_receipt_at") or "",
+            "communication_send_receipt_exists": bool(p.get("communication_send_receipt_exists")),
+            "communication_response_received_at": p.get("communication_response_received_at") or "",
             "email_threads": [dict(item) for item in list(p.get("email_threads") or []) if isinstance(item, dict)][:20],
         }
     if p.get("lead_id") or p.get("lead_source") or p.get("lead_intent"):
@@ -610,8 +637,11 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "follow_up_status": p.get("follow_up_status") or "not_required",
             "follow_up_next_at": p.get("follow_up_next_at") or "",
             "follow_up_attempt_count": int(p.get("follow_up_attempt_count") or 0),
+            "follow_up_retry_limit": int(p.get("follow_up_retry_limit") or 0),
             "follow_up_strategy": p.get("follow_up_strategy") or "",
             "follow_up_priority": p.get("follow_up_priority") or "medium",
+            "follow_up_reason": p.get("follow_up_reason") or "",
+            "follow_up_reengagement_ready": bool(p.get("follow_up_reengagement_ready")),
         }
     if p.get("notification_type") or p.get("notification_message"):
         sections["notifications"] = {
@@ -729,6 +759,10 @@ def _build_execution_package_sections(package: dict[str, Any] | None) -> dict[st
             "actual_conversion": p.get("actual_conversion") or 0.0,
             "outcome_status": p.get("outcome_status") or "pending",
             "outcome_recorded_at": p.get("outcome_recorded_at") or "",
+            "outcome_verification_id": p.get("outcome_verification_id") or "",
+            "outcome_verification_status": p.get("outcome_verification_status") or "",
+            "outcome_verification_confidence": p.get("outcome_verification_confidence") or 0.0,
+            "outcome_operator_confirmed": bool(p.get("outcome_operator_confirmed")),
         }
         sections["performance"] = {
             "outcome_delta_score": p.get("outcome_delta_score") or 0.0,
@@ -836,10 +870,14 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "lead_status": p.get("lead_status") or "new",
         "lead_priority": p.get("lead_priority") or "medium",
         "email_status": p.get("email_status") or "",
+        "communication_send_status": p.get("communication_send_status") or "",
+        "communication_send_receipt_exists": bool(p.get("communication_send_receipt_exists")),
         "email_requires_approval": bool(p.get("email_requires_approval")),
         "follow_up_status": p.get("follow_up_status") or "not_required",
         "follow_up_required": bool(p.get("follow_up_required")),
         "follow_up_next_at": p.get("follow_up_next_at") or "",
+        "follow_up_reason": p.get("follow_up_reason") or "",
+        "follow_up_reengagement_ready": bool(p.get("follow_up_reengagement_ready")),
         "qualification_status": p.get("qualification_status") or "unqualified",
         "qualification_score": p.get("qualification_score") or 0.0,
         "lead_value_estimate": p.get("lead_value_estimate") or 0.0,
@@ -865,6 +903,8 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "delivery_type": p.get("delivery_type") or "other",
         "post_delivery_status": p.get("post_delivery_status") or "pending",
         "outcome_status": p.get("outcome_status") or "pending",
+        "outcome_verification_status": p.get("outcome_verification_status") or "",
+        "outcome_verification_confidence": p.get("outcome_verification_confidence") or 0.0,
         "performance_score": p.get("performance_score") or 0.0,
         "performance_category": p.get("performance_category") or "poor",
         "strategy_adjustment_required": bool(p.get("strategy_adjustment_required")),
@@ -1057,6 +1097,113 @@ def run_command(
                     f"governed_only={summary_data.get('governed_only_count', 0)}"
                 ),
                 payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "follow_up_status":
+        try:
+            summary_data = build_follow_up_status_summary(project_path=path, n=int(kwargs.get("n") or 200))
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"follow_ups={summary_data.get('follow_up_count', 0)}; "
+                    f"stale={summary_data.get('stale_follow_up_count', 0)}; "
+                    f"reengagement={summary_data.get('reengagement_count', 0)}"
+                ),
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "stalled_deals":
+        try:
+            summary_data = build_stalled_deals_summary(
+                project_path=path,
+                n=int(kwargs.get("n") or 200),
+                stall_hours=int(kwargs.get("stall_hours") or 72),
+            )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"stalled_deals={summary_data.get('stalled_deals_count', 0)}",
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "reengagement_queue":
+        try:
+            summary_data = build_reengagement_queue_summary(project_path=path, n=int(kwargs.get("n") or 200))
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"reengagement_items={summary_data.get('reengagement_count', 0)}",
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "outcome_verification_status":
+        try:
+            package_id = str(kwargs.get("execution_package_id") or "").strip()
+            latest = get_latest_outcome_verification(project_path=path, execution_package_id=package_id)
+            if not latest:
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary="No outcome verification records found.",
+                    payload={"execution_package_id": package_id, "outcome_verification": None},
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"verification_status={latest.get('verification_status')}; "
+                    f"classification={latest.get('success_classification')}; "
+                    f"confidence={latest.get('confidence')}"
+                ),
+                payload={"execution_package_id": package_id, "outcome_verification": latest},
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "performance_summary":
+        try:
+            summary_data = build_performance_summary(project_path=path, n=int(kwargs.get("n") or 200))
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"records={summary_data.get('count', 0)}; "
+                    f"avg_delta={summary_data.get('avg_performance_delta', 0.0)}; "
+                    f"failing={summary_data.get('failing_count', 0)}"
+                ),
+                payload=summary_data,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "helix_outcome_inputs":
+        try:
+            payload = build_helix_outcome_inputs(project_path=path, n=int(kwargs.get("n") or 200))
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"verified_outcomes={payload.get('verified_outcome_count', 0)}; "
+                    f"stalled_deals={payload.get('stalled_deal_count', 0)}; "
+                    f"stale_follow_ups={payload.get('stale_follow_up_count', 0)}"
+                ),
+                payload=payload,
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
