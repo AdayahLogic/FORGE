@@ -76,7 +76,7 @@ def evaluate_change_gate(
             "change_gate_status": "allowed" if pr in ("low", "medium") else "review_required",
             "change_gate_reason": "Non-core change; planning allowed but execution remains disabled in this sprint.",
             "execution_allowed": False,
-            "review_required": pr in ("medium", "low") is False,
+            "review_required": pr not in ("medium", "low"),
         }
 
     # Unknown category: block conservatively.
