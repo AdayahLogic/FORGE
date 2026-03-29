@@ -168,6 +168,12 @@ def save_project_state(
     approval_required_actions: list | None = None,
     project_routing_status: str | None = None,
     project_routing_result: dict | None = None,
+    strategic_status: str | None = None,
+    next_best_action: dict | None = None,
+    priority_queue: list | None = None,
+    opportunity_rankings: list | None = None,
+    mission_priorities: dict | None = None,
+    autopilot_strategy_state: dict | None = None,
 ) -> str:
     state_file = get_project_state_file(project_path)
 
@@ -260,6 +266,18 @@ def save_project_state(
         project_routing_status = previous.get("project_routing_status")
     if project_routing_result is None and isinstance(previous.get("project_routing_result"), dict):
         project_routing_result = previous.get("project_routing_result")
+    if strategic_status is None and isinstance(previous.get("strategic_status"), str):
+        strategic_status = previous.get("strategic_status")
+    if next_best_action is None and isinstance(previous.get("next_best_action"), dict):
+        next_best_action = previous.get("next_best_action")
+    if priority_queue is None and isinstance(previous.get("priority_queue"), list):
+        priority_queue = previous.get("priority_queue")
+    if opportunity_rankings is None and isinstance(previous.get("opportunity_rankings"), list):
+        opportunity_rankings = previous.get("opportunity_rankings")
+    if mission_priorities is None and isinstance(previous.get("mission_priorities"), dict):
+        mission_priorities = previous.get("mission_priorities")
+    if autopilot_strategy_state is None and isinstance(previous.get("autopilot_strategy_state"), dict):
+        autopilot_strategy_state = previous.get("autopilot_strategy_state")
     if project_selection_status is None and isinstance(previous.get("project_selection_status"), str):
         project_selection_status = previous.get("project_selection_status")
     if project_selection_result is None and isinstance(previous.get("project_selection_result"), dict):
@@ -446,6 +464,12 @@ def save_project_state(
         "approval_required_actions": approval_required_actions or [],
         "project_routing_status": project_routing_status,
         "project_routing_result": project_routing_result or {},
+        "strategic_status": strategic_status,
+        "next_best_action": next_best_action or {},
+        "priority_queue": priority_queue or [],
+        "opportunity_rankings": opportunity_rankings or [],
+        "mission_priorities": mission_priorities or {},
+        "autopilot_strategy_state": autopilot_strategy_state or {},
         "last_run_summary": last_run_summary,
         "last_launch_summary": last_launch_summary,
         "last_recovery_summary": last_recovery_summary,

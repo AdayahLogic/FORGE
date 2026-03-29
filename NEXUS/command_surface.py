@@ -36,6 +36,12 @@ SUPPORTED_COMMANDS = frozenset({
     "project_autopilot_pause",
     "project_autopilot_resume",
     "project_autopilot_stop",
+    "strategic_status",
+    "next_best_action",
+    "priority_queue",
+    "opportunity_rankings",
+    "mission_priorities",
+    "autopilot_strategy_state",
     "project_autonomy_mode_set",
     "project_autonomy_mode_status",
     "project_routing_status",
@@ -5096,6 +5102,12 @@ def run_command(
                 "full_automation_report_path": loaded.get("full_automation_report_path"),
                 "persistent_state_path": loaded.get("persistent_state_path"),
                 "system_health_report_path": loaded.get("system_health_report_path"),
+                "strategic_status": loaded.get("strategic_status"),
+                "next_best_action": loaded.get("next_best_action") if isinstance(loaded.get("next_best_action"), dict) else {},
+                "priority_queue_size": len(loaded.get("priority_queue") or []) if isinstance(loaded.get("priority_queue"), list) else 0,
+                "opportunity_ranking_count": len(loaded.get("opportunity_rankings") or []) if isinstance(loaded.get("opportunity_rankings"), list) else 0,
+                "mission_priorities": loaded.get("mission_priorities") if isinstance(loaded.get("mission_priorities"), dict) else {},
+                "autopilot_strategy_state": loaded.get("autopilot_strategy_state") if isinstance(loaded.get("autopilot_strategy_state"), dict) else {},
             }
             return _result(
                 command=cmd,
@@ -5103,6 +5115,185 @@ def run_command(
                 project_name=proj_name,
                 summary=f"Project {loaded.get('active_project', proj_name)} at {path}",
                 payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in (
+        "strategic_status",
+        "next_best_action",
+        "priority_queue",
+        "opportunity_rankings",
+        "mission_priorities",
+        "autopilot_strategy_state",
+    ):
+        try:
+            from NEXUS.execution_package_registry import list_execution_package_journal_entries
+            from NEXUS.learning_writer import read_learning_journal_tail
+            from NEXUS.strategic_decision_engine import (
+                build_mission_priorities,
+                rank_actionable_items,
+                select_next_best_action,
+            )
+
+            if cmd == "mission_priorities":
+                from NEXUS.registry import PROJECTS as _PROJECTS
+
+                states_by_project: dict[str, dict[str, Any]] = {}
+                learning_by_project: dict[str, list[dict[str, Any]]] = {}
+                for project_key, project_meta in _PROJECTS.items():
+                    project_path = project_meta.get("path")
+                    if not project_path:
+                        continue
+                    loaded_state = load_project_state(project_path)
+                    if isinstance(loaded_state, dict) and not loaded_state.get("load_error"):
+                        states_by_project[project_key] = loaded_state
+                        learning_by_project[project_key] = read_learning_journal_tail(project_path, n=30)
+                mission = build_mission_priorities(
+                    states_by_project=states_by_project,
+                    learning_by_project=learning_by_project,
+                )
+                top = (mission.get("mission_priorities") or [{}])[0] if mission.get("mission_priorities") else {}
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=(
+                        f"selected_project={mission.get('selected_project_id')}; "
+                        f"top_mission_score={top.get('mission_priority_score', 0.0)}; "
+                        f"conflicts={len(mission.get('mission_conflicts') or [])}"
+                    ),
+                    payload=mission,
+                )
+
+            if not path:
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary="Project path or project_name required.",
+                    payload={},
+                )
+
+            loaded = load_project_state(path)
+            if not isinstance(loaded, dict) or loaded.get("load_error"):
+                reason = str((loaded or {}).get("load_error") or "Failed to load project state.")
+                return _result(command=cmd, status="error", project_name=proj_name, summary=reason, payload={"error": reason})
+
+            learning_records = read_learning_journal_tail(path, n=30)
+            decision = select_next_best_action(state=loaded, learning_records=learning_records)
+            queue = list(decision.get("priority_queue") or [])
+            derived_strategy_state = loaded.get("autopilot_strategy_state") if isinstance(loaded.get("autopilot_strategy_state"), dict) else {
+                **decision,
+                "strategy_status": "derived",
+                "strategy_reason": str(decision.get("reasoning") or ""),
+            }
+            update_project_state_fields(
+                path,
+                strategic_status="ok",
+                next_best_action=decision,
+                priority_queue=queue,
+                autopilot_strategy_state=derived_strategy_state,
+            )
+
+            if cmd == "next_best_action":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=(
+                        f"action_type={decision.get('action_type')}; "
+                        f"priority_score={decision.get('priority_score')}; "
+                        f"confidence={decision.get('confidence')}"
+                    ),
+                    payload=decision,
+                )
+
+            if cmd == "priority_queue":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"priority_items={len(queue)}; top_score={(queue[0] if queue else {}).get('priority_score', 0.0)}",
+                    payload={
+                        "priority_queue": queue,
+                        "best_next_action": decision.get("best_next_action"),
+                        "action_type": decision.get("action_type"),
+                        "recorded_at": decision.get("recorded_at"),
+                    },
+                )
+
+            if cmd == "opportunity_rankings":
+                packages = list_execution_package_journal_entries(project_path=path, n=max(10, n))
+                opportunity_rows: list[dict[str, Any]] = []
+                for row in packages:
+                    if not isinstance(row, dict):
+                        continue
+                    package_id = str(row.get("package_id") or "").strip()
+                    score = float(row.get("highest_value_next_action_score") or 0.0) * 100.0
+                    classification = str(row.get("opportunity_classification") or "cold")
+                    workflow_status = str(row.get("revenue_activation_status") or "needs_revision")
+                    opportunity_rows.append(
+                        {
+                            "item_id": f"opportunity-{package_id}",
+                            "action_type": "opportunity_activation",
+                            "target_entity": "execution_package",
+                            "target_ref": package_id,
+                            "label": str(row.get("highest_value_next_action") or f"Advance package {package_id}"),
+                            "priority_score": round(max(0.0, min(100.0, score)), 2),
+                            "reasoning": (
+                                f"classification={classification}; revenue_status={workflow_status}; "
+                                f"reason={str(row.get('highest_value_next_action_reason') or row.get('opportunity_classification_reason') or '')[:220]}"
+                            ),
+                            "opportunity_classification": classification,
+                            "revenue_activation_status": workflow_status,
+                        }
+                    )
+                ranked = rank_actionable_items(opportunity_rows, top_n=max(5, min(30, n)))
+                update_project_state_fields(path, opportunity_rankings=ranked)
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"opportunities_ranked={len(ranked)}; top={(ranked[0] if ranked else {}).get('target_ref', '')}",
+                    payload={
+                        "opportunity_rankings": ranked,
+                        "top_opportunity": ranked[0] if ranked else {},
+                    },
+                )
+
+            if cmd == "autopilot_strategy_state":
+                strategy_state = loaded.get("autopilot_strategy_state") if isinstance(loaded.get("autopilot_strategy_state"), dict) else {}
+                if not strategy_state:
+                    strategy_state = dict(derived_strategy_state)
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=(
+                        f"strategy_status={strategy_state.get('strategy_status', 'derived')}; "
+                        f"action_type={strategy_state.get('action_type')}; "
+                        f"priority_score={strategy_state.get('priority_score')}"
+                    ),
+                    payload={"autopilot_strategy_state": strategy_state},
+                )
+
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"next_action={decision.get('best_next_action')}; "
+                    f"queue_size={len(queue)}; "
+                    f"risk={decision.get('risk_level')}"
+                ),
+                payload={
+                    "strategic_status": "ok",
+                    "next_best_action": decision,
+                    "priority_queue": queue,
+                    "autopilot_strategy_state": dict(derived_strategy_state),
+                    "recorded_at": decision.get("recorded_at"),
+                },
             )
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
