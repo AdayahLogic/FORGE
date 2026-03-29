@@ -6,6 +6,12 @@ from typing import Any
 from NEXUS.autonomy_modes import build_autonomy_mode_state, evaluate_mode_transition, normalize_autonomy_mode
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
+from NEXUS.strategic_decision_engine import (
+    build_actionable_items,
+    build_mission_priorities,
+    mission_priority_score,
+    rank_actionable_items,
+)
 
 
 def _task_label(task: dict[str, Any] | None) -> str:
@@ -78,7 +84,7 @@ def _blocked_reason(state: dict[str, Any]) -> str:
     return ""
 
 
-def _candidate_priority(project_id: str, state: dict[str, Any]) -> tuple[int, int, int, str]:
+def _candidate_priority(project_id: str, state: dict[str, Any]) -> tuple[int, int, float, int, str]:
     readiness = _readiness_signal(state)
     queue = _normalize_tasks(state.get("task_queue_snapshot") or state.get("task_queue"))
     pending = [
@@ -88,7 +94,11 @@ def _candidate_priority(project_id: str, state: dict[str, Any]) -> tuple[int, in
     autopilot_status = _state_status(state.get("autopilot_status"), "idle")
     active_session_rank = 0 if autopilot_status in ("running", "ready") else 1
     readiness_rank = 0 if readiness == "active_package" else 1
-    return (readiness_rank, active_session_rank, min_priority, project_id)
+    mission_score = float(
+        mission_priority_score(project_id=project_id, state=state).get("mission_priority_score") or 0.0
+    )
+    # Keep the legacy deterministic ordering while adding strategic mission score.
+    return (readiness_rank, active_session_rank, -mission_score, min_priority, project_id)
 
 
 def evaluate_project_selection(
@@ -140,6 +150,7 @@ def evaluate_project_selection(
         }
 
     project_evaluations: dict[str, Any] = {}
+    state_cache: dict[str, dict[str, Any]] = {}
     eligible: list[str] = []
     blocked: list[str] = []
     for project_id in candidates:
@@ -149,6 +160,7 @@ def evaluate_project_selection(
             state = load_project_state(path) if path else {}
         if not isinstance(state, dict) or state.get("load_error"):
             state = {}
+        state_cache[project_id] = dict(state)
         blocked_reason = _blocked_reason(state)
         readiness = _readiness_signal(state)
         evaluation = {
@@ -170,6 +182,9 @@ def evaluate_project_selection(
                 ]
             ),
             "execution_package_id": str(state.get("execution_package_id") or state.get("autopilot_last_package_id") or ""),
+            "mission_priority_score": float(
+                mission_priority_score(project_id=project_id, state=state).get("mission_priority_score") or 0.0
+            ),
         }
         project_evaluations[project_id] = evaluation
         if evaluation["eligible"]:
@@ -210,6 +225,7 @@ def evaluate_project_selection(
         routing_outcome = "defer"
     if not selected and not blocked:
         routing_outcome = "pause"
+    mission_summary = build_mission_priorities(states_by_project=state_cache)
 
     return {
         "status": status,
@@ -221,6 +237,9 @@ def evaluate_project_selection(
         "blocked_projects": blocked,
         "eligible_projects": eligible,
         "routing_outcome": routing_outcome,
+        "mission_priorities": mission_summary.get("mission_priorities") or [],
+        "mission_conflict_detection": mission_summary.get("mission_conflicts") or [],
+        "mission_selection_strategy": mission_summary.get("mission_selection_strategy") or "",
         "governance_trace": {
             "requested_project_id": requested,
             "user_input": str(user_input or ""),
@@ -273,6 +292,18 @@ def select_next_task(state: dict[str, Any] | None = None) -> dict[str, Any] | No
     ]
     if not pending:
         return None
+    ranked = rank_actionable_items(build_actionable_items(state=loaded), top_n=20)
+    task_lookup = {
+        str(item.get("id") or ""): item
+        for item in pending
+        if str(item.get("id") or "").strip()
+    }
+    for row in ranked:
+        if str(row.get("action_type") or "") != "mission_task":
+            continue
+        task_id = str(row.get("target_ref") or "")
+        if task_id in task_lookup:
+            return task_lookup[task_id]
     pending.sort(key=lambda item: (int(item.get("priority") or 0), str(item.get("id") or ""), _task_label(item)))
     return pending[0]
 
