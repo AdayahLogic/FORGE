@@ -28,6 +28,7 @@ from NEXUS.autonomy_modes import (
 )
 from NEXUS.project_routing import build_project_routing_decision, select_next_task
 from NEXUS.project_state import load_project_state, update_project_state_fields
+from NEXUS.strategic_decision_engine import select_next_best_action
 
 
 AUTOPILOT_STATUSES = {
@@ -202,6 +203,7 @@ def _normalize_session(project_name: str, state: dict[str, Any]) -> dict[str, An
         "autonomy_stop_rail_status": str(state.get("autonomy_stop_rail_status") or stop_rail_result.get("status") or "ok"),
         "autonomy_stop_rail_result": dict(stop_rail_result),
         "autonomy_governance_trace": dict(state.get("autonomy_governance_trace") or {}),
+        "autopilot_strategy_state": dict(state.get("autopilot_strategy_state") or {}),
     }
     if not session["autopilot_started_at"] and session["autopilot_session_id"]:
         session["autopilot_started_at"] = str(state.get("saved_at") or "")
@@ -239,6 +241,7 @@ def _session_payload(session: dict[str, Any]) -> dict[str, Any]:
         "autonomy_stop_rail_status": session.get("autonomy_stop_rail_status"),
         "autonomy_stop_rail_result": session.get("autonomy_stop_rail_result"),
         "autonomy_governance_trace": session.get("autonomy_governance_trace"),
+        "autopilot_strategy_state": session.get("autopilot_strategy_state"),
     }
 
 
@@ -383,13 +386,16 @@ def _apply_stop_rail_outcome(
     package: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     routing_outcome = str(stop_rail_result.get("routing_outcome") or "stop").strip().lower()
+    stop_reason = str(stop_rail_result.get("stop_reason") or "autonomy_limit_reached")
     status_map = {
         "pause": ("paused", "operator_review", True),
         "escalate": ("escalated", "operator_review", True),
         "stop": ("completed", "stop", False),
     }
+    if routing_outcome == "escalate" and stop_reason == "autonomy_loop_limit_reached":
+        status_map["escalate"] = ("completed", "stop", False)
+        stop_reason = "iteration_limit_reached"
     autopilot_status, next_action, operator_review_required = status_map.get(routing_outcome, ("completed", "stop", False))
-    stop_reason = str(stop_rail_result.get("stop_reason") or "autonomy_limit_reached")
     session["autopilot_status"] = autopilot_status
     session["autopilot_next_action"] = next_action
     session["autopilot_stop_reason"] = stop_reason
@@ -477,6 +483,7 @@ def _build_progress_summary(
         operator_review_required = bool(pkg.get("requires_human_approval")) or session.get("autopilot_status") in ("paused", "escalated", "blocked")
     if not next_suggested_step:
         next_suggested_step = str(local_analysis_summary.get("suggested_next_action") or session.get("autopilot_next_action") or "stop")
+    strategy_state = session.get("autopilot_strategy_state") if isinstance(session.get("autopilot_strategy_state"), dict) else {}
     return {
         "project_objective_summary": objective,
         "current_autopilot_status": session.get("autopilot_status"),
@@ -505,6 +512,10 @@ def _build_progress_summary(
         "latest_local_analysis_next_action": str(local_analysis_summary.get("suggested_next_action") or ""),
         "next_suggested_step": str(next_suggested_step or ""),
         "operator_review_required": bool(operator_review_required),
+        "strategic_best_next_action": str(strategy_state.get("best_next_action") or ""),
+        "strategic_action_type": str(strategy_state.get("action_type") or ""),
+        "strategic_priority_score": float(strategy_state.get("priority_score") or 0.0),
+        "strategic_confidence": float(strategy_state.get("confidence") or 0.0),
     }
 
 
@@ -909,6 +920,7 @@ def start_project_autopilot(
         "autonomy_stop_rail_status": "ok",
         "autonomy_stop_rail_result": {},
         "autonomy_governance_trace": {},
+        "autopilot_strategy_state": {},
     }
     _ensure_stop_rail_config(session, autonomy_mode)
     _current_counts(session)
@@ -1000,6 +1012,12 @@ def _run_project_autopilot_loop(
 
         _ensure_stop_rail_config(session, state.get("autonomy_mode") or session.get("autopilot_mode"))
         _current_counts(session)
+        strategy_state = select_next_best_action(state=state)
+        session["autopilot_strategy_state"] = {
+            **strategy_state,
+            "strategy_status": "active",
+            "strategy_reason": str(strategy_state.get("reasoning") or ""),
+        }
         precheck_stop_rail = _evaluate_stop_rails(session)
         if precheck_stop_rail.get("status") in ("paused", "escalated", "stopped"):
             return _apply_stop_rail_outcome(
@@ -1018,6 +1036,30 @@ def _run_project_autopilot_loop(
         task = _select_next_task(state)
         active_package = _load_active_package(project_path=project_path, session=session, state=state)
         if not active_package and not task:
+            if str((session.get("autopilot_strategy_state") or {}).get("action_type") or "") in {"operator_escalation"}:
+                session["autopilot_status"] = "escalated"
+                session["autopilot_next_action"] = "operator_review"
+                session["autopilot_stop_reason"] = "strategic_escalation_required"
+                session["autopilot_escalation_reason"] = "strategic_escalation_required"
+                session["autopilot_last_result"] = {
+                    "status": "escalated",
+                    "reason": "strategic_escalation_required",
+                    "strategy": dict(session.get("autopilot_strategy_state") or {}),
+                }
+                session["autopilot_updated_at"] = _now_iso()
+                session["autopilot_progress_summary"] = _build_progress_summary(
+                    state=state,
+                    session=session,
+                    current_task=None,
+                    next_suggested_step="operator_review",
+                    operator_review_required=True,
+                )
+                _persist_session(
+                    project_path,
+                    session,
+                    extra_fields=_routing_state_fields(project_name=project_name, state=state, session=session),
+                )
+                return {"status": "ok", "reason": "Strategic engine escalated due to missing safe bounded action.", "session": session}
             session["autopilot_status"] = "completed"
             session["autopilot_next_action"] = "stop"
             session["autopilot_stop_reason"] = "no_next_bounded_task"
