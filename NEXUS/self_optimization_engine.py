@@ -410,15 +410,27 @@ def adjust_dynamic_weights(
         shift("urgency_signals", +0.02, "Urgency signal appears undervalued for currently successful missions.")
 
     normalized = _safe_weight_profile(updated)
+    weight_shift_total = round(
+        sum(abs(_to_float(normalized.get(k)) - _to_float(base.get(k))) for k in normalized.keys()),
+        4,
+    )
+    adjustment_direction = "stable" if weight_shift_total < 0.02 else ("moderate" if weight_shift_total < 0.08 else "aggressive")
     reversal_id = get_latest_strategy_weights().get("strategy_version_id")
     return {
         "weight_adjustment_status": "ok",
         "weights_previous": base,
         "weights_proposed": normalized,
         "changes": changes,
+        "weight_shift_total": weight_shift_total,
+        "adjustment_direction": adjustment_direction,
         "bounded": True,
         "reversible": True,
         "reversal_target_version": reversal_id or "strategy-v0-default",
+        "reversibility_plan": {
+            "rollback_target_version": reversal_id or "strategy-v0-default",
+            "rollback_mechanism": "strategy_version_reapply",
+            "max_single_weight_shift": MAX_WEIGHT_SHIFT,
+        },
         "explainability": [row["reason"] for row in changes] or ["No changes required by current performance profile."],
     }
 
@@ -764,9 +776,16 @@ def adjust_dynamic_weights_safe(**kwargs: Any) -> dict[str, Any]:
             "weights_previous": dict(DEFAULT_DYNAMIC_WEIGHTS),
             "weights_proposed": dict(DEFAULT_DYNAMIC_WEIGHTS),
             "changes": [],
+            "weight_shift_total": 0.0,
+            "adjustment_direction": "stable",
             "bounded": True,
             "reversible": True,
             "reversal_target_version": "strategy-v0-default",
+            "reversibility_plan": {
+                "rollback_target_version": "strategy-v0-default",
+                "rollback_mechanism": "strategy_version_reapply",
+                "max_single_weight_shift": MAX_WEIGHT_SHIFT,
+            },
             "explainability": ["Weight adjustment failed; using default profile."],
         }
 
