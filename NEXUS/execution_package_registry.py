@@ -51,6 +51,9 @@ from NEXUS.execution_package_local_analysis import (
 from NEXUS.memory_layer import write_governed_memory_safe
 from NEXUS.outcome_adaptation_engine import evaluate_outcome_adaptation_fields
 from NEXUS.project_delivery_engine import derive_project_delivery_fields
+from NEXUS.delivery_backbone import build_delivery_backbone_contract
+from NEXUS.executor_backend_registry import build_executor_backend_status
+from NEXUS.executor_handoff_contract import build_executor_handoff_contract
 from NEXUS.execution_truth import resolve_package_truth
 from NEXUS.execution_receipt_registry import (
     append_execution_receipt_safe,
@@ -304,6 +307,8 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "handoff_version": normalized.get("handoff_version"),
         "handoff_executor_target_id": normalized.get("handoff_executor_target_id"),
         "handoff_executor_target_name": normalized.get("handoff_executor_target_name"),
+        "executor_handoff_contract": normalized.get("executor_handoff_contract"),
+        "executor_backend_status": normalized.get("executor_backend_status"),
         "execution_status": normalized.get("execution_status"),
         "execution_timestamp": normalized.get("execution_timestamp"),
         "execution_actor": normalized.get("execution_actor"),
@@ -465,6 +470,14 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "delivery_payload_summary": str(normalized.get("delivery_payload_summary") or ""),
         "delivery_requires_approval": bool(normalized.get("delivery_requires_approval", True)),
         "post_delivery_status": str(normalized.get("post_delivery_status") or "pending"),
+        "delivery_readiness_state": str(normalized.get("delivery_readiness_state") or "not_ready"),
+        "delivery_artifact_refs": [dict(item) for item in list(normalized.get("delivery_artifact_refs") or []) if isinstance(item, dict)][:50],
+        "delivery_evidence_present": bool(normalized.get("delivery_evidence_present", False)),
+        "delivery_verification_status": str(normalized.get("delivery_verification_status") or "pending"),
+        "delivery_approval_required_status": str(normalized.get("delivery_approval_required_status") or "required"),
+        "delivery_completed_truth": bool(normalized.get("delivery_completed_truth", False)),
+        "post_delivery_handoff_ready": bool(normalized.get("post_delivery_handoff_ready", False)),
+        "delivery_evidence_summary": str(normalized.get("delivery_evidence_summary") or ""),
         "satisfaction_check_required": bool(normalized.get("satisfaction_check_required", True)),
         "satisfaction_status": str(normalized.get("satisfaction_status") or "unknown"),
         "upsell_opportunity_detected": bool(normalized.get("upsell_opportunity_detected")),
@@ -1599,6 +1612,31 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             **project_delivery_fields,
         }
     )
+    handoff_target = str(p.get("handoff_executor_target_id") or p.get("execution_executor_target_id") or p.get("runtime_target_id") or "")
+    backend_status = build_executor_backend_status(
+        backend_id=handoff_target,
+        project_path=str(p.get("project_path") or ""),
+    )
+    handoff_contract = build_executor_handoff_contract(
+        package=p,
+        backend_status=backend_status,
+        receipt={
+            "receipt_id": p.get("execution_receipt_id"),
+            "execution_status": p.get("execution_status"),
+        },
+        verification={
+            "verification_id": p.get("verification_id"),
+            "verification_status": p.get("verification_status"),
+        },
+    )
+    delivery_backbone = build_delivery_backbone_contract(
+        package={
+            **p,
+            **project_delivery_fields,
+            "runtime_artifacts": [x for x in runtime_artifacts[:20] if isinstance(x, dict)],
+            "verification_status": str(p.get("verification_status") or "pending"),
+        },
+    )
 
     return {
         "package_id": package_id,
@@ -1704,6 +1742,8 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "handoff_executor_target_id": str(p.get("handoff_executor_target_id") or ""),
         "handoff_executor_target_name": str(p.get("handoff_executor_target_name") or ""),
         "handoff_aegis_result": _normalize_handoff_aegis_result(p.get("handoff_aegis_result")),
+        "executor_handoff_contract": handoff_contract,
+        "executor_backend_status": backend_status.get("backend") if isinstance(backend_status, dict) else {},
         "execution_status": str(p.get("execution_status") or "pending").strip().lower(),
         "execution_timestamp": str(p.get("execution_timestamp") or ""),
         "execution_actor": str(p.get("execution_actor") or ""),
@@ -1814,6 +1854,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
                 "metadata": metadata,
             }
         ),
+        **delivery_backbone,
         "execution_truth_status": resolve_package_truth(p),
     }
 
@@ -1905,6 +1946,8 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "handoff_version": str(r.get("handoff_version") or "v1"),
         "handoff_executor_target_id": str(r.get("handoff_executor_target_id") or ""),
         "handoff_executor_target_name": str(r.get("handoff_executor_target_name") or ""),
+        "executor_handoff_contract": dict(r.get("executor_handoff_contract") or {}),
+        "executor_backend_status": dict(r.get("executor_backend_status") or {}),
         "execution_status": str(r.get("execution_status") or "pending").strip().lower(),
         "execution_timestamp": str(r.get("execution_timestamp") or ""),
         "execution_actor": str(r.get("execution_actor") or ""),
@@ -1944,6 +1987,14 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "verification_status": str(r.get("verification_status") or "pending").strip().lower(),
         "verification_id": str(r.get("verification_id") or ""),
         "verification_summary": str(r.get("verification_summary") or ""),
+        "delivery_readiness_state": str(r.get("delivery_readiness_state") or "not_ready"),
+        "delivery_artifact_refs": [dict(item) for item in list(r.get("delivery_artifact_refs") or []) if isinstance(item, dict)][:50],
+        "delivery_evidence_present": bool(r.get("delivery_evidence_present", False)),
+        "delivery_verification_status": str(r.get("delivery_verification_status") or "pending"),
+        "delivery_approval_required_status": str(r.get("delivery_approval_required_status") or "required"),
+        "delivery_completed_truth": bool(r.get("delivery_completed_truth", False)),
+        "post_delivery_handoff_ready": bool(r.get("post_delivery_handoff_ready", False)),
+        "delivery_evidence_summary": str(r.get("delivery_evidence_summary") or ""),
         "execution_truth_status": resolve_package_truth(r),
         "governance_conflict_status": str(r.get("governance_conflict_status") or ""),
         "governance_conflict_type": str(r.get("governance_conflict_type") or ""),
