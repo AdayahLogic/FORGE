@@ -220,6 +220,7 @@ def build_project_quick_actions(
     missing_fields = [str(item) for item in list((preview.get("composition_status") or {}).get("missing_fields") or []) if _to_text(item)]
     budget_status = _budget_state(costs.get("budget_status") or preview.get("budget_status") or state.get("budget_status"))
     active_package_id = _to_text(workflow.get("active_package_id") or state.get("execution_package_id"))
+    lane_status = _to_text(state.get("revenue_lane_status")).lower()
 
     if missing_fields:
         actions.append(
@@ -251,6 +252,28 @@ def build_project_quick_actions(
                 action_scope="package",
                 action_enabled=True,
                 action_reason="Review center can be used to inspect approval and evidence context.",
+            )
+        )
+    if lane_status in {"awaiting_approval", "approved_to_send"}:
+        actions.append(
+            _action(
+                action_id="approve_revenue_send",
+                action_label="Approve revenue send",
+                action_kind="review",
+                action_scope="package",
+                action_enabled=True,
+                action_reason="Revenue lane is waiting for explicit approval before live send.",
+            )
+        )
+    if lane_status in {"blocked", "failed"}:
+        actions.append(
+            _action(
+                action_id="inspect_send_failure",
+                action_label="Inspect send failure receipts",
+                action_kind="inspect",
+                action_scope="package",
+                action_enabled=True,
+                action_reason="Revenue send attempt was blocked or failed and needs operator correction.",
             )
         )
     if int(delivery.get("delivered_artifact_count") or 0) > 0:

@@ -83,6 +83,17 @@ REVENUE_WORKFLOW_STATUSES = {
 }
 REVENUE_WORKFLOW_PRIORITIES = {"low", "medium", "high"}
 OPPORTUNITY_CLASSIFICATIONS = {"hot", "warm", "cold", "strategic", "low_margin", "high_margin"}
+REVENUE_LANE_TRUTH_KEYS = (
+    "draft_ready",
+    "awaiting_approval",
+    "approved_to_send",
+    "send_requested",
+    "send_attempted",
+    "send_receipt_exists",
+    "response_received",
+    "blocked",
+    "failed",
+)
 
 
 def _utc_now_iso() -> str:
@@ -292,6 +303,17 @@ def _build_execution_package_journal_record(normalized: dict[str, Any], package_
         "operator_revenue_review_required": bool(normalized.get("operator_revenue_review_required")),
         "opportunity_classification": str(normalized.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(normalized.get("opportunity_classification_reason") or ""),
+        "revenue_channel": str(normalized.get("revenue_channel") or ""),
+        "revenue_lane_status": str(normalized.get("revenue_lane_status") or "draft_ready"),
+        "revenue_lane_truth": dict(normalized.get("revenue_lane_truth") or {}),
+        "last_send_receipt_id": str(normalized.get("last_send_receipt_id") or ""),
+        "send_receipt_count": max(0, int(normalized.get("send_receipt_count") or 0)),
+        "last_response_event_id": str(normalized.get("last_response_event_id") or ""),
+        "response_event_count": max(0, int(normalized.get("response_event_count") or 0)),
+        "follow_up_due_at": str(normalized.get("follow_up_due_at") or ""),
+        "revenue_outcome_status": str(normalized.get("revenue_outcome_status") or "pending"),
+        "outcome_verified": bool(normalized.get("outcome_verified")),
+        "outcome_evidence_refs": [str(item) for item in list(normalized.get("outcome_evidence_refs") or []) if str(item).strip()][:20],
         "cost_tracking": _normalize_cost_tracking(normalized.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(normalized.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(normalized.get("budget_control") or {}),
@@ -634,6 +656,54 @@ def _normalize_pipeline_stage(value: Any) -> str:
     if stage in REVENUE_PIPELINE_STAGES:
         return stage
     return "intake"
+
+
+def _normalize_revenue_lane_truth(value: Any) -> tuple[dict[str, bool], str]:
+    source = dict(value) if isinstance(value, dict) else {}
+    truth: dict[str, bool] = {key: bool(source.get(key)) for key in REVENUE_LANE_TRUTH_KEYS}
+    if truth["failed"]:
+        return truth, "failed"
+    if truth["blocked"]:
+        return truth, "blocked"
+    if truth["response_received"]:
+        return truth, "response_received"
+    if truth["send_receipt_exists"]:
+        return truth, "send_receipt_exists"
+    if truth["send_attempted"]:
+        return truth, "send_attempted"
+    if truth["send_requested"]:
+        return truth, "send_requested"
+    if truth["approved_to_send"]:
+        return truth, "approved_to_send"
+    if truth["awaiting_approval"]:
+        return truth, "awaiting_approval"
+    if truth["draft_ready"]:
+        return truth, "draft_ready"
+    return truth, "draft_ready"
+
+
+def _derive_revenue_lane_fields(package: dict[str, Any]) -> dict[str, Any]:
+    metadata = dict(package.get("metadata") or {})
+    lane = dict(metadata.get("revenue_lane") or {})
+    truth, lane_status = _normalize_revenue_lane_truth(lane.get("truth"))
+    outcome_status = str(lane.get("outcome_status") or "pending").strip().lower()
+    if outcome_status not in {"pending", "closed_won", "closed_lost"}:
+        outcome_status = "pending"
+    return {
+        "revenue_channel": str(lane.get("channel") or ""),
+        "revenue_lane_status": lane_status,
+        "revenue_lane_truth": truth,
+        "last_send_receipt_id": str(lane.get("last_send_receipt_id") or ""),
+        "send_receipt_count": max(0, int(lane.get("send_receipt_count") or 0)),
+        "last_response_event_id": str(lane.get("last_response_event_id") or ""),
+        "response_event_count": max(0, int(lane.get("response_event_count") or 0)),
+        "follow_up_due_at": str(lane.get("follow_up_due_at") or ""),
+        "revenue_outcome_status": outcome_status,
+        "outcome_verified": bool(lane.get("outcome_verified")),
+        "outcome_evidence_refs": [
+            str(item) for item in list(lane.get("outcome_evidence_refs") or []) if str(item).strip()
+        ][:20],
+    }
 
 
 def _derive_pipeline_stage_from_preview(preview: dict[str, Any]) -> str:
@@ -1159,6 +1229,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
             "local_analysis_summary": normalize_local_analysis_summary(p.get("local_analysis_summary")),
         }
     )
+    revenue_lane_fields = _derive_revenue_lane_fields({**p, "metadata": metadata})
 
     return {
         "package_id": package_id,
@@ -1265,6 +1336,7 @@ def normalize_execution_package(package: dict[str, Any] | None) -> dict[str, Any
         "budget_control": budget_control,
         **budget_fields,
         **revenue_fields,
+        **revenue_lane_fields,
         "delivery_summary": build_delivery_summary_contract(
             {
                 **p,
@@ -1381,6 +1453,17 @@ def normalize_execution_package_journal_record(record: dict[str, Any] | None) ->
         "operator_revenue_review_required": bool(r.get("operator_revenue_review_required")),
         "opportunity_classification": str(r.get("opportunity_classification") or "cold"),
         "opportunity_classification_reason": str(r.get("opportunity_classification_reason") or ""),
+        "revenue_channel": str(r.get("revenue_channel") or ""),
+        "revenue_lane_status": str(r.get("revenue_lane_status") or "draft_ready"),
+        "revenue_lane_truth": {key: bool((r.get("revenue_lane_truth") or {}).get(key)) for key in REVENUE_LANE_TRUTH_KEYS},
+        "last_send_receipt_id": str(r.get("last_send_receipt_id") or ""),
+        "send_receipt_count": max(0, int(r.get("send_receipt_count") or 0)),
+        "last_response_event_id": str(r.get("last_response_event_id") or ""),
+        "response_event_count": max(0, int(r.get("response_event_count") or 0)),
+        "follow_up_due_at": str(r.get("follow_up_due_at") or ""),
+        "revenue_outcome_status": str(r.get("revenue_outcome_status") or "pending"),
+        "outcome_verified": bool(r.get("outcome_verified")),
+        "outcome_evidence_refs": [str(item) for item in list(r.get("outcome_evidence_refs") or []) if str(item).strip()][:20],
         "cost_tracking": _normalize_cost_tracking(r.get("cost_tracking"), fallback_source="composed_operation"),
         "budget_caps": resolve_budget_caps(r.get("budget_caps") or {}),
         "budget_control": normalize_budget_control(r.get("budget_control") or {}),
@@ -3168,3 +3251,38 @@ def record_execution_package_revenue_activation_safe(**kwargs: Any) -> dict[str,
         return record_execution_package_revenue_activation(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package revenue activation metadata.", "package": None}
+
+
+def record_execution_package_revenue_lane(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    revenue_lane: dict[str, Any] | None,
+) -> dict[str, Any]:
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+    lane = dict(revenue_lane or {})
+    metadata = dict(package.get("metadata") or {})
+    metadata["revenue_lane"] = lane
+    pipeline_stage = str(lane.get("pipeline_stage") or "").strip().lower()
+    if pipeline_stage in REVENUE_PIPELINE_STAGES:
+        package["pipeline_stage"] = pipeline_stage
+    recent_outcomes = [item for item in list(lane.get("revenue_recent_outcomes") or []) if isinstance(item, dict)]
+    if recent_outcomes:
+        metadata["revenue_recent_outcomes"] = recent_outcomes[:20]
+    package["metadata"] = metadata
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Execution package revenue lane metadata recorded.",
+    )
+
+
+def record_execution_package_revenue_lane_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return record_execution_package_revenue_lane(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist execution package revenue lane metadata.", "package": None}

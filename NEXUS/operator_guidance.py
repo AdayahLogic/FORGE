@@ -260,6 +260,8 @@ def build_operator_guidance(
     request_kind = _text(preview.get("request_kind")).lower()
     response_status = _text(_as_dict(preview.get("response_summary")).get("response_status")).lower()
     conversion_status = _text(_as_dict(preview.get("conversion_summary")).get("conversion_status")).lower()
+    revenue_lane_status = _text(pkg.get("revenue_lane_status")).lower()
+    revenue_lane_truth = _as_dict(pkg.get("revenue_lane_truth"))
 
     if missing_fields or readiness == "needs_input":
         out.update(
@@ -276,6 +278,42 @@ def build_operator_guidance(
                 ),
                 "blocking_reason": "Missing required fields: " + ", ".join(missing_fields[:6]),
                 "recommended_priority": "high",
+            }
+        )
+        return _normalize_guidance(out)
+
+    if revenue_lane_status in {"awaiting_approval", "approved_to_send"} or bool(revenue_lane_truth.get("awaiting_approval")):
+        out.update(
+            {
+                "guidance_status": "awaiting_input",
+                "system_posture": "needs_attention",
+                "next_best_action": "Approve governed send request before outreach.",
+                "action_reason": "Revenue lane is explicitly waiting for human approval before live send.",
+                "recommended_priority": "high",
+            }
+        )
+        return _normalize_guidance(out)
+
+    if revenue_lane_status in {"blocked", "failed"} or bool(revenue_lane_truth.get("failed")):
+        out.update(
+            {
+                "guidance_status": "blocked",
+                "system_posture": "blocked",
+                "next_best_action": "Review failed/blocked send receipt and correct the channel input.",
+                "action_reason": "Live revenue channel reported a blocked or failed send attempt.",
+                "recommended_priority": "high",
+            }
+        )
+        return _normalize_guidance(out)
+
+    if revenue_lane_status == "send_receipt_exists" and not bool(revenue_lane_truth.get("response_received")):
+        out.update(
+            {
+                "guidance_status": "action_recommended",
+                "system_posture": "caution",
+                "next_best_action": "Track follow-up and monitor for inbound response.",
+                "action_reason": "A governed send receipt exists and response tracking is still pending.",
+                "recommended_priority": "medium",
             }
         )
         return _normalize_guidance(out)
