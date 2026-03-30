@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.logging_engine import log_system_event
+from NEXUS.global_control_state import evaluate_routing_enforcement
 
 
 def build_autonomy_result(
@@ -119,6 +120,27 @@ def run_project_autonomy(
     from NEXUS.project_state import load_project_state, update_project_state_fields
     from NEXUS.production_guardrails import evaluate_guardrails_safe
     from NEXUS.autonomous_launcher import launch_project_cycle
+
+    enforcement = evaluate_routing_enforcement(
+        project_path=project_path,
+        project_name=project_name,
+        runtime_target_id="local",
+        allocation_status="selected",
+        operation_type="autonomy_loop",
+    )
+    if enforcement.get("routing_enforcement_status") == "denied":
+        reason = "; ".join(
+            str(item.get("reason") or item.get("code") or "routing_denied")
+            for item in list(enforcement.get("denies") or [])[:5]
+        ) or "Global control denied autonomous run."
+        return build_autonomy_result(
+            autonomy_status="blocked",
+            autonomy_action="stop",
+            autonomy_reason=reason,
+            target_project=project_name,
+            autonomous_run_started=False,
+            bounded_operation=True,
+        )
 
     loaded = project_state if project_state is not None else load_project_state(project_path)
     if loaded.get("load_error"):
@@ -306,6 +328,28 @@ def run_studio_autonomy(
         )
 
     target = studio_driver_result.get("target_project")
+    target_path = (PROJECTS.get(target) or {}).get("path") if target else None
+    if target and target_path:
+        enforcement = evaluate_routing_enforcement(
+            project_path=target_path,
+            project_name=target,
+            runtime_target_id="local",
+            allocation_status="selected",
+            operation_type="autonomy_loop",
+        )
+        if enforcement.get("routing_enforcement_status") == "denied":
+            reason = "; ".join(
+                str(item.get("reason") or item.get("code") or "routing_denied")
+                for item in list(enforcement.get("denies") or [])[:5]
+            ) or "Global control denied studio autonomy run."
+            return build_autonomy_result(
+                autonomy_status="blocked",
+                autonomy_action="stop",
+                autonomy_reason=reason,
+                target_project=target,
+                autonomous_run_started=False,
+                bounded_operation=True,
+            )
     gr = evaluate_guardrails_safe(
         autonomous_launch=False,
         project_state=(states_by_project or {}).get(target) if target else None,
