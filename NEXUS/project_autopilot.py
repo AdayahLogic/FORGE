@@ -35,6 +35,15 @@ from NEXUS.mission_system import (
 from NEXUS.project_routing import build_project_routing_decision, select_next_task
 from NEXUS.project_state import load_project_state, update_project_state_fields
 from NEXUS.global_control_state import evaluate_routing_enforcement
+from NEXUS.mission_queue_orchestrator import (
+    backpressure_status as mission_backpressure_status,
+    claim_next_work_item,
+    complete_work_item_failure,
+    complete_work_item_success,
+    enqueue_mission_work_item,
+    recover_expired_leases,
+    renew_work_item_lease,
+)
 
 
 AUTOPILOT_STATUSES = {
@@ -659,6 +668,16 @@ def _load_active_package(
     return None
 
 
+def _build_mission_id(*, project_name: str, task: dict[str, Any] | None, package: dict[str, Any] | None) -> str:
+    task_id = str((task or {}).get("id") or "").strip()
+    package_id = str((package or {}).get("package_id") or "").strip()
+    if task_id:
+        return f"{project_name}:{task_id}"
+    if package_id:
+        return f"{project_name}:package:{package_id}"
+    return f"{project_name}:mission"
+
+
 def _create_autopilot_package(
     *,
     project_path: str,
@@ -1222,6 +1241,7 @@ def _run_project_autopilot_loop(
     project_name: str,
     session: dict[str, Any],
 ) -> dict[str, Any]:
+    worker_id = f"project_autopilot:{str(session.get('autopilot_session_id') or uuid.uuid4().hex[:8])}"
     while True:
         loop_enforcement = _global_execution_gate(
             project_path=project_path,
@@ -1269,6 +1289,8 @@ def _run_project_autopilot_loop(
                 extra_fields=_routing_state_fields(project_name=project_name, state={}, session=session),
             )
             return {"status": "error", "reason": "Failed to load project state during autopilot run.", "session": session}
+
+        recover_expired_leases()
 
         _ensure_stop_rail_config(session, state.get("autonomy_mode") or session.get("autopilot_mode"))
         session["autopilot_last_run_at"] = _now_iso()
@@ -1470,11 +1492,86 @@ def _run_project_autopilot_loop(
             },
         )
 
+        queue_item_id = ""
+        if active_package and str(active_package.get("package_id") or "").strip():
+            mission_id = _build_mission_id(project_name=project_name, task=task, package=active_package)
+            task_type = str((task or {}).get("type") or "autopilot_task")
+            priority_value = int((task or {}).get("priority") or 100)
+            enqueue_result = enqueue_mission_work_item(
+                mission_id=mission_id,
+                project_id=project_name,
+                package_id=str(active_package.get("package_id") or ""),
+                task_type=task_type,
+                priority=priority_value,
+                idempotency_key=f"{project_name}:{mission_id}:{active_package.get('package_id')}",
+            )
+            queued = enqueue_result.get("queue_item") if isinstance(enqueue_result.get("queue_item"), dict) else {}
+            queue_item_id = str(queued.get("queue_item_id") or "")
+            queue_pressure = mission_backpressure_status()
+            claim_result = claim_next_work_item(
+                worker_id=worker_id,
+                kill_switch_active=bool((active_package.get("budget_control") or {}).get("kill_switch_active")),
+                project_id_filter=project_name,
+            )
+            if claim_result.get("status") != "ok":
+                session["autopilot_status"] = "paused"
+                session["autopilot_next_action"] = "operator_review"
+                session["autopilot_stop_reason"] = str(claim_result.get("reason") or "mission_queue_claim_blocked")
+                session["autopilot_escalation_reason"] = session["autopilot_stop_reason"]
+                session["autopilot_updated_at"] = _now_iso()
+                session["autopilot_last_result"] = {
+                    "status": "mission_queue_wait",
+                    "reason": session["autopilot_stop_reason"],
+                    "queue_item_id": queue_item_id,
+                    "backpressure": queue_pressure,
+                }
+                session["autopilot_progress_summary"] = _build_progress_summary(
+                    state=state,
+                    session=session,
+                    current_task=task,
+                    package=active_package or {},
+                    next_suggested_step="operator_review",
+                    operator_review_required=True,
+                )
+                _persist_session(
+                    project_path,
+                    session,
+                    extra_fields={
+                        **routing_fields,
+                        "execution_package_id": (active_package or {}).get("package_id"),
+                        "execution_package_path": get_execution_package_file_path(project_path, (active_package or {}).get("package_id")),
+                    },
+                )
+                return {"status": "ok", "reason": session["autopilot_stop_reason"], "session": session}
+            claimed_item = claim_result.get("queue_item") if isinstance(claim_result.get("queue_item"), dict) else {}
+            queue_item_id = str(claimed_item.get("queue_item_id") or queue_item_id)
+            if queue_item_id:
+                renew_work_item_lease(queue_item_id=queue_item_id, worker_id=worker_id)
+
         advanced_package, outcome, outcome_reason, operations_used = _advance_package_pipeline(
             project_path=project_path,
             package=active_package or {},
             execution_bridge_summary=state.get("execution_bridge_summary") if isinstance(state.get("execution_bridge_summary"), dict) else {},
         )
+        if queue_item_id:
+            current_package_for_queue = advanced_package or active_package or {}
+            if outcome == "continue":
+                receipt_ref = str(((current_package_for_queue.get("execution_receipt") or {}).get("log_ref") or ""))
+                verification_ref = str(((current_package_for_queue.get("integrity_verification") or {}).get("integrity_status") or ""))
+                complete_work_item_success(
+                    queue_item_id=queue_item_id,
+                    worker_id=worker_id,
+                    execution_receipt_ref=receipt_ref,
+                    verification_ref=verification_ref,
+                )
+            else:
+                complete_work_item_failure(
+                    queue_item_id=queue_item_id,
+                    worker_id=worker_id,
+                    error_reason=outcome_reason or outcome or "pipeline_error",
+                    retryable=outcome not in ("blocked", "escalated"),
+                    operator_escalation_ref=outcome_reason if outcome in ("blocked", "escalated") else "",
+                )
         session["autopilot_operation_count"] += max(0, int(operations_used or 0))
         _current_counts(session)
         post_operation_stop_rail = _evaluate_stop_rails(session, rail_types=("runtime", "operations", "budget"))
@@ -1559,6 +1656,10 @@ def _run_project_autopilot_loop(
                     stop_reason = "project_objective_completed"
                     session["autopilot_enabled"] = False
                     session["autopilot_loop_state"] = "off"
+                elif int(session.get("autopilot_iteration_count") or 0) >= int(session.get("autopilot_iteration_limit") or 1):
+                    status_value = "completed"
+                    next_action = "stop"
+                    stop_reason = "iteration_limit_reached"
                 session["autopilot_progress_summary"] = _build_progress_summary(
                     state=state,
                     session={**session, "autopilot_status": status_value, "autopilot_next_action": next_action},
