@@ -8,6 +8,7 @@ No async, no CLI framework; minimal safe changes.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from NEXUS.registry import PROJECTS
@@ -161,6 +162,15 @@ SUPPORTED_COMMANDS = frozenset({
     "candidate_review_status",
     "review_candidate",
     "candidate_review_details",
+    # Phase 14: live governed revenue channel
+    "live_revenue_channel_status",
+    "approval_ready_sends",
+    "sent_receipts",
+    "response_events",
+    "real_revenue_outcomes",
+    "governed_revenue_send_request",
+    "record_revenue_response_event",
+    "verify_revenue_outcome",
 })
 
 
@@ -287,6 +297,13 @@ def _build_execution_package_review_header(package: dict[str, Any] | None) -> di
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
         "opportunity_classification_reason": p.get("opportunity_classification_reason") or "",
+        "revenue_channel": p.get("revenue_channel") or "",
+        "revenue_lane_status": p.get("revenue_lane_status") or "draft_ready",
+        "revenue_lane_truth": dict(p.get("revenue_lane_truth") or {}),
+        "send_receipt_count": int(p.get("send_receipt_count") or 0),
+        "response_event_count": int(p.get("response_event_count") or 0),
+        "revenue_outcome_status": p.get("revenue_outcome_status") or "pending",
+        "follow_up_due_at": p.get("follow_up_due_at") or "",
     }
 
 
@@ -424,7 +441,36 @@ def _build_execution_package_queue_row(package: dict[str, Any] | None) -> dict[s
         "revenue_workflow_priority": p.get("revenue_workflow_priority") or "medium",
         "revenue_workflow_block_reason": p.get("revenue_workflow_block_reason") or "",
         "opportunity_classification": p.get("opportunity_classification") or "cold",
+        "revenue_channel": p.get("revenue_channel") or "",
+        "revenue_lane_status": p.get("revenue_lane_status") or "draft_ready",
+        "revenue_lane_truth": dict(p.get("revenue_lane_truth") or {}),
+        "send_receipt_count": int(p.get("send_receipt_count") or 0),
+        "response_event_count": int(p.get("response_event_count") or 0),
+        "revenue_outcome_status": p.get("revenue_outcome_status") or "pending",
     }
+
+
+def _is_approval_record_approved(project_path: str | None, approval_id: str | None) -> bool:
+    aid = str(approval_id or "").strip()
+    if not project_path or not aid:
+        return False
+    try:
+        from NEXUS.approval_registry import read_approval_journal_tail
+
+        tail = read_approval_journal_tail(project_path=project_path, n=400)
+        for row in reversed(tail):
+            if str((row or {}).get("approval_id") or "").strip() != aid:
+                continue
+            status = str((row or {}).get("status") or "").strip().lower()
+            decision = str((row or {}).get("decision") or "").strip().lower()
+            return status == "approved" or decision == "approve"
+    except Exception:
+        return False
+    return False
+
+
+def _derive_follow_up_due_at(days: int = 3) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=max(1, int(days or 3)))).isoformat()
 
 
 def _build_execution_package_evaluation(package: dict[str, Any] | None) -> dict[str, Any]:
@@ -726,6 +772,448 @@ def run_command(
                 project_name=proj_name,
                 project_path=path,
             )
+
+    if cmd == "live_revenue_channel_status":
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+            )
+        try:
+            from NEXUS.execution_package_registry import list_execution_package_journal_entries
+            from NEXUS.revenue_communication_registry import (
+                read_revenue_outcomes_tail,
+                read_response_events_tail,
+                read_send_receipts_tail,
+                smtp_channel_readiness,
+            )
+
+            rows = list_execution_package_journal_entries(project_path=path, n=max(20, min(int(n or 20), 50)))
+            receipts = read_send_receipts_tail(project_path=path, n=200)
+            events = read_response_events_tail(project_path=path, n=200)
+            outcomes = read_revenue_outcomes_tail(project_path=path, n=200)
+            by_lane_status: dict[str, int] = {}
+            for row in rows:
+                key = str(row.get("revenue_lane_status") or "draft_ready")
+                by_lane_status[key] = by_lane_status.get(key, 0) + 1
+            follow_up_candidates = [
+                {
+                    "package_id": row.get("package_id"),
+                    "follow_up_due_at": row.get("follow_up_due_at") or "",
+                    "revenue_lane_status": row.get("revenue_lane_status") or "draft_ready",
+                }
+                for row in rows
+                if int(row.get("send_receipt_count") or 0) > 0 and int(row.get("response_event_count") or 0) == 0
+            ][:20]
+            payload = {
+                "channel_id": "smtp_email",
+                "channel_readiness": smtp_channel_readiness(),
+                "package_count": len(rows),
+                "lane_status_counts": by_lane_status,
+                "approval_waiting_count": sum(1 for row in rows if bool((row.get("revenue_lane_truth") or {}).get("awaiting_approval"))),
+                "sent_count": sum(1 for row in receipts if str(row.get("status") or "") == "sent"),
+                "send_failed_count": sum(1 for row in receipts if str(row.get("status") or "") in {"failed", "blocked"}),
+                "response_received_count": sum(
+                    1 for row in events if str(row.get("event_type") or "") in {"response_received", "meeting_booked", "reply_positive"}
+                ),
+                "closed_won_count": sum(1 for row in outcomes if str(row.get("outcome_status") or "") == "closed_won"),
+                "closed_lost_count": sum(1 for row in outcomes if str(row.get("outcome_status") or "") == "closed_lost"),
+                "follow_up_candidates": follow_up_candidates,
+            }
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"packages={len(rows)}; receipts={len(receipts)}", payload=payload)
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+            )
+
+    if cmd == "approval_ready_sends":
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+            )
+        try:
+            from NEXUS.execution_package_registry import list_execution_package_journal_entries, read_execution_package
+
+            rows = list_execution_package_journal_entries(project_path=path, n=max(20, min(int(n or 20), 50)))
+            candidates: list[dict[str, Any]] = []
+            for row in rows:
+                lane_truth = dict(row.get("revenue_lane_truth") or {})
+                if not bool(lane_truth.get("awaiting_approval")):
+                    continue
+                package_id = str(row.get("package_id") or "")
+                if not package_id:
+                    continue
+                package = read_execution_package(project_path=path, package_id=package_id) or {}
+                preview = dict((package.get("metadata") or {}).get("revenue_preview") or {})
+                response = dict(preview.get("response_summary") or {})
+                candidates.append(
+                    {
+                        "package_id": package_id,
+                        "pipeline_stage": row.get("pipeline_stage") or "intake",
+                        "response_status": str(response.get("response_status") or ""),
+                        "requires_human_approval": bool(package.get("requires_human_approval")),
+                        "approval_id_refs": [str(item) for item in list(package.get("approval_id_refs") or []) if str(item).strip()],
+                        "next_revenue_action": row.get("highest_value_next_action") or row.get("next_revenue_action") or "send follow-up",
+                    }
+                )
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"approval_ready={len(candidates)}", payload={"approval_ready_sends": candidates[:20]})
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+            )
+
+    if cmd == "sent_receipts":
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+            )
+        try:
+            from NEXUS.revenue_communication_registry import read_send_receipts_tail
+
+            receipts = read_send_receipts_tail(project_path=path, n=max(1, min(int(n or 20), 200)))
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"receipts={len(receipts)}", payload={"receipts": receipts})
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+            )
+
+    if cmd == "response_events":
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+            )
+        try:
+            from NEXUS.revenue_communication_registry import read_response_events_tail
+
+            events = read_response_events_tail(project_path=path, n=max(1, min(int(n or 20), 200)))
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"events={len(events)}", payload={"events": events})
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+            )
+
+    if cmd == "real_revenue_outcomes":
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+            )
+        try:
+            from NEXUS.revenue_communication_registry import read_revenue_outcomes_tail
+
+            outcomes = read_revenue_outcomes_tail(project_path=path, n=max(1, min(int(n or 20), 200)))
+            payload = {
+                "outcomes": outcomes,
+                "closed_won_count": sum(1 for row in outcomes if str(row.get("outcome_status") or "") == "closed_won"),
+                "closed_lost_count": sum(1 for row in outcomes if str(row.get("outcome_status") or "") == "closed_lost"),
+            }
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"outcomes={len(outcomes)}", payload=payload)
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+            )
+
+    if cmd == "governed_revenue_send_request":
+        package_id = str(kwargs.get("execution_package_id") or "").strip()
+        to_email = str(kwargs.get("to_email") or "").strip()
+        subject = str(kwargs.get("subject") or "").strip()
+        body = str(kwargs.get("body") or "")
+        approval_id = str(kwargs.get("approval_id") or "").strip()
+        operator_id = str(kwargs.get("operator_id") or "operator").strip()
+        follow_up_days = int(kwargs.get("follow_up_days") or 3)
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not to_email or not subject:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="to_email and subject required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package, record_execution_package_revenue_lane_safe
+            from NEXUS.revenue_communication_registry import (
+                append_send_receipt,
+                send_governed_email_safe,
+                smtp_channel_readiness,
+            )
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+
+            metadata = dict(package.get("metadata") or {})
+            lane = dict(metadata.get("revenue_lane") or {})
+            truth = dict(lane.get("truth") or {})
+            for key in ("draft_ready", "awaiting_approval", "approved_to_send", "send_requested", "send_attempted", "send_receipt_exists", "response_received", "blocked", "failed"):
+                truth[key] = bool(truth.get(key))
+            truth["draft_ready"] = True
+            truth["send_requested"] = True
+
+            requires_approval = bool(package.get("requires_human_approval"))
+            approval_ok = (not requires_approval) or _is_approval_record_approved(path, approval_id)
+            channel_readiness = smtp_channel_readiness()
+            follow_up_due_at = _derive_follow_up_due_at(days=follow_up_days)
+
+            if not approval_ok:
+                truth["awaiting_approval"] = True
+                truth["blocked"] = True
+                receipt_write = append_send_receipt(
+                    project_path=path,
+                    record={
+                        "project_name": proj_name or "",
+                        "package_id": package_id,
+                        "channel_id": "smtp_email",
+                        "status": "blocked",
+                        "approved": False,
+                        "approval_id": approval_id,
+                        "operator_id": operator_id,
+                        "to": to_email,
+                        "subject": subject,
+                        "failure_class": "approval_required",
+                        "error": "Send blocked: explicit approved approval_id required.",
+                    },
+                )
+                receipt = dict(receipt_write.get("receipt") or {})
+                lane.update(
+                    {
+                        "channel": "smtp_email",
+                        "truth": truth,
+                        "last_send_receipt_id": str(receipt.get("receipt_id") or lane.get("last_send_receipt_id") or ""),
+                        "send_receipt_count": max(0, int(lane.get("send_receipt_count") or 0)) + 1,
+                    }
+                )
+                record_execution_package_revenue_lane_safe(project_path=path, package_id=package_id, revenue_lane=lane)
+                return _result(
+                    command=cmd,
+                    status="error",
+                    project_name=proj_name,
+                    summary="send_blocked_by_approval",
+                    payload={
+                        "send_status": "blocked",
+                        "receipt": receipt,
+                        "approval_required": True,
+                        "channel_readiness": channel_readiness,
+                    },
+                )
+
+            truth["awaiting_approval"] = False
+            truth["approved_to_send"] = True
+            send_result = send_governed_email_safe(to_email=to_email, subject=subject, body=body)
+            send_status = str(send_result.get("status") or "failed")
+            truth["send_attempted"] = True
+            truth["send_receipt_exists"] = True
+            truth["blocked"] = False
+            truth["failed"] = send_status != "sent"
+            receipt_write = append_send_receipt(
+                project_path=path,
+                record={
+                    "project_name": proj_name or "",
+                    "package_id": package_id,
+                    "channel_id": "smtp_email",
+                    "status": send_status,
+                    "approved": True,
+                    "approval_id": approval_id,
+                    "operator_id": operator_id,
+                    "to": to_email,
+                    "subject": subject,
+                    "provider_message_id": str(send_result.get("provider_message_id") or ""),
+                    "failure_class": str(send_result.get("failure_class") or ""),
+                    "error": str(send_result.get("error") or ""),
+                    "follow_up_due_at": follow_up_due_at if send_status == "sent" else "",
+                },
+            )
+            receipt = dict(receipt_write.get("receipt") or {})
+            lane.update(
+                {
+                    "channel": "smtp_email",
+                    "truth": truth,
+                    "last_send_receipt_id": str(receipt.get("receipt_id") or lane.get("last_send_receipt_id") or ""),
+                    "send_receipt_count": max(0, int(lane.get("send_receipt_count") or 0)) + 1,
+                    "follow_up_due_at": follow_up_due_at if send_status == "sent" else str(lane.get("follow_up_due_at") or ""),
+                    "pipeline_stage": "follow_up" if send_status == "sent" else str(package.get("pipeline_stage") or "intake"),
+                }
+            )
+            record_execution_package_revenue_lane_safe(project_path=path, package_id=package_id, revenue_lane=lane)
+            return _result(
+                command=cmd,
+                status="ok" if send_status == "sent" else "error",
+                project_name=proj_name,
+                summary=f"send_status={send_status}",
+                payload={
+                    "send_status": send_status,
+                    "receipt": receipt,
+                    "channel_readiness": send_result.get("channel_readiness") or channel_readiness,
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "record_revenue_response_event":
+        package_id = str(kwargs.get("execution_package_id") or "").strip()
+        receipt_id = str(kwargs.get("receipt_id") or "").strip()
+        event_type = str(kwargs.get("event_type") or "response_received").strip().lower()
+        event_summary = str(kwargs.get("event_summary") or "").strip()
+        evidence_ref = str(kwargs.get("evidence_ref") or "").strip()
+        if not path:
+            return _execution_package_error_result(command=cmd, reason="Project path or project_name required.", project_name=proj_name, project_path=path, package_id=package_id)
+        if not package_id:
+            return _execution_package_error_result(command=cmd, reason="execution_package_id required.", project_name=proj_name, project_path=path, package_id=package_id)
+        try:
+            from NEXUS.execution_package_registry import read_execution_package, record_execution_package_revenue_lane_safe
+            from NEXUS.revenue_communication_registry import append_response_event
+
+            package = read_execution_package(project_path=path, package_id=package_id) or {}
+            if not package:
+                return _execution_package_error_result(command=cmd, reason="Execution package not found.", project_name=proj_name, project_path=path, package_id=package_id)
+            write = append_response_event(
+                project_path=path,
+                record={
+                    "project_name": proj_name or "",
+                    "package_id": package_id,
+                    "receipt_id": receipt_id,
+                    "event_type": event_type,
+                    "event_summary": event_summary,
+                    "evidence_ref": evidence_ref,
+                    "operator_confirmed": True,
+                },
+            )
+            event = dict(write.get("event") or {})
+            metadata = dict(package.get("metadata") or {})
+            lane = dict(metadata.get("revenue_lane") or {})
+            truth = dict(lane.get("truth") or {})
+            truth["response_received"] = True
+            truth["blocked"] = False
+            lane.update(
+                {
+                    "truth": truth,
+                    "last_response_event_id": str(event.get("event_id") or ""),
+                    "response_event_count": max(0, int(lane.get("response_event_count") or 0)) + 1,
+                    "pipeline_stage": "negotiation",
+                }
+            )
+            record_execution_package_revenue_lane_safe(project_path=path, package_id=package_id, revenue_lane=lane)
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"event_type={event_type}", payload={"event": event})
+        except Exception as e:
+            return _execution_package_error_result(command=cmd, reason=str(e), project_name=proj_name, project_path=path, package_id=package_id)
+
+    if cmd == "verify_revenue_outcome":
+        package_id = str(kwargs.get("execution_package_id") or "").strip()
+        receipt_id = str(kwargs.get("receipt_id") or "").strip()
+        outcome_status = str(kwargs.get("outcome_status") or "pending").strip().lower()
+        outcome_summary = str(kwargs.get("outcome_summary") or "").strip()
+        evidence_ref = str(kwargs.get("evidence_ref") or "").strip()
+        operator_confirmed = bool(kwargs.get("operator_confirmed", True))
+        if not path:
+            return _execution_package_error_result(command=cmd, reason="Project path or project_name required.", project_name=proj_name, project_path=path, package_id=package_id)
+        if not package_id:
+            return _execution_package_error_result(command=cmd, reason="execution_package_id required.", project_name=proj_name, project_path=path, package_id=package_id)
+        if outcome_status not in {"pending", "closed_won", "closed_lost"}:
+            return _execution_package_error_result(command=cmd, reason="outcome_status must be pending|closed_won|closed_lost.", project_name=proj_name, project_path=path, package_id=package_id)
+        if outcome_status in {"closed_won", "closed_lost"} and not (evidence_ref or operator_confirmed):
+            return _execution_package_error_result(command=cmd, reason="Outcome transitions require evidence_ref or operator_confirmed=true.", project_name=proj_name, project_path=path, package_id=package_id)
+        try:
+            from NEXUS.execution_package_registry import read_execution_package, record_execution_package_revenue_lane_safe
+            from NEXUS.revenue_communication_registry import append_revenue_outcome
+
+            package = read_execution_package(project_path=path, package_id=package_id) or {}
+            if not package:
+                return _execution_package_error_result(command=cmd, reason="Execution package not found.", project_name=proj_name, project_path=path, package_id=package_id)
+            write = append_revenue_outcome(
+                project_path=path,
+                record={
+                    "project_name": proj_name or "",
+                    "package_id": package_id,
+                    "receipt_id": receipt_id,
+                    "outcome_status": outcome_status,
+                    "outcome_summary": outcome_summary,
+                    "evidence_ref": evidence_ref,
+                    "operator_confirmed": operator_confirmed,
+                },
+            )
+            outcome = dict(write.get("outcome") or {})
+            metadata = dict(package.get("metadata") or {})
+            lane = dict(metadata.get("revenue_lane") or {})
+            truth = dict(lane.get("truth") or {})
+            truth["blocked"] = False
+            truth["failed"] = outcome_status == "closed_lost"
+            recent_outcomes = list(metadata.get("revenue_recent_outcomes") or [])
+            recent_outcomes.append(
+                {
+                    "status": outcome_status,
+                    "at": str(outcome.get("recorded_at") or ""),
+                    "reason": str(outcome.get("outcome_summary") or ""),
+                }
+            )
+            lane.update(
+                {
+                    "truth": truth,
+                    "outcome_status": outcome_status,
+                    "outcome_verified": bool(evidence_ref or operator_confirmed),
+                    "outcome_evidence_refs": [x for x in [str(evidence_ref or "").strip()] if x][:20],
+                    "pipeline_stage": "closed_won" if outcome_status == "closed_won" else ("closed_lost" if outcome_status == "closed_lost" else str(package.get("pipeline_stage") or "follow_up")),
+                    "revenue_recent_outcomes": recent_outcomes[-20:],
+                }
+            )
+            record_execution_package_revenue_lane_safe(project_path=path, package_id=package_id, revenue_lane=lane)
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"outcome_status={outcome_status}", payload={"outcome": outcome})
+        except Exception as e:
+            return _execution_package_error_result(command=cmd, reason=str(e), project_name=proj_name, project_path=path, package_id=package_id)
 
     if cmd == "execution_package_details":
         package_id = str(kwargs.get("execution_package_id") or "").strip() or None
