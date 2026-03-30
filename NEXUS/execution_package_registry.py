@@ -49,6 +49,10 @@ from NEXUS.execution_package_local_analysis import (
     normalize_local_analysis_summary,
 )
 from NEXUS.memory_layer import write_governed_memory_safe
+from NEXUS.execution_receipt_registry import record_execution_receipt
+from NEXUS.execution_verification_registry import record_execution_verification
+from NEXUS.execution_truth import update_execution_truth
+from NEXUS.global_control_state import evaluate_routing_enforcement
 from NEXUS.runtimes.cursor_runtime import (
     build_cursor_bridge_result,
     normalize_cursor_artifact_return,
@@ -506,6 +510,80 @@ def _persist_package_update(
         return {"status": status, "reason": reason, "package": normalized}
     except Exception:
         return {"status": "error", "reason": f"Failed to persist execution package update: {reason}", "package": None}
+
+
+def _record_execution_truth_pipeline(
+    *,
+    project_path: str | None,
+    package: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """
+    Persist receipt + verification + truth linkage for terminal execution states.
+    """
+    normalized = normalize_execution_package(package)
+    execution_status = str(normalized.get("execution_status") or "").strip().lower()
+    if execution_status not in ("succeeded", "failed", "blocked", "rolled_back"):
+        return normalized
+    execution_id = str(normalized.get("execution_id") or "").strip()
+    if not execution_id:
+        return normalized
+    metadata = dict(normalized.get("metadata") or {})
+    truth_pipeline = dict(metadata.get("truth_pipeline") or {})
+    if str(truth_pipeline.get("last_recorded_execution_id") or "") == execution_id:
+        return normalized
+    try:
+        receipt_record = record_execution_receipt(
+            project_name=str(normalized.get("project_name") or ""),
+            package_id=str(normalized.get("package_id") or ""),
+            execution_id=execution_id,
+            runtime_target_id=str(
+                normalized.get("execution_executor_target_id")
+                or normalized.get("handoff_executor_target_id")
+                or normalized.get("runtime_target_id")
+                or ""
+            ),
+            execution_status=execution_status,
+            execution_receipt=dict(normalized.get("execution_receipt") or {}),
+        )
+        verification_record = record_execution_verification(
+            project_name=str(normalized.get("project_name") or ""),
+            package_id=str(normalized.get("package_id") or ""),
+            execution_id=execution_id,
+            execution_status=execution_status,
+            integrity_verification=dict(normalized.get("integrity_verification") or {}),
+        )
+        truth_record = update_execution_truth(
+            project_name=str(normalized.get("project_name") or ""),
+            package_id=str(normalized.get("package_id") or ""),
+            execution_id=execution_id,
+            runtime_target_id=str(
+                normalized.get("execution_executor_target_id")
+                or normalized.get("handoff_executor_target_id")
+                or normalized.get("runtime_target_id")
+                or ""
+            ),
+            execution_status=execution_status,
+            receipt_record=receipt_record,
+            verification_record=verification_record,
+            outcome_linkage={
+                "evaluation_id": str(normalized.get("evaluation_id") or ""),
+                "local_analysis_id": str(normalized.get("local_analysis_id") or ""),
+                "recovery_status": str((normalized.get("recovery_summary") or {}).get("recovery_status") or ""),
+                "project_path": str(project_path or normalized.get("project_path") or ""),
+            },
+        )
+    except Exception:
+        return normalized
+    metadata["truth_pipeline"] = {
+        "last_recorded_execution_id": execution_id,
+        "receipt_record_id": receipt_record.get("receipt_record_id"),
+        "verification_record_id": verification_record.get("verification_record_id"),
+        "truth_record_id": truth_record.get("truth_record_id"),
+        "truth_state": truth_record.get("truth_state"),
+        "recorded_at": truth_record.get("updated_at"),
+    }
+    normalized["metadata"] = metadata
+    return normalize_execution_package(normalized)
 
 
 def _empty_execution_receipt(*, result_status: str = "", failure_class: str = "", log_ref: str = "", exit_code: int | None = None) -> dict[str, Any]:
@@ -2398,6 +2476,21 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
             "executor_target_invalid",
             "Executor target must be active, support execute, and not be windows_review_package.",
         )
+    if backend_id:
+        try:
+            from NEXUS.executor_backends import get_executor_backend_status
+
+            backend_status = get_executor_backend_status(backend_id)
+            if str(backend_status.get("adapter_status") or "").strip().lower() != "active":
+                return _blocked(
+                    "backend_not_ready",
+                    f"Executor backend '{backend_id}' is not active.",
+                )
+        except Exception:
+            return _blocked(
+                "backend_not_ready",
+                f"Executor backend '{backend_id}' status is unavailable.",
+            )
 
     try:
         from AEGIS.aegis_contract import normalize_aegis_result
@@ -2673,6 +2766,7 @@ def record_execution_package_execution(
                 "model": "forge_runtime_cost_estimator",
             },
         }
+        package = _record_execution_truth_pipeline(project_path=project_path, package=package)
         return _persist_package_update(
             project_path=project_path,
             package_id=package_id,
@@ -2701,6 +2795,53 @@ def record_execution_package_execution(
     execution_id = str(uuid.uuid4())
     started_at = _utc_now_iso()
     evaluation = evaluate_execution_package_execution(package)
+    control_enforcement = evaluate_routing_enforcement(
+        project_path=project_path,
+        project_name=str(package.get("project_name") or ""),
+        runtime_target_id=str(package.get("handoff_executor_target_id") or package.get("runtime_target_id") or ""),
+        allocation_status=str((package.get("routing_summary") or {}).get("selection_status") or "selected"),
+        mission_key=str(package.get("project_name") or ""),
+        strategy_key=str(package.get("project_name") or ""),
+        operation_type="execution",
+    )
+    enforcement_denies = [dict(item) for item in list(control_enforcement.get("denies") or []) if isinstance(item, dict)]
+    hard_control_deny = any(str(item.get("code") or "").strip().lower() != "backend_not_ready" for item in enforcement_denies)
+    evaluation_status = str(evaluation.get("execution_status") or "").strip().lower()
+    evaluation_code = str((evaluation.get("execution_reason") or {}).get("code") or "").strip().lower()
+    routing_override_allowed = (
+        evaluation_status == "ready"
+        or evaluation_code in {"aegis_blocked", "workspace_invalid", "file_guard_blocked"}
+    )
+    if (
+        control_enforcement.get("routing_enforcement_status") == "denied"
+        and hard_control_deny
+        and routing_override_allowed
+    ):
+        deny_reason = "; ".join(
+            str(item.get("reason") or item.get("code") or "routing_denied")
+            for item in list(control_enforcement.get("denies") or [])[:5]
+        ) or "Routing enforcement denied execution."
+        evaluation = {
+            **dict(evaluation),
+            "execution_status": "blocked",
+            "execution_reason": {"code": "routing_enforcement_denied", "message": deny_reason},
+            "execution_receipt": _normalize_execution_receipt(
+                {
+                    "result_status": "blocked",
+                    "failure_class": "preflight_block",
+                    "stderr_summary": deny_reason,
+                }
+            ),
+        }
+        package = _with_package_authority_event(
+            package,
+            scope="routing_enforcement",
+            authority_trace={"component_name": "global_control_state", "operation": "execution"},
+            authority_denial={"reason": deny_reason, "code": "routing_enforcement_denied"},
+        )
+        metadata = dict(package.get("metadata") or {})
+        metadata["routing_enforcement"] = control_enforcement
+        package["metadata"] = metadata
     retry_policy = normalize_retry_policy(package.get("retry_policy"))
     idempotency = normalize_idempotency(package.get("idempotency"), package=package)
     prior_execution_status = str(package.get("execution_status") or "").strip().lower()
@@ -2757,6 +2898,7 @@ def record_execution_package_execution(
                 integrity_verification=package.get("integrity_verification"),
             )
         )
+        package = _record_execution_truth_pipeline(project_path=project_path, package=package)
         return _persist_package_update(
             project_path=project_path,
             package_id=package_id,
@@ -2773,6 +2915,32 @@ def record_execution_package_execution(
         package["rollback_status"] = "not_needed"
         package["rollback_timestamp"] = ""
         package["rollback_reason"] = _normalize_rollback_reason(evaluation.get("rollback_reason"))
+        if str((package.get("execution_reason") or {}).get("code") or "") == "routing_enforcement_denied":
+            package["integrity_verification"] = verify_terminal_execution_integrity(package)
+            package["recovery_summary"] = evaluate_recovery_summary(
+                execution_status=package["execution_status"],
+                failure_summary=package.get("failure_summary"),
+                retry_policy=package.get("retry_policy"),
+                rollback_repair=package.get("rollback_repair"),
+                integrity_verification=package.get("integrity_verification"),
+            )
+            execution_cost = _estimate_package_cost_tracking(package)
+            package["cost_tracking"] = {
+                **execution_cost,
+                "cost_source": "runtime_execution",
+                "cost_breakdown": {
+                    **dict(execution_cost.get("cost_breakdown") or {}),
+                    "model": "forge_runtime_cost_estimator",
+                },
+            }
+            package = _record_execution_truth_pipeline(project_path=project_path, package=package)
+            return _persist_package_update(
+                project_path=project_path,
+                package_id=package_id,
+                package=package,
+                status="denied",
+                reason=str((package.get("execution_reason") or {}).get("message") or "Routing enforcement denied execution."),
+            )
     else:
         if prior_execution_status in ("succeeded", "failed", "blocked", "rolled_back") and package["retry_policy"].get("retry_authorized"):
             package["retry_policy"] = normalize_retry_policy(
@@ -2876,6 +3044,7 @@ def record_execution_package_execution(
     package["budget_control"] = budget_control
     package.update(_budget_fields_from_control(budget_control))
 
+    package = _record_execution_truth_pipeline(project_path=project_path, package=package)
     return _persist_package_update(
         project_path=project_path,
         package_id=package_id,
