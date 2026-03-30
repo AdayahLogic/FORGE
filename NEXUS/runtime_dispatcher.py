@@ -18,6 +18,7 @@ from NEXUS.runtime_execution import (
     build_runtime_execution_result,
 )
 from NEXUS.runtime_target_selector import select_runtime_target
+from NEXUS.global_control_state import evaluate_routing_enforcement
 
 
 def _build_review_package_artifact(*, package_id: str | None, package_path: str | None) -> list[dict[str, Any]]:
@@ -135,6 +136,46 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
     )
     selection_snapshot = build_runtime_target_selection_snapshot(selection)
     selected_target_id = str(selection_snapshot.get("selected_target_id") or "").strip().lower()
+    enforced_target_id = selected_target_id or runtime_target_id or ""
+    routing_enforcement = evaluate_routing_enforcement(
+        project_path=(dispatch_plan.get("project") or {}).get("project_path"),
+        project_name=(dispatch_plan.get("project") or {}).get("project_name"),
+        runtime_target_id=enforced_target_id,
+        allocation_status=str(
+            selection_snapshot.get("routing_status")
+            or selection_snapshot.get("status")
+            or routing_block.get("selection_status")
+            or ""
+        ),
+        mission_key=str((dispatch_plan.get("project") or {}).get("project_name") or ""),
+        strategy_key=str((dispatch_plan.get("project") or {}).get("project_name") or ""),
+        operation_type="dispatch",
+    )
+    if routing_enforcement.get("routing_enforcement_status") == "denied":
+        deny_reason = "; ".join(
+            str(item.get("reason") or item.get("code") or "routing_denied")
+            for item in list(routing_enforcement.get("denies") or [])[:5]
+        ) or "Routing enforcement denied dispatch."
+        blocked = build_runtime_execution_result(
+            runtime=enforced_target_id,
+            status="blocked",
+            message=deny_reason,
+            execution_status="blocked",
+            execution_mode="manual_only",
+            next_action="human_review",
+            artifacts=[],
+            errors=[{"reason": "routing_enforcement_denied"}],
+            extra_fields={
+                "authority_trace": nexus_trace,
+                "runtime_target_selection": selection_snapshot,
+                "routing_enforcement": routing_enforcement,
+            },
+        )
+        return {
+            "dispatch_status": "blocked",
+            "runtime_target": enforced_target_id,
+            "dispatch_result": blocked,
+        }
 
     if not dispatch_plan or not dispatch_plan.get("ready_for_dispatch", False):
         skipped = build_runtime_execution_skipped(
@@ -144,6 +185,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         )
         skipped["authority_trace"] = nexus_trace
         skipped["runtime_target_selection"] = selection_snapshot
+        skipped["routing_enforcement"] = routing_enforcement
         return {
             "dispatch_status": "skipped",
             "runtime_target": selected_target_id or runtime_target_id,
@@ -160,6 +202,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         unavailable["next_action"] = "select_supported_runtime"
         unavailable["authority_trace"] = nexus_trace
         unavailable["runtime_target_selection"] = selection_snapshot
+        unavailable["routing_enforcement"] = routing_enforcement
         return {
             "dispatch_status": "skipped",
             "runtime_target": runtime_target_id or "",
@@ -179,6 +222,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
             extra_fields={
                 "authority_trace": nexus_trace,
                 "runtime_target_selection": selection_snapshot,
+                "routing_enforcement": routing_enforcement,
             },
         )
         return {
@@ -430,6 +474,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         if isinstance(dispatch_result, dict):
             dispatch_result["authority_trace"] = nexus_trace
             dispatch_result["runtime_target_selection"] = selection_snapshot
+            dispatch_result["routing_enforcement"] = routing_enforcement
         if runtime_target_id == "cursor" and isinstance(dispatch_result, dict) and dispatch_result.get("status") != "blocked":
             cursor_bridge_summary = dict(dispatch_result.get("cursor_bridge_summary") or {})
             package_id, package_path = _create_review_only_execution_package(
@@ -484,6 +529,7 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         if isinstance(err, dict):
             err["authority_trace"] = nexus_trace
             err["runtime_target_selection"] = selection_snapshot
+            err["routing_enforcement"] = routing_enforcement
         return {
             "dispatch_status": "error",
             "runtime_target": runtime_target_id,

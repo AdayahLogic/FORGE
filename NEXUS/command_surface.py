@@ -23,10 +23,24 @@ from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import select_runtime_target
 from NEXUS.execution_environment_summary import build_per_project_environment_summary
 from NEXUS.memory_layer import build_memory_layer_summary_safe, read_governed_memory_safe
+from NEXUS.global_control_state import (
+    evaluate_routing_enforcement,
+    load_global_control_state,
+    set_persistent_kill_switch,
+    update_global_control_state,
+)
+from NEXUS.execution_receipt_registry import read_latest_execution_receipt
+from NEXUS.execution_verification_registry import read_latest_execution_verification
+from NEXUS.execution_truth import read_execution_truth
 
 from NEXUS.logging_engine import log_system_event
 
 SUPPORTED_COMMANDS = frozenset({
+    "global_control_state",
+    "execution_lane_status",
+    "persistent_kill_switch_status",
+    "routing_enforcement_status",
+    "live_execution_status",
     "health",
     "latest_session",
     "ledger_tail",
@@ -494,6 +508,160 @@ def run_command(
         status="received",
         reason="Command invoked.",
     )
+
+    if cmd == "global_control_state":
+        try:
+            current = load_global_control_state()
+            updates = kwargs.get("updates")
+            actor = str(kwargs.get("actor") or "command_surface")
+            reason = str(kwargs.get("reason") or "command_surface_update")
+            if isinstance(updates, dict) and updates:
+                current = update_global_control_state(updates=updates, actor=actor, reason=reason)
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"global_system_mode={current.get('global_system_mode')}; "
+                    f"kill_switch_active={bool((current.get('kill_switch') or {}).get('active'))}"
+                ),
+                payload=current,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "persistent_kill_switch_status":
+        try:
+            set_active = kwargs.get("set_active")
+            actor = str(kwargs.get("actor") or "command_surface")
+            reason = str(kwargs.get("reason") or "")
+            if isinstance(set_active, bool):
+                state = set_persistent_kill_switch(active=set_active, actor=actor, reason=reason)
+            else:
+                state = load_global_control_state()
+            kill_switch = dict(state.get("kill_switch") or {})
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"kill_switch_active={bool(kill_switch.get('active'))}",
+                payload={
+                    "kill_switch_active": bool(kill_switch.get("active")),
+                    "kill_switch_reason": str(kill_switch.get("reason") or ""),
+                    "kill_switch_updated_at": str(kill_switch.get("updated_at") or ""),
+                    "kill_switch_updated_by": str(kill_switch.get("updated_by") or ""),
+                    "global_system_mode": str(state.get("global_system_mode") or ""),
+                },
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "routing_enforcement_status":
+        try:
+            runtime_target_id = str(kwargs.get("runtime_target_id") or "local").strip().lower()
+            allocation_status = str(kwargs.get("allocation_status") or "selected").strip().lower()
+            operation_type = str(kwargs.get("operation_type") or "execution").strip().lower()
+            result = evaluate_routing_enforcement(
+                project_path=path,
+                project_name=proj_name,
+                runtime_target_id=runtime_target_id,
+                allocation_status=allocation_status,
+                mission_key=str(kwargs.get("mission_key") or (proj_name or "")),
+                strategy_key=str(kwargs.get("strategy_key") or (proj_name or "")),
+                operation_type=operation_type,
+            )
+            return _result(
+                command=cmd,
+                status="ok" if result.get("routing_enforcement_status") == "allowed" else "blocked",
+                project_name=proj_name,
+                summary=(
+                    f"routing_enforcement_status={result.get('routing_enforcement_status')}; "
+                    f"runtime_target={runtime_target_id}"
+                ),
+                payload=result,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "execution_lane_status":
+        try:
+            from NEXUS.executor_backends import get_executor_backend_status
+            from NEXUS.runtime_target_registry import get_runtime_target_entry
+
+            backend_status = get_executor_backend_status("openclaw")
+            target = get_runtime_target_entry("openclaw")
+            lane_ready = (
+                str((backend_status or {}).get("adapter_status") or "").strip().lower() == "active"
+                and str((target or {}).get("active_or_planned") or "").strip().lower() == "active"
+            )
+            payload = {
+                "lane_id": "openclaw_controlled_execution",
+                "lane_type": "governed_live_execution",
+                "request_path": "execution_package_execute_request -> record_execution_package_execution",
+                "permission_gates": [
+                    "package_integrity_and_stage_gates",
+                    "routing_enforcement",
+                    "budget_kill_switch",
+                    "authority_enforcement",
+                    "aegis_revalidation",
+                ],
+                "backend_status": backend_status,
+                "runtime_target": target,
+                "lane_ready": lane_ready,
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"lane_ready={lane_ready}; backend_status={backend_status.get('adapter_status')}",
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "live_execution_status":
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package_id = str(kwargs.get("execution_package_id") or "").strip()
+            if not package_id and path:
+                loaded = load_project_state(path)
+                package_id = str(loaded.get("execution_package_id") or loaded.get("autopilot_last_package_id") or "").strip()
+            if not package_id:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="execution_package_id required when no active package is stored.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=None,
+                )
+            package = read_execution_package(project_path=path, package_id=package_id) if path else None
+            receipt = read_latest_execution_receipt(package_id=package_id)
+            verification = read_latest_execution_verification(package_id=package_id)
+            truth = read_execution_truth(package_id=package_id)
+            payload = {
+                "project_path": path,
+                "package_id": package_id,
+                "execution_status": str((package or {}).get("execution_status") or ""),
+                "execution_id": str((package or {}).get("execution_id") or ""),
+                "execution_receipt": dict((package or {}).get("execution_receipt") or {}),
+                "integrity_verification": dict((package or {}).get("integrity_verification") or {}),
+                "receipt_record": receipt,
+                "verification_record": verification,
+                "truth_record": truth,
+            }
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=(
+                    f"execution_status={payload.get('execution_status')}; "
+                    f"truth_state={str((truth or {}).get('truth_state') or 'unknown')}"
+                ),
+                payload=payload,
+            )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "registry_status":
         try:
