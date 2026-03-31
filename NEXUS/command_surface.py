@@ -57,6 +57,11 @@ SUPPORTED_COMMANDS = frozenset({
     "execution_package_handoff_status",
     "execution_package_execute_request",
     "execution_package_execute_status",
+    "browser_task_submit",
+    "browser_execution_status",
+    "browser_execution_receipts",
+    "browser_execution_evidence",
+    "browser_lane_status",
     "execution_package_evaluate",
     "execution_package_evaluation_status",
     "execution_package_local_analysis",
@@ -1541,6 +1546,197 @@ def run_command(
                         "rollback_repair": package.get("rollback_repair") or {},
                         "integrity_verification": package.get("integrity_verification") or {},
                     },
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd == "browser_task_submit":
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        submit_actor = str(kwargs.get("submit_actor") or "").strip()
+        browser_request = kwargs.get("browser_request")
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not submit_actor:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="submit_actor required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not isinstance(browser_request, dict):
+            return _execution_package_error_result(
+                command=cmd,
+                reason="browser_request dict required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import record_browser_execution_task_safe
+
+            result = record_browser_execution_task_safe(
+                project_path=path,
+                package_id=package_id,
+                submit_actor=submit_actor,
+                browser_request=browser_request,
+            )
+            if result.get("status") != "ok":
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason=str(result.get("reason") or "Failed to submit browser execution task."),
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            package = result.get("package") or {}
+            metadata = dict(package.get("metadata") or {})
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; browser_lane=configured",
+                payload={
+                    "status": "ok",
+                    "reason": "Browser execution task submitted.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "browser_lane": metadata.get("browser_lane") or {},
+                    "backend_id": str(package.get("execution_executor_backend_id") or metadata.get("executor_backend_id") or ""),
+                },
+            )
+        except Exception as e:
+            return _execution_package_error_result(
+                command=cmd,
+                reason=str(e),
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+
+    if cmd in {"browser_execution_status", "browser_execution_receipts", "browser_execution_evidence", "browser_lane_status"}:
+        package_id = str(kwargs.get("execution_package_id") or "").strip() or None
+        if not path:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="Project path or project_name required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        if not package_id:
+            return _execution_package_error_result(
+                command=cmd,
+                reason="execution_package_id required.",
+                project_name=proj_name,
+                project_path=path,
+                package_id=package_id,
+            )
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(project_path=path, package_id=package_id)
+            if not package:
+                return _execution_package_error_result(
+                    command=cmd,
+                    reason="Execution package not found.",
+                    project_name=proj_name,
+                    project_path=path,
+                    package_id=package_id,
+                )
+            metadata = dict(package.get("metadata") or {})
+            runtime_artifacts = [x for x in list(package.get("runtime_artifacts") or []) if isinstance(x, dict)]
+            latest_artifact = runtime_artifacts[-1] if runtime_artifacts else {}
+            evidence = {
+                "browser_lane": metadata.get("browser_lane") or {},
+                "browser_execution_request": metadata.get("browser_execution_request") or {},
+                "runtime_artifact": latest_artifact,
+                "runtime_artifacts": runtime_artifacts,
+                "integrity_verification": package.get("integrity_verification") or {},
+            }
+            if cmd == "browser_execution_status":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; execution_status={package.get('execution_status')}",
+                    payload={
+                        "status": "ok",
+                        "reason": "Browser execution status loaded.",
+                        "project_path": path,
+                        "package_id": package_id,
+                        "execution_status": package.get("execution_status"),
+                        "execution_reason": package.get("execution_reason") or {"code": "", "message": ""},
+                        "execution_executor_backend_id": package.get("execution_executor_backend_id"),
+                        "execution_executor_target_id": package.get("execution_executor_target_id"),
+                        "browser_lane": metadata.get("browser_lane") or {},
+                    },
+                )
+            if cmd == "browser_execution_receipts":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; receipt_status={(package.get('execution_receipt') or {}).get('result_status')}",
+                    payload={
+                        "status": "ok",
+                        "reason": "Browser execution receipt loaded.",
+                        "project_path": path,
+                        "package_id": package_id,
+                        "execution_receipt": package.get("execution_receipt") or {},
+                        "failure_summary": package.get("failure_summary") or {},
+                        "rollback_status": package.get("rollback_status"),
+                        "rollback_reason": package.get("rollback_reason") or {"code": "", "message": ""},
+                    },
+                )
+            if cmd == "browser_execution_evidence":
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=proj_name,
+                    summary=f"package_id={package_id}; evidence_files={len(runtime_artifacts)}",
+                    payload={
+                        "status": "ok",
+                        "reason": "Browser execution evidence loaded.",
+                        "project_path": path,
+                        "package_id": package_id,
+                        "evidence": evidence,
+                    },
+                )
+            return _result(
+                command=cmd,
+                status="ok",
+                project_name=proj_name,
+                summary=f"package_id={package_id}; lane_status={((metadata.get('browser_lane') or {}).get('lane_status') or 'not_configured')}",
+                payload={
+                    "status": "ok",
+                    "reason": "Browser lane status loaded.",
+                    "project_path": path,
+                    "package_id": package_id,
+                    "lane_status": (metadata.get("browser_lane") or {}).get("lane_status") or "not_configured",
+                    "backend_id": str(package.get("execution_executor_backend_id") or metadata.get("executor_backend_id") or ""),
+                    "execution_status": package.get("execution_status"),
                 },
             )
         except Exception as e:

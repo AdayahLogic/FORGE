@@ -218,6 +218,15 @@ def _build_recent_activity(
         activity.append(_activity(created_at, "review_awaited", "Package is awaiting review."))
     if _status_key(cost_summary.get("budget_status")) in {"cap_exceeded", "kill_switch_triggered"} or bool(cost_summary.get("kill_switch_active")):
         activity.append(_activity(created_at, "budget_block", "Budget control blocked progression."))
+    backend_id = _status_key(package.get("execution_executor_backend_id"))
+    if backend_id == "playwright_browser" and _status_key(package.get("execution_status")) in {"succeeded", "failed", "rolled_back", "blocked"}:
+        activity.append(
+            _activity(
+                _clean_text(package.get("execution_finished_at"), created_at),
+                "browser_execution",
+                f"Governed browser lane execution {_pretty(_status_key(package.get('execution_status')))}.",
+            )
+        )
     progress = _status_key(delivery_summary.get("delivery_progress_state"))
     if progress in {"delivery_summary_ready", "client_safe_packaging_ready"}:
         activity.append(_activity(created_at, "delivery_summary_ready", "Delivery summary is ready."))
