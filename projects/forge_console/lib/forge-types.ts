@@ -815,3 +815,148 @@ export type ForgeUiState = {
   degradedSources: string[];
   clientViewSnapshot: ForgeClientViewSnapshot | null;
 };
+
+export type ForgeOperatorContext = {
+  active_project: {
+    project_key: string;
+    project_name: string;
+    project_path: string;
+    status: string;
+  };
+  current_mission: {
+    mission_id: string;
+    status: string;
+    summary: string;
+  };
+  active_strategy: {
+    routing_status: string;
+    selected_model_lane: string;
+    summary: string;
+  };
+  autonomy_mode: string;
+  next_best_action: string;
+  current_blockers: string[];
+};
+
+export type ForgeConsoleApprovalItem = {
+  approval_id: string;
+  status: string;
+  urgency: string;
+  risk: string;
+  reason: string;
+  required_action: string;
+  project_key: string;
+};
+
+export type ForgeOperatorConsoleSnapshot = {
+  generated_at: string;
+  selected_project_key: string;
+  context: ForgeOperatorContext;
+  approvals: {
+    pending_count: number;
+    requires_action: boolean;
+    items: ForgeConsoleApprovalItem[];
+    allowed_actions: string[];
+  };
+  system_awareness: {
+    execution_lane_status: string;
+    kill_switch_state: string;
+    queue_pressure: string;
+    queue_depth: number;
+    pending_queue_items: number;
+    worker_state: string;
+    revenue_lane_status: string;
+    control_state: {
+      studio_health: string;
+      budget_status: string;
+      budget_scope: string;
+    };
+  };
+  live_activity: {
+    operation_status: string;
+    current_phase: string;
+    current_step: string;
+    last_action: string;
+    recent_activity: Array<{
+      timestamp: string;
+      activity_type: string;
+      activity_summary: string;
+    }>;
+  };
+  quick_actions: ForgeQuickActions;
+};
+
+export type ForgeConsoleMessageResponse = {
+  reply: string;
+  response_cards: Array<{
+    card_id: string;
+    title: string;
+    lines: string[];
+  }>;
+  suggested_actions?: ForgeQuickAction[];
+  command_result?: Record<string, unknown>;
+  console_snapshot: ForgeOperatorConsoleSnapshot;
+};
+
+export type ForgeActivityEvent = {
+  timestamp: string;
+  event_type: string;
+  summary: string;
+  project_key: string;
+  project_name: string;
+  mission_id: string;
+  status: string;
+};
+
+export type ForgeMissionRow = {
+  project_key: string;
+  project_name: string;
+  mission_id: string;
+  created_at: string;
+  status: string;
+  priority: string;
+  next_action: string;
+};
+
+export type ForgeActivitySnapshot = {
+  generated_at: string;
+  selected_project_key: string;
+  live_feed: ForgeActivityEvent[];
+  mission_status: {
+    active: ForgeMissionRow[];
+    queued: ForgeMissionRow[];
+    failed_or_stalled: ForgeMissionRow[];
+  };
+  queue_worker_visibility: {
+    queue_depth: number;
+    project_queue_status: Record<string, string>;
+    worker_state: string;
+    retry_or_backoff_state: string;
+  };
+  approvals: {
+    pending_count: number;
+    pending_by_urgency: Record<string, number>;
+    items: ForgeConsoleApprovalItem[];
+  };
+  outcomes: {
+    recent_outcomes: Array<{
+      project_key: string;
+      project_name: string;
+      mission_id: string;
+      result: string;
+      summary: string;
+      receipt_state: string;
+      revenue_lane_status: string;
+      timestamp: string;
+    }>;
+    revenue_lane_ready_count: number;
+    verification_count: number;
+  };
+  connector_posture: {
+    execution_lane_status: string;
+    control_state: string;
+    kill_switch_state: string;
+    degraded_mode: boolean;
+    runtime_infrastructure_status: string;
+  };
+};

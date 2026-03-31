@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -1645,11 +1646,468 @@ def execute_control_action(
     )
 
 
+def _resolve_selected_project_key(studio_snapshot: dict[str, Any], project_key: str | None) -> str:
+    requested = str(project_key or "").strip().lower()
+    available = [
+        str(row.get("project_key") or "").strip().lower()
+        for row in list(studio_snapshot.get("projects") or [])
+        if isinstance(row, dict)
+    ]
+    if requested and requested in available:
+        return requested
+    if available:
+        return available[0]
+    return requested
+
+
+def _extract_pending_approvals(approval_summary: dict[str, Any]) -> list[dict[str, Any]]:
+    candidate_lists = [
+        approval_summary.get("pending_approvals"),
+        approval_summary.get("pending_items"),
+        approval_summary.get("items"),
+    ]
+    normalized: list[dict[str, Any]] = []
+    for candidate in candidate_lists:
+        for item in list(candidate or []):
+            if not isinstance(item, dict):
+                continue
+            normalized.append(
+                {
+                    "approval_id": str(item.get("approval_id") or item.get("id") or ""),
+                    "status": str(item.get("status") or "pending"),
+                    "urgency": str(item.get("urgency") or item.get("priority") or "normal"),
+                    "risk": str(item.get("risk_level") or item.get("risk") or ""),
+                    "reason": str(item.get("reason") or item.get("summary") or ""),
+                    "required_action": str(item.get("required_action") or item.get("action") or "operator_review"),
+                    "project_key": str(item.get("project_key") or ""),
+                }
+            )
+    if normalized:
+        return normalized
+    pending_count = int(approval_summary.get("pending_count_total") or 0)
+    if pending_count <= 0:
+        return []
+    return [
+        {
+            "approval_id": f"approval-{index}",
+            "status": "pending",
+            "urgency": "normal",
+            "risk": "",
+            "reason": "Approval pending in governance lane.",
+            "required_action": "operator_review",
+            "project_key": "",
+        }
+        for index in range(1, min(pending_count, 6) + 1)
+    ]
+
+
+def _queue_pressure_level(pending_count: int, queue_count: int) -> str:
+    if pending_count >= 10 or queue_count >= 18:
+        return "high"
+    if pending_count >= 4 or queue_count >= 8:
+        return "elevated"
+    if queue_count > 0:
+        return "normal"
+    return "idle"
+
+
+def build_operator_console_snapshot(project_key: str | None = None) -> dict[str, Any]:
+    studio_snapshot = build_studio_snapshot()
+    selected_key = _resolve_selected_project_key(studio_snapshot, project_key)
+    project_result = (
+        build_project_snapshot(selected_key)
+        if selected_key
+        else _result("ok", {})
+    )
+    project_payload = dict(project_result.get("payload") or {})
+    overview = dict(studio_snapshot.get("overview") or {})
+    approval_center = dict(studio_snapshot.get("approval_center") or {})
+    approval_summary = dict(approval_center.get("approval_summary") or {})
+    queue_payload = dict(project_payload.get("package_queue") or {})
+    queue_rows = [row for row in list(queue_payload.get("packages") or []) if isinstance(row, dict)]
+    latest_queue_row = queue_rows[0] if queue_rows else {}
+    guidance = dict(
+        project_payload.get("operator_guidance")
+        or overview.get("operator_guidance")
+        or {}
+    )
+    handoff_review = dict(
+        project_payload.get("execution_handoff_review")
+        or overview.get("execution_handoff_review")
+        or {}
+    )
+    pending_approvals = _extract_pending_approvals(approval_summary)
+    blockers = [str(item) for item in list(handoff_review.get("handoff_blockers") or []) if str(item).strip()]
+    blocking_reason = str(guidance.get("blocking_reason") or "").strip()
+    if blocking_reason:
+        blockers.append(blocking_reason)
+    queue_count = int(queue_payload.get("count") or 0)
+    pending_count = int(queue_payload.get("pending_count") or 0)
+    budget_visibility = dict(overview.get("budget_visibility") or {})
+    model_visibility = dict(overview.get("model_routing_visibility") or {})
+    live_operation_status = dict(
+        project_payload.get("live_operation_status")
+        or overview.get("live_operation_status")
+        or {}
+    )
+    snapshot = {
+        "generated_at": datetime.now().isoformat(),
+        "selected_project_key": selected_key,
+        "context": {
+            "active_project": {
+                "project_key": selected_key,
+                "project_name": str(project_payload.get("project_name") or selected_key or "No active project"),
+                "project_path": str(project_payload.get("project_path") or ""),
+                "status": str((project_payload.get("workflow_activity") or {}).get("phase_label") or "Planning"),
+            },
+            "current_mission": {
+                "mission_id": str(latest_queue_row.get("package_id") or project_payload.get("selected_package_id") or ""),
+                "status": str(latest_queue_row.get("package_status") or "idle"),
+                "summary": str(
+                    (project_payload.get("workflow_activity") or {}).get("last_action")
+                    or "Waiting for operator input."
+                ),
+            },
+            "active_strategy": {
+                "routing_status": str((project_payload.get("project_state") or {}).get("project_routing_status") or ""),
+                "selected_model_lane": str((project_payload.get("quick_actions") or {}).get("selected_model_lane") or ""),
+                "summary": str(guidance.get("action_reason") or model_visibility.get("budget_note") or ""),
+            },
+            "autonomy_mode": str(
+                (project_payload.get("intake_workspace") or {}).get("preview", {}).get("autonomy_mode")
+                or (project_payload.get("project_state") or {}).get("autonomy_mode")
+                or "supervised_build"
+            ),
+            "next_best_action": str(guidance.get("next_best_action") or "Review queue and clear blockers."),
+            "current_blockers": blockers[:8],
+        },
+        "approvals": {
+            "pending_count": len(pending_approvals),
+            "requires_action": bool(pending_approvals),
+            "items": pending_approvals[:12],
+            "allowed_actions": sorted(ALLOWED_CONTROL_ACTIONS.keys()),
+        },
+        "system_awareness": {
+            "execution_lane_status": str((live_operation_status.get("operation_status") or "idle")),
+            "kill_switch_state": "active" if bool(budget_visibility.get("kill_switch_active")) else "inactive",
+            "queue_pressure": _queue_pressure_level(pending_count, queue_count),
+            "queue_depth": queue_count,
+            "pending_queue_items": pending_count,
+            "worker_state": str((overview.get("executor_health") or {}).get("execution_environment_status") or "unknown"),
+            "revenue_lane_status": str(
+                (latest_queue_row.get("revenue_activation_status") or "awaiting_candidate")
+            ),
+            "control_state": {
+                "studio_health": str(overview.get("studio_health") or "unknown"),
+                "budget_status": str(budget_visibility.get("budget_status") or "within_budget"),
+                "budget_scope": str(budget_visibility.get("budget_scope") or "project"),
+            },
+        },
+        "live_activity": {
+            "operation_status": str(live_operation_status.get("operation_status") or "idle"),
+            "current_phase": str(live_operation_status.get("current_phase") or ""),
+            "current_step": str(live_operation_status.get("current_step") or ""),
+            "last_action": str(live_operation_status.get("last_action") or ""),
+            "recent_activity": [
+                {
+                    "timestamp": str(item.get("timestamp") or ""),
+                    "activity_type": str(item.get("activity_type") or ""),
+                    "activity_summary": str(item.get("activity_summary") or ""),
+                }
+                for item in list(live_operation_status.get("recent_activity") or [])
+                if isinstance(item, dict)
+            ][:12],
+        },
+        "quick_actions": dict(
+            project_payload.get("quick_actions")
+            or overview.get("quick_actions")
+            or {}
+        ),
+    }
+    return _result("ok", snapshot, "")
+
+
+def _build_console_response_cards(console_snapshot: dict[str, Any]) -> list[dict[str, Any]]:
+    context = dict(console_snapshot.get("context") or {})
+    awareness = dict(console_snapshot.get("system_awareness") or {})
+    approvals = dict(console_snapshot.get("approvals") or {})
+    live_activity = dict(console_snapshot.get("live_activity") or {})
+    return [
+        {
+            "card_id": "context",
+            "title": "Operator Context",
+            "lines": [
+                f"Project: {((context.get('active_project') or {}).get('project_name') or 'none')}",
+                f"Mission: {((context.get('current_mission') or {}).get('mission_id') or 'none')}",
+                f"Autonomy: {context.get('autonomy_mode') or 'supervised_build'}",
+                f"Next best action: {context.get('next_best_action') or 'review queue'}",
+            ],
+        },
+        {
+            "card_id": "posture",
+            "title": "System Posture",
+            "lines": [
+                f"Execution lane: {awareness.get('execution_lane_status') or 'idle'}",
+                f"Queue pressure: {awareness.get('queue_pressure') or 'idle'}",
+                f"Worker state: {awareness.get('worker_state') or 'unknown'}",
+                f"Kill switch: {awareness.get('kill_switch_state') or 'inactive'}",
+                f"Revenue lane: {awareness.get('revenue_lane_status') or 'awaiting_candidate'}",
+            ],
+        },
+        {
+            "card_id": "approvals",
+            "title": "Approval Posture",
+            "lines": [
+                f"Pending approvals: {int(approvals.get('pending_count') or 0)}",
+                f"Requires action: {'yes' if approvals.get('requires_action') else 'no'}",
+                f"Latest activity: {live_activity.get('last_action') or 'No recent activity'}",
+            ],
+        },
+    ]
+
+
+def respond_to_operator_message(
+    *,
+    message: str,
+    project_key: str | None = None,
+    execute_action: str = "",
+    confirmed: bool = False,
+    confirmation_text: str = "",
+) -> dict[str, Any]:
+    if execute_action:
+        control_result = execute_control_action(
+            action=execute_action,
+            project_key=project_key,
+            confirmed=confirmed,
+            confirmation_text=confirmation_text,
+        )
+        console_snapshot = build_operator_console_snapshot(project_key).get("payload") or {}
+        return _result(
+            "ok" if control_result.get("status") == "ok" else "error",
+            {
+                "reply": str(control_result.get("message") or "Control action attempted."),
+                "command_result": control_result,
+                "console_snapshot": console_snapshot,
+                "response_cards": _build_console_response_cards(console_snapshot),
+            },
+            str(control_result.get("message") or ""),
+        )
+    console_snapshot = build_operator_console_snapshot(project_key).get("payload") or {}
+    normalized = str(message or "").strip().lower()
+    context = dict(console_snapshot.get("context") or {})
+    approvals = dict(console_snapshot.get("approvals") or {})
+    awareness = dict(console_snapshot.get("system_awareness") or {})
+    live_activity = dict(console_snapshot.get("live_activity") or {})
+    reply = (
+        "Forge is in supervised operator mode. "
+        f"Current project is {((context.get('active_project') or {}).get('project_name') or 'not selected')}. "
+        f"Next best action: {context.get('next_best_action') or 'review queue posture'}."
+    )
+    if "what" in normalized and "doing" in normalized:
+        reply = (
+            f"Forge is currently in {live_activity.get('current_phase') or 'planning'} phase, "
+            f"step {live_activity.get('current_step') or 'waiting_for_input'}. "
+            f"Last action: {live_activity.get('last_action') or 'No recent action'}."
+        )
+    elif "approval" in normalized:
+        reply = (
+            f"There are {int(approvals.get('pending_count') or 0)} pending approval item(s). "
+            "Use governed control actions to complete review or approval when confirmation criteria are met."
+        )
+    elif "queue" in normalized or "worker" in normalized:
+        reply = (
+            f"Queue pressure is {awareness.get('queue_pressure') or 'idle'} with depth "
+            f"{int(awareness.get('queue_depth') or 0)} and worker state "
+            f"{awareness.get('worker_state') or 'unknown'}."
+        )
+    elif "next" in normalized and "action" in normalized:
+        reply = str(context.get("next_best_action") or "Review approvals and clear blockers.")
+    elif "kill switch" in normalized or "killswitch" in normalized:
+        reply = (
+            f"Kill switch is {awareness.get('kill_switch_state') or 'inactive'} "
+            f"under budget status {((awareness.get('control_state') or {}).get('budget_status') or 'within_budget')}."
+        )
+    quick_actions = dict(console_snapshot.get("quick_actions") or {})
+    suggested_actions = [
+        {
+            "action_id": str(item.get("action_id") or ""),
+            "action_label": str(item.get("action_label") or ""),
+            "action_kind": str(item.get("action_kind") or ""),
+            "action_enabled": bool(item.get("action_enabled")),
+            "action_reason": str(item.get("action_reason") or ""),
+            "blocked_reason": str(item.get("blocked_reason") or ""),
+        }
+        for item in list(quick_actions.get("available_actions") or [])
+        if isinstance(item, dict)
+    ][:8]
+    return _result(
+        "ok",
+        {
+            "reply": reply,
+            "response_cards": _build_console_response_cards(console_snapshot),
+            "suggested_actions": suggested_actions,
+            "console_snapshot": console_snapshot,
+        },
+        "",
+    )
+
+
+def build_activity_snapshot(project_key: str | None = None, limit: int = 50) -> dict[str, Any]:
+    studio_snapshot = build_studio_snapshot()
+    overview = dict(studio_snapshot.get("overview") or {})
+    approval_center = dict(studio_snapshot.get("approval_center") or {})
+    approval_summary = dict(approval_center.get("approval_summary") or {})
+    selected_key = _resolve_selected_project_key(studio_snapshot, project_key)
+    project_rows = [
+        row
+        for row in list(studio_snapshot.get("projects") or [])
+        if isinstance(row, dict)
+    ]
+    if selected_key:
+        project_rows = [row for row in project_rows if str(row.get("project_key") or "") == selected_key] or project_rows
+    activity_events: list[dict[str, Any]] = []
+    active_missions: list[dict[str, Any]] = []
+    queued_missions: list[dict[str, Any]] = []
+    failed_or_stalled: list[dict[str, Any]] = []
+    outcome_rows: list[dict[str, Any]] = []
+    for row in project_rows:
+        key = str(row.get("project_key") or "")
+        project_snapshot = dict((build_project_snapshot(key).get("payload") or {}))
+        project_name = str(project_snapshot.get("project_name") or key)
+        workflow = dict(project_snapshot.get("workflow_activity") or {})
+        queue = dict(project_snapshot.get("package_queue") or {})
+        packages = [item for item in list(queue.get("packages") or []) if isinstance(item, dict)]
+        live_operation = dict(project_snapshot.get("live_operation_status") or {})
+        for item in list(live_operation.get("recent_activity") or []):
+            if not isinstance(item, dict):
+                continue
+            activity_events.append(
+                {
+                    "timestamp": str(item.get("timestamp") or ""),
+                    "event_type": str(item.get("activity_type") or "activity"),
+                    "summary": str(item.get("activity_summary") or ""),
+                    "project_key": key,
+                    "project_name": project_name,
+                    "mission_id": str(workflow.get("active_package_id") or ""),
+                    "status": str(live_operation.get("operation_status") or ""),
+                }
+            )
+        for pkg in packages[:20]:
+            status = str(pkg.get("execution_status") or pkg.get("package_status") or "pending").lower()
+            mission_row = {
+                "project_key": key,
+                "project_name": project_name,
+                "mission_id": str(pkg.get("package_id") or ""),
+                "created_at": str(pkg.get("created_at") or ""),
+                "status": status,
+                "priority": str(pkg.get("failure_risk_band") or "normal"),
+                "next_action": str(pkg.get("suggested_next_action") or ""),
+            }
+            if status in {"running", "executing", "in_progress"}:
+                active_missions.append(mission_row)
+            elif status in {"failed", "blocked", "error", "stalled"}:
+                failed_or_stalled.append(mission_row)
+            else:
+                queued_missions.append(mission_row)
+            if status in {"succeeded", "completed", "verified"}:
+                outcome_rows.append(
+                    {
+                        "project_key": key,
+                        "project_name": project_name,
+                        "mission_id": str(pkg.get("package_id") or ""),
+                        "result": "execution_verified",
+                        "summary": str(pkg.get("last_action_label") or "Execution completed."),
+                        "receipt_state": str(pkg.get("integrity_status") or ""),
+                        "revenue_lane_status": str(pkg.get("revenue_activation_status") or ""),
+                        "timestamp": str(pkg.get("created_at") or ""),
+                    }
+                )
+        if not packages:
+            queued_missions.append(
+                {
+                    "project_key": key,
+                    "project_name": project_name,
+                    "mission_id": "",
+                    "created_at": "",
+                    "status": "idle",
+                    "priority": "normal",
+                    "next_action": str(workflow.get("last_action") or "Awaiting mission creation."),
+                }
+            )
+    activity_events = sorted(
+        activity_events,
+        key=lambda item: str(item.get("timestamp") or ""),
+        reverse=True,
+    )[: max(1, min(limit, 120))]
+    pending_approvals = _extract_pending_approvals(approval_summary)
+    activity_payload = {
+        "generated_at": datetime.now().isoformat(),
+        "selected_project_key": selected_key,
+        "live_feed": activity_events,
+        "mission_status": {
+            "active": active_missions[:30],
+            "queued": queued_missions[:50],
+            "failed_or_stalled": failed_or_stalled[:30],
+        },
+        "queue_worker_visibility": {
+            "queue_depth": int(sum(int((row.get("queue_status") in {"queued", "active"}) or 0) for row in project_rows)),
+            "project_queue_status": {
+                str(row.get("project_key") or ""): str(row.get("queue_status") or "")
+                for row in project_rows
+            },
+            "worker_state": str((overview.get("executor_health") or {}).get("execution_environment_status") or "unknown"),
+            "retry_or_backoff_state": str((overview.get("executor_health") or {}).get("runtime_reason") or ""),
+        },
+        "approvals": {
+            "pending_count": len(pending_approvals),
+            "pending_by_urgency": {
+                urgency: sum(1 for item in pending_approvals if str(item.get("urgency") or "normal") == urgency)
+                for urgency in sorted({str(item.get("urgency") or "normal") for item in pending_approvals})
+            },
+            "items": pending_approvals[:20],
+        },
+        "outcomes": {
+            "recent_outcomes": outcome_rows[:30],
+            "revenue_lane_ready_count": int(
+                sum(
+                    1
+                    for row in outcome_rows
+                    if str(row.get("revenue_lane_status") or "").strip().lower() == "ready_for_revenue_action"
+                )
+            ),
+            "verification_count": int(
+                sum(1 for row in outcome_rows if str(row.get("result") or "") == "execution_verified")
+            ),
+        },
+        "connector_posture": {
+            "execution_lane_status": str((overview.get("live_operation_status") or {}).get("operation_status") or "idle"),
+            "control_state": str(overview.get("studio_health") or "unknown"),
+            "kill_switch_state": "active"
+            if bool((overview.get("budget_visibility") or {}).get("kill_switch_active"))
+            else "inactive",
+            "degraded_mode": bool(studio_snapshot.get("degraded_sources")),
+            "runtime_infrastructure_status": str((overview.get("executor_health") or {}).get("runtime_infrastructure_status") or "unknown"),
+        },
+    }
+    return _result("ok", activity_payload, "")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Forge Console bridge")
     parser.add_argument(
         "mode",
-        choices=["overview", "project", "package", "control", "intake_preview", "upload_attachment", "client_view"],
+        choices=[
+            "overview",
+            "project",
+            "package",
+            "control",
+            "intake_preview",
+            "upload_attachment",
+            "client_view",
+            "operator_console_snapshot",
+            "operator_console_message",
+            "activity_snapshot",
+        ],
     )
     parser.add_argument("--project-key", default="")
     parser.add_argument("--package-id", default="")
@@ -1671,6 +2129,9 @@ def main() -> int:
     parser.add_argument("--autonomy-mode", default="supervised_build")
     parser.add_argument("--lead-intake-json", default="{}")
     parser.add_argument("--qualification-json", default="{}")
+    parser.add_argument("--message", default="")
+    parser.add_argument("--execute-action", default="")
+    parser.add_argument("--limit", type=int, default=50)
     args = parser.parse_args()
 
     if args.mode == "overview":
@@ -1705,6 +2166,21 @@ def main() -> int:
         )
     elif args.mode == "client_view":
         out = build_client_view_snapshot(args.project_key or None)
+    elif args.mode == "operator_console_snapshot":
+        out = build_operator_console_snapshot(args.project_key or None)
+    elif args.mode == "operator_console_message":
+        out = respond_to_operator_message(
+            message=args.message,
+            project_key=args.project_key or None,
+            execute_action=args.execute_action,
+            confirmed=bool(args.confirmed),
+            confirmation_text=args.confirmation_text,
+        )
+    elif args.mode == "activity_snapshot":
+        out = build_activity_snapshot(
+            project_key=args.project_key or None,
+            limit=int(args.limit or 50),
+        )
     else:
         out = execute_control_action(
             action=args.action,

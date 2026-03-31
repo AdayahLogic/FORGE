@@ -1,11 +1,14 @@
 import type {
+  ForgeActivitySnapshot,
   ForgeClientViewSnapshot,
+  ForgeConsoleMessageResponse,
   CommandResult,
   ForgeAttachmentRecord,
   ForgeConstraintSections,
   ForgeIntakePreview,
   ForgeLeadIntakeProfile,
   ForgeLeadQualificationDraft,
+  ForgeOperatorConsoleSnapshot,
   ForgeOverviewSnapshot,
   ForgeRequestedArtifactsDraft,
   PackageDetailSnapshot,
@@ -65,6 +68,42 @@ export function runControlAction(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function getOperatorConsoleSnapshot(projectKey: string) {
+  const suffix = projectKey
+    ? `?projectKey=${encodeURIComponent(projectKey)}`
+    : "";
+  return fetchJson<CommandResult<ForgeOperatorConsoleSnapshot>>(
+    `/api/forge/console${suffix}`,
+  );
+}
+
+export function sendOperatorMessage(input: {
+  projectKey: string;
+  message: string;
+  executeAction?: string;
+  confirmed?: boolean;
+  confirmationText?: string;
+}) {
+  return fetchJson<CommandResult<ForgeConsoleMessageResponse>>("/api/forge/console", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function getActivitySnapshot(input?: { projectKey?: string; limit?: number }) {
+  const params = new URLSearchParams();
+  if (input?.projectKey) {
+    params.set("projectKey", input.projectKey);
+  }
+  if (typeof input?.limit === "number") {
+    params.set("limit", String(input.limit));
+  }
+  const query = params.toString();
+  return fetchJson<CommandResult<ForgeActivitySnapshot>>(
+    `/api/forge/activity${query ? `?${query}` : ""}`,
+  );
 }
 
 export function previewIntakeRequest(input: {
