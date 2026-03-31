@@ -11,6 +11,11 @@ from NEXUS.executor_backends.openclaw_executor import (
     execute_openclaw_package,
     get_adapter_status as get_openclaw_adapter_status,
 )
+from NEXUS.executor_backends.playwright_browser_executor import (
+    BACKEND_ID as PLAYWRIGHT_BROWSER_BACKEND_ID,
+    execute_playwright_browser_package,
+    get_adapter_status as get_playwright_browser_adapter_status,
+)
 
 
 EXECUTOR_BACKENDS: dict[str, dict[str, Any]] = {
@@ -18,6 +23,11 @@ EXECUTOR_BACKENDS: dict[str, dict[str, Any]] = {
         "backend_id": OPENCLAW_BACKEND_ID,
         "executor": execute_openclaw_package,
         "status_getter": get_openclaw_adapter_status,
+    },
+    PLAYWRIGHT_BROWSER_BACKEND_ID: {
+        "backend_id": PLAYWRIGHT_BROWSER_BACKEND_ID,
+        "executor": execute_playwright_browser_package,
+        "status_getter": get_playwright_browser_adapter_status,
     },
 }
 

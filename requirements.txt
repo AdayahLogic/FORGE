@@ -6,3 +6,4 @@ pydantic
 rich
 typer
 streamlit
+playwright
