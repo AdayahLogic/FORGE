@@ -36,6 +36,7 @@ from NEXUS.execution_package_hardening import (
     utc_now_iso,
     verify_terminal_execution_integrity,
 )
+from NEXUS.browser_execution_contract import validate_browser_execution_request
 from NEXUS.execution_package_evaluation import (
     evaluate_execution_package_safe,
     normalize_evaluation_basis,
@@ -398,6 +399,15 @@ def _resolve_executor_backend_id(package: dict[str, Any] | None) -> str:
     if isinstance(metadata, dict):
         return _normalize_executor_backend_id(metadata.get("executor_backend_id"))
     return ""
+
+
+def _resolve_browser_execution_request(package: dict[str, Any] | None) -> dict[str, Any]:
+    p = package or {}
+    metadata = p.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("browser_execution_request"), dict):
+        return dict(metadata.get("browser_execution_request") or {})
+    value = p.get("browser_execution_request")
+    return dict(value) if isinstance(value, dict) else {}
 
 
 def _normalize_execution_reason(value: Any) -> dict[str, str]:
@@ -2220,6 +2230,42 @@ def evaluate_execution_package_handoff(
             "handoff_executor_target_name": target_name,
             "handoff_aegis_result": {},
         }
+    if backend_id == "playwright_browser" and target_id != "openclaw_browser":
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {
+                "code": "executor_backend_target_mismatch",
+                "message": "Playwright browser backend requires the openclaw_browser executor target.",
+            },
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name,
+            "handoff_aegis_result": {},
+        }
+    if backend_id == "playwright_browser" and "browser_automation" not in capabilities:
+        return {
+            "handoff_status": "blocked",
+            "handoff_reason": {
+                "code": "executor_capability_mismatch",
+                "message": "Playwright browser backend requires a browser_automation-capable target.",
+            },
+            "handoff_executor_target_id": target_id,
+            "handoff_executor_target_name": target_name,
+            "handoff_aegis_result": {},
+        }
+    if backend_id == "playwright_browser":
+        browser_request = _resolve_browser_execution_request(p)
+        browser_validation = validate_browser_execution_request(browser_request)
+        if browser_validation.get("status") != "valid":
+            return {
+                "handoff_status": "blocked",
+                "handoff_reason": {
+                    "code": "browser_contract_invalid",
+                    "message": "Browser execution contract is invalid and must be corrected before handoff.",
+                },
+                "handoff_executor_target_id": target_id,
+                "handoff_executor_target_name": target_name,
+                "handoff_aegis_result": {},
+            }
     if (
         not runtime_target
         or str(runtime_target.get("active_or_planned") or "").strip().lower() not in ("active", "planned")
@@ -2388,6 +2434,24 @@ def evaluate_execution_package_execution(package: dict[str, Any] | None) -> dict
             "executor_capability_mismatch",
             "OpenClaw backend requires a controlled_executor-capable target.",
         )
+    if backend_id == "playwright_browser" and target_id != "openclaw_browser":
+        return _blocked(
+            "executor_backend_target_mismatch",
+            "Playwright browser backend requires the openclaw_browser executor target.",
+        )
+    if backend_id == "playwright_browser" and "browser_automation" not in capabilities:
+        return _blocked(
+            "executor_capability_mismatch",
+            "Playwright browser backend requires a browser_automation-capable target.",
+        )
+    if backend_id == "playwright_browser":
+        browser_request = _resolve_browser_execution_request(p)
+        browser_validation = validate_browser_execution_request(browser_request)
+        if browser_validation.get("status") != "valid":
+            return _blocked(
+                "browser_contract_invalid",
+                "Browser execution contract is invalid and cannot execute.",
+            )
     if (
         not runtime_target
         or str(runtime_target.get("active_or_planned") or "").strip().lower() != "active"
@@ -2595,6 +2659,90 @@ def record_execution_package_handoff_safe(**kwargs: Any) -> dict[str, Any]:
         return record_execution_package_handoff(**kwargs)
     except Exception:
         return {"status": "error", "reason": "Failed to persist execution package handoff.", "package": None}
+
+
+def record_browser_execution_task(
+    *,
+    project_path: str | None,
+    package_id: str | None,
+    submit_actor: str,
+    browser_request: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Attach a governed browser execution request onto an existing package."""
+    actor = str(submit_actor or "").strip()
+    if not actor:
+        return {"status": "error", "reason": "submit_actor required.", "package": None}
+    package = read_execution_package(project_path=project_path, package_id=package_id)
+    if not package:
+        return {"status": "error", "reason": "Execution package not found.", "package": None}
+
+    authority = enforce_component_authority_safe(
+        component_name="openclaw",
+        actor=actor,
+        requested_actions=["execute_package"],
+        allowed_components=["openclaw"],
+        authority_context={"package_id": package_id, "project_name": package.get("project_name")},
+    )
+    package = _with_package_authority_event(
+        package,
+        scope="browser_submission",
+        authority_trace=authority.get("authority_trace"),
+        authority_denial=authority.get("authority_denial"),
+    )
+    if authority.get("status") == "denied":
+        return _persist_package_update(
+            project_path=project_path,
+            package_id=package_id,
+            package=package,
+            status="denied",
+            reason=str(((authority.get("authority_denial") or {}).get("reason")) or "Browser task submission authority denied."),
+        )
+
+    validation = validate_browser_execution_request(browser_request)
+    if validation.get("status") != "valid":
+        return {"status": "error", "reason": f"Invalid browser request: {','.join(validation.get('errors') or [])}", "package": package}
+
+    contract = dict(validation.get("contract") or {})
+    metadata = dict(package.get("metadata") or {})
+    metadata["executor_backend_id"] = "playwright_browser"
+    metadata["browser_execution_request"] = contract
+    metadata["browser_lane"] = {
+        "lane_id": "openclaw_browser_playwright_v1",
+        "lane_status": "configured",
+        "contract_status": "valid",
+        "configured_by": actor,
+        "configured_at": _utc_now_iso(),
+    }
+    package["metadata"] = metadata
+    package["requested_action"] = "browser_execution"
+    command_request = dict(package.get("command_request") or {})
+    if not str(command_request.get("request_type") or "").strip():
+        command_request["request_type"] = "browser_execution"
+    command_request["task_type"] = "browser_execution"
+    if not str(command_request.get("summary") or "").strip():
+        command_request["summary"] = "Governed browser execution request."
+    package["command_request"] = command_request
+    package["execution_executor_backend_id"] = "playwright_browser"
+    package["execution_summary"] = {
+        **dict(package.get("execution_summary") or {}),
+        "requires_human_approval": True,
+        "review_only": False,
+        "browser_lane": "openclaw_browser_playwright_v1",
+    }
+    return _persist_package_update(
+        project_path=project_path,
+        package_id=package_id,
+        package=package,
+        status="ok",
+        reason="Browser execution task attached to package.",
+    )
+
+
+def record_browser_execution_task_safe(**kwargs: Any) -> dict[str, Any]:
+    try:
+        return record_browser_execution_task(**kwargs)
+    except Exception:
+        return {"status": "error", "reason": "Failed to persist browser execution task.", "package": None}
 
 
 def record_execution_package_execution(

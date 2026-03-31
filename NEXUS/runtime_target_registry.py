@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 DISPATCH_READY_REVIEW_TARGETS = {"windows_review_package"}
-DISPATCH_UNAVAILABLE_TARGETS = {"openclaw"}
+DISPATCH_UNAVAILABLE_TARGETS = {"openclaw", "openclaw_browser"}
 
 RUNTIME_TARGET_REGISTRY: dict[str, dict[str, Any]] = {
     "local": {
@@ -52,6 +52,16 @@ RUNTIME_TARGET_REGISTRY: dict[str, dict[str, Any]] = {
         "capabilities": ["execute", "controlled_executor"],
         "approval_level": "human_review",
         "description": "Controlled executor target for reviewed package execution only.",
+    },
+    "openclaw_browser": {
+        "canonical_name": "openclaw_browser",
+        "display_name": "OpenClaw Browser",
+        "status": "active",
+        "runtime_type": "controlled_executor",
+        "active_or_planned": "active",
+        "capabilities": ["execute", "controlled_executor", "browser_automation"],
+        "approval_level": "human_review",
+        "description": "Governed browser executor target for bounded Playwright execution with evidence receipts.",
     },
     "windows_review_package": {
         "canonical_name": "windows_review_package",
