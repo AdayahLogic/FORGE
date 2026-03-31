@@ -10,6 +10,8 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.logging_engine import log_system_event
+from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch
+from NEXUS.portfolio_autonomy_trace import append_portfolio_trace_event_safe
 
 
 def build_autonomy_result(
@@ -121,6 +123,28 @@ def run_project_autonomy(
     from NEXUS.autonomous_launcher import launch_project_cycle
 
     loaded = project_state if project_state is not None else load_project_state(project_path)
+    kill_switch = read_portfolio_kill_switch()
+    if bool(kill_switch.get("enabled")):
+        reason = str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled.")
+        append_portfolio_trace_event_safe(
+            {
+                "event_type": "kill_switch_stop",
+                "project_id": project_name,
+                "reason": reason,
+                "decision_inputs": {"source": "continuous_autonomy.run_project_autonomy"},
+                "resulting_action": "stop",
+                "visibility": "operator",
+                "source": "continuous_autonomy",
+            }
+        )
+        return build_autonomy_result(
+            autonomy_status="blocked",
+            autonomy_action="stop",
+            autonomy_reason=reason,
+            target_project=project_name,
+            autonomous_run_started=False,
+            bounded_operation=True,
+        )
     if loaded.get("load_error"):
         log_system_event(
             project=project_name,
@@ -291,6 +315,29 @@ def run_studio_autonomy(
     from NEXUS.studio_driver import build_studio_driver_result_safe
     from NEXUS.production_guardrails import evaluate_guardrails_safe
     from NEXUS.autonomous_launcher import launch_studio_cycle
+
+    kill_switch = read_portfolio_kill_switch()
+    if bool(kill_switch.get("enabled")):
+        reason = str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled.")
+        append_portfolio_trace_event_safe(
+            {
+                "event_type": "kill_switch_stop",
+                "project_id": "",
+                "reason": reason,
+                "decision_inputs": {"source": "continuous_autonomy.run_studio_autonomy"},
+                "resulting_action": "stop",
+                "visibility": "operator",
+                "source": "continuous_autonomy",
+            }
+        )
+        return build_autonomy_result(
+            autonomy_status="blocked",
+            autonomy_action="stop",
+            autonomy_reason=reason,
+            target_project=None,
+            autonomous_run_started=False,
+            bounded_operation=True,
+        )
 
     if states_by_project is None:
         states_by_project = {}

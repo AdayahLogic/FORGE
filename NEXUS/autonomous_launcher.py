@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.logging_engine import log_system_event
+from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch
 
 AUTONOMOUS_USER_INPUT_PREFIX = "Autonomous cycle (launch): "
 
@@ -171,6 +172,18 @@ def launch_project_cycle(
     Blocks if already inside an autonomous run.
     """
     global _in_autonomous_run
+    kill_switch = read_portfolio_kill_switch()
+    if bool(kill_switch.get("enabled")):
+        reason = str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled.")
+        return build_launch_result(
+            launch_status="blocked",
+            launch_action="stop",
+            launch_reason=reason,
+            target_project=project_name,
+            execution_started=False,
+            bounded_execution=True,
+            source="reexecution",
+        )
     if _in_autonomous_run:
         result = _blocked_nested_launch_result()
         log_system_event(
@@ -266,6 +279,18 @@ def launch_studio_cycle(
     Blocks if already inside an autonomous run.
     """
     global _in_autonomous_run
+    kill_switch = read_portfolio_kill_switch()
+    if bool(kill_switch.get("enabled")):
+        reason = str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled.")
+        return build_launch_result(
+            launch_status="blocked",
+            launch_action="stop",
+            launch_reason=reason,
+            target_project=None,
+            execution_started=False,
+            bounded_execution=True,
+            source="studio_driver",
+        )
     if _in_autonomous_run:
         result = _blocked_nested_launch_result()
         log_system_event(

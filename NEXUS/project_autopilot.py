@@ -26,6 +26,8 @@ from NEXUS.autonomy_modes import (
     get_mode_stop_rail_config,
     normalize_autonomy_mode,
 )
+from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch
+from NEXUS.portfolio_autonomy_trace import append_portfolio_trace_event_safe
 from NEXUS.project_routing import build_project_routing_decision, select_next_task
 from NEXUS.project_state import load_project_state, update_project_state_fields
 
@@ -414,7 +416,75 @@ def _apply_stop_rail_outcome(
             active_package=package,
         ),
     )
+    append_portfolio_trace_event_safe(
+        {
+            "event_type": "loop_stopped_due_limits",
+            "project_id": project_name,
+            "reason": stop_reason,
+            "decision_inputs": {
+                "routing_outcome": routing_outcome,
+                "rail_type": str(stop_rail_result.get("rail_type") or ""),
+                "current_value": str(stop_rail_result.get("current_value") or ""),
+                "limit_value": str(stop_rail_result.get("limit_value") or ""),
+            },
+            "resulting_action": routing_outcome,
+            "visibility": "operator",
+            "source": "project_autopilot._apply_stop_rail_outcome",
+        }
+    )
     return {"status": "ok", "reason": stop_reason, "session": session}
+
+
+def _apply_kill_switch_outcome(
+    *,
+    session: dict[str, Any],
+    state: dict[str, Any],
+    project_path: str,
+    project_name: str,
+    reason: str,
+    current_task: dict[str, Any] | None = None,
+    package: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    session["autopilot_status"] = "completed"
+    session["autopilot_next_action"] = "stop"
+    session["autopilot_stop_reason"] = "persistent_kill_switch_active"
+    session["autopilot_escalation_reason"] = reason
+    session["autopilot_updated_at"] = _now_iso()
+    session["autopilot_last_result"] = {
+        "status": "stopped",
+        "reason": "persistent_kill_switch_active",
+        "details": reason,
+    }
+    session["autopilot_progress_summary"] = _build_progress_summary(
+        state=state,
+        session=session,
+        current_task=current_task,
+        package=package or {},
+        next_suggested_step="operator_review",
+        operator_review_required=True,
+    )
+    _persist_session(
+        project_path,
+        session,
+        extra_fields=_routing_state_fields(
+            project_name=project_name,
+            state=state,
+            session=session,
+            active_package=package,
+        ),
+    )
+    append_portfolio_trace_event_safe(
+        {
+            "event_type": "kill_switch_stop",
+            "project_id": project_name,
+            "reason": reason,
+            "decision_inputs": {"autopilot_session_id": str(session.get("autopilot_session_id") or "")},
+            "resulting_action": "stop",
+            "visibility": "operator",
+            "source": "project_autopilot._run_project_autopilot_loop",
+        }
+    )
+    return {"status": "ok", "reason": "persistent_kill_switch_active", "session": session}
 
 
 def _routing_state_fields(
@@ -998,6 +1068,18 @@ def _run_project_autopilot_loop(
             )
             return {"status": "error", "reason": "Failed to load project state during autopilot run.", "session": session}
 
+        kill_switch = read_portfolio_kill_switch()
+        if bool(kill_switch.get("enabled")):
+            return _apply_kill_switch_outcome(
+                session=session,
+                state=state,
+                project_path=project_path,
+                project_name=project_name,
+                reason=str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled."),
+                current_task=_select_next_task(state),
+                package=_load_active_package(project_path=project_path, session=session, state=state) or {},
+            )
+
         _ensure_stop_rail_config(session, state.get("autonomy_mode") or session.get("autopilot_mode"))
         _current_counts(session)
         precheck_stop_rail = _evaluate_stop_rails(session)
@@ -1159,6 +1241,23 @@ def _run_project_autopilot_loop(
                     "execution_package_path": get_execution_package_file_path(project_path, (active_package or {}).get("package_id")),
                 },
             )
+            event_type = "mission_deferred" if selected_action == "pause" else ("escalation_emitted" if selected_action == "escalate" else "loop_stopped_due_limits")
+            if "zero revenue allocation" in str(session.get("autopilot_stop_reason") or "").lower():
+                event_type = "autopilot_paused_zero_allocation"
+            append_portfolio_trace_event_safe(
+                {
+                    "event_type": event_type,
+                    "project_id": project_name,
+                    "reason": str(session.get("autopilot_stop_reason") or ""),
+                    "decision_inputs": {
+                        "routing_action": selected_action,
+                        "routing_reason": str(routing_result.get("routing_reason") or ""),
+                    },
+                    "resulting_action": session.get("autopilot_next_action"),
+                    "visibility": "operator",
+                    "source": "project_autopilot._run_project_autopilot_loop",
+                }
+            )
             return {
                 "status": "ok",
                 "reason": session["autopilot_stop_reason"],
@@ -1214,6 +1313,17 @@ def _run_project_autopilot_loop(
             stop_reason = outcome_reason
             escalation_reason = outcome_reason
             operator_review_required = True
+            append_portfolio_trace_event_safe(
+                {
+                    "event_type": "escalation_emitted",
+                    "project_id": project_name,
+                    "reason": outcome_reason,
+                    "decision_inputs": {"pipeline_outcome": outcome},
+                    "resulting_action": "operator_review",
+                    "visibility": "operator",
+                    "source": "project_autopilot._advance_package_pipeline",
+                }
+            )
         else:
             next_action = "stop"
             status_value = "error_fallback"
