@@ -84,6 +84,10 @@ SUPPORTED_COMMANDS = frozenset({
     "autonomy_status",
     "autonomy_run",
     "autonomy_trace",
+    "portfolio_autonomy_status",
+    "portfolio_autonomy_trace",
+    "portfolio_autonomy_revenue_priority",
+    "persistent_kill_switch_status",
     "helix_status",
     "helix_run",
     "helix_trace",
@@ -2733,6 +2737,121 @@ def run_command(
                 },
             )
 
+    if cmd == "persistent_kill_switch_status":
+        try:
+            from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch, set_portfolio_kill_switch
+            from NEXUS.portfolio_autonomy_trace import append_portfolio_trace_event_safe
+
+            enabled_value = kwargs.get("enabled")
+            if enabled_value is None and "set_to" in kwargs:
+                enabled_value = kwargs.get("set_to")
+            if enabled_value is None and "value" in kwargs:
+                enabled_value = kwargs.get("value")
+            changed = enabled_value is not None
+
+            if changed:
+                if isinstance(enabled_value, str):
+                    enabled_flag = enabled_value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+                else:
+                    enabled_flag = bool(enabled_value)
+                reason = str(kwargs.get("reason") or ("Operator enabled persistent kill switch." if enabled_flag else "Operator disabled persistent kill switch.")).strip()
+                changed_by = str(kwargs.get("changed_by") or kwargs.get("source") or "command_surface")
+                scope = str(kwargs.get("scope") or "portfolio_autonomy")
+                payload = set_portfolio_kill_switch(
+                    enabled=enabled_flag,
+                    reason=reason,
+                    changed_by=changed_by,
+                    source="command_surface.persistent_kill_switch_status",
+                    scope=scope,
+                )
+                append_portfolio_trace_event_safe(
+                    {
+                        "event_type": "kill_switch_state_changed",
+                        "reason": reason,
+                        "decision_inputs": {"enabled": enabled_flag, "changed_by": changed_by, "scope": scope},
+                        "resulting_action": "stop" if enabled_flag else "resume_eligible",
+                        "visibility": "operator",
+                        "source": "command_surface",
+                    }
+                )
+                summary_line = f"enabled={payload.get('enabled')}; changed_by={payload.get('changed_by')}; scope={payload.get('scope')}"
+            else:
+                payload = read_portfolio_kill_switch()
+                summary_line = f"enabled={payload.get('enabled')}; changed_at={payload.get('changed_at')}"
+            return _result(command=cmd, status="ok", summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
+    if cmd == "portfolio_autonomy_trace":
+        try:
+            from NEXUS.portfolio_autonomy_trace import read_portfolio_trace_tail
+
+            limit = max(1, min(int(kwargs.get("n") or n or 50), 200))
+            event_type = str(kwargs.get("event_type") or "").strip()
+            trace = read_portfolio_trace_tail(limit, event_type=event_type)
+            payload = {"trace_count": len(trace), "trace": trace}
+            return _result(command=cmd, status="ok", summary=f"trace_count={len(trace)}", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"trace_count": 0, "trace": [], "error": str(e)})
+
+    if cmd in {"portfolio_autonomy_status", "portfolio_autonomy_revenue_priority"}:
+        try:
+            from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch
+            from NEXUS.project_routing import evaluate_project_selection
+
+            states: dict[str, dict[str, Any]] = {}
+            for key, config in PROJECTS.items():
+                project_path = str((config or {}).get("path") or "").strip()
+                if not project_path:
+                    continue
+                loaded = load_project_state(project_path)
+                if isinstance(loaded, dict) and not loaded.get("load_error"):
+                    states[key] = loaded
+            selection = evaluate_project_selection(states_by_project=states)
+            kill_switch = read_portfolio_kill_switch()
+            if cmd == "portfolio_autonomy_revenue_priority":
+                payload = {
+                    "selected_project_id": selection.get("selected_project_id") or "",
+                    "revenue_priority_summary": selection.get("revenue_priority_summary") or {},
+                    "why_selected": selection.get("why_selected") or "",
+                    "why_not_selected": selection.get("why_not_selected") or [],
+                    "next_action": selection.get("next_action") or "",
+                    "next_reason": selection.get("next_reason") or "",
+                    "persistent_kill_switch": kill_switch,
+                }
+                summary_line = (
+                    f"selected={payload.get('selected_project_id')}; "
+                    f"ranked={len((payload.get('revenue_priority_summary') or {}).get('ranking') or [])}; "
+                    f"kill_switch={kill_switch.get('enabled')}"
+                )
+                return _result(command=cmd, status="ok", summary=summary_line, payload=payload)
+
+            payload = {
+                "selection_status": selection.get("status") or "",
+                "selected_project_id": selection.get("selected_project_id") or "",
+                "selection_reason": selection.get("selection_reason") or "",
+                "why_selected": selection.get("why_selected") or "",
+                "why_not_selected": selection.get("why_not_selected") or [],
+                "next_action": selection.get("next_action") or "",
+                "next_reason": selection.get("next_reason") or "",
+                "routing_outcome": selection.get("routing_outcome") or "",
+                "priority_basis": selection.get("priority_basis") or "",
+                "eligible_projects": selection.get("eligible_projects") or [],
+                "blocked_projects": selection.get("blocked_projects") or [],
+                "contention_detected": bool(selection.get("contention_detected")),
+                "revenue_priority_summary": selection.get("revenue_priority_summary") or {},
+                "persistent_kill_switch": kill_switch,
+            }
+            summary_line = (
+                f"status={payload.get('selection_status')}; "
+                f"selected={payload.get('selected_project_id')}; "
+                f"kill_switch={kill_switch.get('enabled')}; "
+                f"next_action={payload.get('next_action')}"
+            )
+            return _result(command=cmd, status="ok", summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", summary=str(e), payload={"error": str(e)})
+
     if cmd == "helix_status":
         if not path:
             return _result(
@@ -4590,7 +4709,6 @@ def run_command(
             from NEXUS.approval_registry import read_approval_journal_tail
             from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch, read_patch_proposal_resolution_tail
             from NEXUS.approval_staleness import evaluate_approval_staleness, evaluate_proposal_approval_staleness
-            from NEXUS.registry import PROJECTS
             trace: dict[str, Any] = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "hours_since": 0.0}
             if approval_id:
                 for proj_key in PROJECTS:
@@ -4659,7 +4777,6 @@ def run_command(
             from NEXUS.approval_summary import build_approval_summary_safe
             from NEXUS.approval_lifecycle import evaluate_approval_lifecycle, evaluate_resolution_lifecycle
             from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch
-            from NEXUS.registry import PROJECTS
             summary = build_approval_summary_safe(n_recent=30, n_tail=100)
             lifecycle_items: list[dict[str, Any]] = []
             if approval_id:
@@ -4702,7 +4819,6 @@ def run_command(
         try:
             from NEXUS.approval_summary import build_approval_summary_safe
             from NEXUS.approval_lifecycle import get_reapproval_required_count
-            from NEXUS.registry import PROJECTS
             summary = build_approval_summary_safe(n_recent=20, n_tail=100)
             reapproval_count = summary.get("reapproval_required_count", 0)
             items: list[dict[str, Any]] = []
@@ -4782,7 +4898,6 @@ def run_command(
     if cmd in ("runtime_isolation_status", "sandbox_posture"):
         try:
             from NEXUS.runtime_isolation import build_runtime_isolation_posture_safe
-            from NEXUS.registry_dashboard import build_registry_dashboard_summary
             dash = build_registry_dashboard_summary()
             exec_env = dash.get("execution_environment_summary") or {}
             data = build_runtime_isolation_posture_safe(

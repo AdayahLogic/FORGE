@@ -24,6 +24,8 @@ from NEXUS.capability_registry import list_active_capabilities, list_planned_cap
 from NEXUS.runtime_target_registry import get_runtime_target_summary
 from NEXUS.runtime_target_selector import get_selection_defaults_summary
 from NEXUS.project_state import load_project_state
+from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch
+from NEXUS.portfolio_autonomy_trace import read_portfolio_trace_tail
 from NEXUS.project_routing import evaluate_project_selection
 from NEXUS.studio_coordinator import build_studio_coordination_summary_safe
 from NEXUS.studio_driver import build_studio_driver_result_safe
@@ -1692,6 +1694,8 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
     blocked_local_analysis_count_total = sum(v.get("blocked", 0) for v in execution_package_local_analysis_counts_by_project.values())
     error_local_analysis_count_total = sum(v.get("error_fallback", 0) for v in execution_package_local_analysis_counts_by_project.values())
     portfolio_selection = evaluate_project_selection(states_by_project=states_by_project)
+    persistent_kill_switch = read_portfolio_kill_switch()
+    autonomy_trace_recent = read_portfolio_trace_tail(12)
 
     return {
         "summary_generated_at": now,
@@ -1737,12 +1741,27 @@ def build_registry_dashboard_summary() -> dict[str, Any]:
             "blocked_project_count": len(portfolio_selection.get("blocked_projects") or []),
             "contention_detected": bool(portfolio_selection.get("contention_detected")),
             "last_selection_reason": str(portfolio_selection.get("selection_reason") or ""),
+            "why_selected": str(portfolio_selection.get("why_selected") or ""),
+            "why_not_selected": list(portfolio_selection.get("why_not_selected") or []),
+            "next_action": str(portfolio_selection.get("next_action") or ""),
+            "next_reason": str(portfolio_selection.get("next_reason") or ""),
             "routing_outcome": str(portfolio_selection.get("routing_outcome") or ""),
             "priority_basis": str(portfolio_selection.get("priority_basis") or ""),
             "eligible_projects": list(portfolio_selection.get("eligible_projects") or []),
             "blocked_projects": list(portfolio_selection.get("blocked_projects") or []),
             "candidate_project_ids": list(portfolio_selection.get("candidate_project_ids") or []),
             "recorded_at": str(portfolio_selection.get("recorded_at") or ""),
+            "revenue_priority_summary": dict(portfolio_selection.get("revenue_priority_summary") or {}),
+            "persistent_kill_switch": persistent_kill_switch,
+        },
+        "portfolio_autonomy_hardening_summary": {
+            "hardening_status": "active",
+            "persistent_kill_switch": persistent_kill_switch,
+            "recent_trace_highlights": autonomy_trace_recent[-6:],
+            "why_selected": str(portfolio_selection.get("why_selected") or ""),
+            "next_action": str(portfolio_selection.get("next_action") or ""),
+            "next_reason": str(portfolio_selection.get("next_reason") or ""),
+            "revenue_priority_influence": dict(portfolio_selection.get("revenue_priority_summary") or {}),
         },
         "agent_summary": agent_summary,
         "policy_summary": policy_summary,

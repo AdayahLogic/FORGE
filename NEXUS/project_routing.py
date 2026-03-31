@@ -4,6 +4,9 @@ from datetime import datetime
 from typing import Any
 
 from NEXUS.autonomy_modes import build_autonomy_mode_state, evaluate_mode_transition, normalize_autonomy_mode
+from NEXUS.execution_package_registry import read_execution_package
+from NEXUS.portfolio_autonomy_controls import read_portfolio_kill_switch
+from NEXUS.portfolio_autonomy_trace import append_portfolio_trace_event_safe
 from NEXUS.project_state import load_project_state
 from NEXUS.registry import PROJECTS
 
@@ -78,7 +81,38 @@ def _blocked_reason(state: dict[str, Any]) -> str:
     return ""
 
 
-def _candidate_priority(project_id: str, state: dict[str, Any]) -> tuple[int, int, int, str]:
+def _to_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _revenue_priority_from_state(project_id: str, state: dict[str, Any]) -> dict[str, Any]:
+    package_id = str(state.get("execution_package_id") or state.get("autopilot_last_package_id") or "").strip()
+    project_path = str(PROJECTS.get(project_id, {}).get("path") or "").strip()
+    package = read_execution_package(project_path=project_path, package_id=package_id) if (project_path and package_id) else {}
+    row = package if isinstance(package, dict) and package else state
+    activation_status = str(row.get("revenue_activation_status") or "").strip().lower()
+    workflow_priority = str(row.get("revenue_workflow_priority") or "").strip().lower()
+    raw_score = row.get("highest_value_next_action_score")
+    score = max(0.0, min(1.0, _to_float(raw_score, default=0.0))) if raw_score is not None else 0.0
+    if raw_score is None:
+        score = max(0.0, min(1.0, _to_float(row.get("conversion_probability"), default=0.0)))
+    has_signal = bool(activation_status or workflow_priority or score > 0.0)
+    return {
+        "activation_status": activation_status or "unknown",
+        "workflow_priority": workflow_priority or "unknown",
+        "score": round(score, 6),
+        "next_action": str(row.get("highest_value_next_action") or "").strip(),
+        "next_action_reason": str(row.get("highest_value_next_action_reason") or "").strip(),
+        "pipeline_stage": str(row.get("pipeline_stage") or "").strip(),
+        "opportunity_classification": str(row.get("opportunity_classification") or "").strip(),
+        "has_signal": has_signal,
+    }
+
+
+def _candidate_priority(project_id: str, state: dict[str, Any]) -> tuple[int, int, int, int, str]:
     readiness = _readiness_signal(state)
     queue = _normalize_tasks(state.get("task_queue_snapshot") or state.get("task_queue"))
     pending = [
@@ -88,7 +122,16 @@ def _candidate_priority(project_id: str, state: dict[str, Any]) -> tuple[int, in
     autopilot_status = _state_status(state.get("autopilot_status"), "idle")
     active_session_rank = 0 if autopilot_status in ("running", "ready") else 1
     readiness_rank = 0 if readiness == "active_package" else 1
-    return (readiness_rank, active_session_rank, min_priority, project_id)
+    revenue = _revenue_priority_from_state(project_id, state)
+    if not revenue.get("has_signal"):
+        revenue_rank = 2
+    elif str(revenue.get("workflow_priority")) == "high":
+        revenue_rank = 0
+    elif str(revenue.get("workflow_priority")) == "medium":
+        revenue_rank = 1
+    else:
+        revenue_rank = 2
+    return (readiness_rank, active_session_rank, revenue_rank, min_priority, project_id)
 
 
 def evaluate_project_selection(
@@ -100,6 +143,7 @@ def evaluate_project_selection(
 ) -> dict[str, Any]:
     requested = _normalize_project_id(requested_project_id)
     loaded_states = states_by_project or {}
+    kill_switch = read_portfolio_kill_switch()
     source_candidates = list(candidate_project_ids or [])
     if not source_candidates:
         source_candidates = list(PROJECTS.keys()) or list(loaded_states.keys())
@@ -137,7 +181,52 @@ def evaluate_project_selection(
                 ],
             },
             "recorded_at": recorded_at,
+            "portfolio_kill_switch": kill_switch,
+            "why_selected": "",
+            "why_not_selected": [],
+            "next_action": "operator_review",
+            "next_reason": "No registered projects are currently available.",
+            "revenue_priority_summary": {"influence": "none", "ranking": [], "zero_allocation_detected": False},
         }
+
+    if bool(kill_switch.get("enabled")):
+        reason = str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled.")
+        payload = {
+            "status": "blocked",
+            "selected_project_id": "",
+            "candidate_project_ids": candidates,
+            "selection_reason": reason,
+            "priority_basis": "persistent_portfolio_kill_switch",
+            "contention_detected": False,
+            "blocked_projects": list(candidates),
+            "eligible_projects": [],
+            "routing_outcome": "stop",
+            "governance_trace": {
+                "requested_project_id": requested,
+                "user_input": str(user_input or ""),
+                "project_evaluations": {},
+                "selection_policy": ["persistent_kill_switch_authoritative"],
+            },
+            "recorded_at": recorded_at,
+            "portfolio_kill_switch": kill_switch,
+            "why_selected": "",
+            "why_not_selected": [],
+            "next_action": "operator_review",
+            "next_reason": reason,
+            "revenue_priority_summary": {"influence": "none", "ranking": [], "zero_allocation_detected": False},
+        }
+        append_portfolio_trace_event_safe(
+            {
+                "timestamp": recorded_at,
+                "event_type": "kill_switch_stop",
+                "reason": reason,
+                "decision_inputs": {"candidate_count": len(candidates), "requested_project_id": requested},
+                "resulting_action": "stop",
+                "visibility": "operator",
+                "source": "project_routing.evaluate_project_selection",
+            }
+        )
+        return payload
 
     project_evaluations: dict[str, Any] = {}
     eligible: list[str] = []
@@ -171,6 +260,7 @@ def evaluate_project_selection(
             ),
             "execution_package_id": str(state.get("execution_package_id") or state.get("autopilot_last_package_id") or ""),
         }
+        evaluation["revenue_priority"] = _revenue_priority_from_state(project_id, state)
         project_evaluations[project_id] = evaluation
         if evaluation["eligible"]:
             eligible.append(project_id)
@@ -178,31 +268,61 @@ def evaluate_project_selection(
             blocked.append(project_id)
 
     contention_detected = len(eligible) > 1
-    if requested and requested in eligible:
+    def _eligible_state(project_id: str) -> dict[str, Any]:
+        cached = _state_dict(loaded_states.get(project_id))
+        if cached:
+            return cached
+        path = str(PROJECTS.get(project_id, {}).get("path") or "").strip()
+        if not path:
+            return {}
+        return _state_dict(load_project_state(path))
+
+    ranked_eligible = sorted(
+        eligible,
+        key=lambda project_id: _candidate_priority(project_id, _eligible_state(project_id)),
+    )
+    revenue_rank = [
+        {
+            "project_id": pid,
+            "activation_status": str((project_evaluations.get(pid) or {}).get("revenue_priority", {}).get("activation_status") or "unknown"),
+            "workflow_priority": str((project_evaluations.get(pid) or {}).get("revenue_priority", {}).get("workflow_priority") or "unknown"),
+            "score": float((project_evaluations.get(pid) or {}).get("revenue_priority", {}).get("score") or 0.0),
+            "next_action": str((project_evaluations.get(pid) or {}).get("revenue_priority", {}).get("next_action") or ""),
+        }
+        for pid in ranked_eligible
+    ]
+    signaled_scores = [float(item.get("score") or 0.0) for item in revenue_rank if str(item.get("activation_status")) != "unknown"]
+    zero_allocation_detected = bool(signaled_scores) and max(signaled_scores) <= 0.0
+
+    if zero_allocation_detected:
+        selected = ""
+        selection_reason = "All eligible projects currently show zero revenue allocation score; portfolio autonomy pauses for operator review."
+        priority_basis = "revenue_zero_allocation_pause"
+    elif requested and requested in eligible:
         selected = requested
         selection_reason = "Requested project remained eligible under current governance and readiness checks."
-        priority_basis = "requested_project > active_package > active_autopilot_session > pending_task_priority > project_id"
+        priority_basis = "requested_project > active_package > active_autopilot_session > revenue_priority > pending_task_priority > project_id"
     elif eligible:
-        def _eligible_state(project_id: str) -> dict[str, Any]:
-            state = _state_dict(loaded_states.get(project_id))
-            if state:
-                return state
-            path = PROJECTS.get(project_id, {}).get("path")
-            return _state_dict(load_project_state(path)) if path else {}
-
-        selected = sorted(eligible, key=lambda project_id: _candidate_priority(project_id, _eligible_state(project_id)))[0]
+        selected = ranked_eligible[0]
         selected_eval = project_evaluations.get(selected) or {}
-        if selected_eval.get("readiness_signal") == "active_package":
+        revenue = selected_eval.get("revenue_priority") if isinstance(selected_eval.get("revenue_priority"), dict) else {}
+        if selected_eval.get("readiness_signal") == "active_package" and str(revenue.get("workflow_priority") or "") == "high":
+            selection_reason = "Selected the eligible project with an active governed package and high-priority revenue activation signal."
+        elif selected_eval.get("readiness_signal") == "active_package":
             selection_reason = "Selected the eligible project with an active governed package already in flight."
+        elif selected_eval.get("autopilot_status") in ("running", "ready") and str(revenue.get("workflow_priority") or "") == "high":
+            selection_reason = "Selected the eligible project with an active governed autopilot session and high-priority revenue signal."
         elif selected_eval.get("autopilot_status") in ("running", "ready"):
             selection_reason = "Selected the eligible project with an already active governed autopilot session."
+        elif str(revenue.get("workflow_priority") or "") == "high":
+            selection_reason = "Resolved contention in favor of the highest revenue-priority eligible project."
         else:
             selection_reason = "Resolved eligible-project contention using the deterministic pending-task priority order."
-        priority_basis = "active_package > active_autopilot_session > pending_task_priority > project_id"
+        priority_basis = "active_package > active_autopilot_session > revenue_priority > pending_task_priority > project_id"
     else:
         selected = ""
         selection_reason = "No eligible project may advance; all candidates are blocked or not ready."
-        priority_basis = "requested_project > active_package > active_autopilot_session > pending_task_priority > project_id"
+        priority_basis = "requested_project > active_package > active_autopilot_session > revenue_priority > pending_task_priority > project_id"
 
     status = "selected" if selected else ("blocked" if blocked else "deferred")
     routing_outcome = "continue" if selected else ("defer" if blocked else "pause")
@@ -210,6 +330,85 @@ def evaluate_project_selection(
         routing_outcome = "defer"
     if not selected and not blocked:
         routing_outcome = "pause"
+
+    why_selected = ""
+    why_not_selected: list[dict[str, Any]] = []
+    next_action = "operator_review" if not selected else "advance_selected_project"
+    next_reason = selection_reason
+    if selected:
+        selected_eval = project_evaluations.get(selected) or {}
+        revenue = selected_eval.get("revenue_priority") if isinstance(selected_eval.get("revenue_priority"), dict) else {}
+        why_selected = (
+            f"{selection_reason} readiness={selected_eval.get('readiness_signal')}; "
+            f"autopilot_status={selected_eval.get('autopilot_status')}; "
+            f"revenue_priority={revenue.get('workflow_priority', 'unknown')}; "
+            f"revenue_score={revenue.get('score', 0.0)}"
+        )
+        for project_id in ranked_eligible[1:4]:
+            row = project_evaluations.get(project_id) or {}
+            rev = row.get("revenue_priority") if isinstance(row.get("revenue_priority"), dict) else {}
+            why_not_selected.append(
+                {
+                    "project_id": project_id,
+                    "reason": (
+                        "Eligible but outranked by active-package/autopilot/revenue-priority ordering."
+                        f" readiness={row.get('readiness_signal')}; autopilot_status={row.get('autopilot_status')}; "
+                        f"revenue_priority={rev.get('workflow_priority', 'unknown')}; revenue_score={rev.get('score', 0.0)}"
+                    ),
+                }
+            )
+        if str(revenue.get("next_action") or "").strip():
+            next_action = str(revenue.get("next_action") or "").strip()
+            next_reason = str(revenue.get("next_action_reason") or selection_reason)
+    else:
+        for project_id in blocked[:6]:
+            row = project_evaluations.get(project_id) or {}
+            why_not_selected.append({"project_id": project_id, "reason": str(row.get("blocked_reason") or "blocked")})
+
+    event_type = "project_selected" if selected else ("mission_deferred" if routing_outcome in ("pause", "defer") else "loop_stop")
+    append_portfolio_trace_event_safe(
+        {
+            "timestamp": recorded_at,
+            "event_type": event_type,
+            "project_id": selected,
+            "reason": selection_reason,
+            "decision_inputs": {
+                "candidate_count": len(candidates),
+                "eligible_count": len(eligible),
+                "blocked_count": len(blocked),
+                "contention_detected": contention_detected,
+                "zero_revenue_allocation": zero_allocation_detected,
+            },
+            "resulting_action": routing_outcome,
+            "visibility": "operator",
+            "source": "project_routing.evaluate_project_selection",
+        }
+    )
+    if contention_detected:
+        append_portfolio_trace_event_safe(
+            {
+                "timestamp": recorded_at,
+                "event_type": "conflict_detected",
+                "reason": "Multiple eligible projects required deterministic contention resolution.",
+                "decision_inputs": {"eligible_projects": ",".join(eligible[:6]), "candidate_count": len(candidates)},
+                "resulting_action": "contention_resolution",
+                "visibility": "operator",
+                "source": "project_routing.evaluate_project_selection",
+            }
+        )
+    if contention_detected and selected:
+        append_portfolio_trace_event_safe(
+            {
+                "timestamp": recorded_at,
+                "event_type": "conflict_winner_selected",
+                "project_id": selected,
+                "reason": selection_reason,
+                "decision_inputs": {"eligible_projects": ",".join(eligible[:6])},
+                "resulting_action": "continue",
+                "visibility": "operator",
+                "source": "project_routing.evaluate_project_selection",
+            }
+        )
 
     return {
         "status": status,
@@ -234,6 +433,16 @@ def evaluate_project_selection(
             ],
         },
         "recorded_at": recorded_at,
+        "portfolio_kill_switch": kill_switch,
+        "why_selected": why_selected,
+        "why_not_selected": why_not_selected,
+        "next_action": next_action,
+        "next_reason": next_reason,
+        "revenue_priority_summary": {
+            "influence": "active" if revenue_rank else "none",
+            "ranking": revenue_rank[:6],
+            "zero_allocation_detected": zero_allocation_detected,
+        },
     }
 
 
@@ -327,6 +536,8 @@ def build_project_routing_decision(
 ) -> dict[str, Any]:
     loaded = state or {}
     pkg = active_package or {}
+    kill_switch = read_portfolio_kill_switch()
+    selection_result = loaded.get("project_selection_result") if isinstance(loaded.get("project_selection_result"), dict) else {}
     mode = normalize_autonomy_mode(autonomy_mode or loaded.get("autonomy_mode"))
     mode_state = build_autonomy_mode_state(mode=mode)
     next_task = select_next_task(loaded)
@@ -389,7 +600,37 @@ def build_project_routing_decision(
         "mode_state": mode_state,
         "autonomy_stop_rail_result": stop_rail_result,
         "runtime_target_selection": runtime_target_selection,
+        "portfolio_kill_switch": kill_switch,
+        "why_selected": str(selection_result.get("why_selected") or ""),
+        "why_not_selected": list(selection_result.get("why_not_selected") or []),
+        "next_action": str(selection_result.get("next_action") or ""),
+        "next_reason": str(selection_result.get("next_reason") or ""),
     }
+
+    if bool(kill_switch.get("enabled")):
+        reason = str(kill_switch.get("reason") or "Persistent portfolio autonomy kill switch is enabled.")
+        decision.update(
+            {
+                "selected_action": "stop",
+                "routing_status": "stopped",
+                "routing_reason": reason,
+                "routing_confidence": 1.0,
+                "routing_confidence_band": "high",
+                "requires_operator_review": True,
+            }
+        )
+        append_portfolio_trace_event_safe(
+            {
+                "event_type": "kill_switch_stop",
+                "project_id": project_key,
+                "reason": reason,
+                "decision_inputs": {"autonomy_mode": mode, "routing_stage": "build_project_routing_decision"},
+                "resulting_action": "stop",
+                "visibility": "operator",
+                "source": "project_routing.build_project_routing_decision",
+            }
+        )
+        return decision
 
     if governance_routing_outcome in ("pause", "escalate", "stop") and governance_resolution_state != "resolved":
         routing_status = "paused"
