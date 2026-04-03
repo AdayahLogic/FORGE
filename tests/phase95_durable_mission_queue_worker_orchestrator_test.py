@@ -249,6 +249,46 @@ def test_operator_visibility_commands():
     assert recovery_res["status"] in {"ok", "error"}
 
 
+def test_queue_item_id_stable_enqueue_claim_complete():
+    """queue_item_id must remain stable from enqueue → claim → complete."""
+    from NEXUS.mission_queue_orchestrator import (
+        claim_next_work_item,
+        complete_work_item_success,
+        enqueue_mission_work_item,
+    )
+
+    with _patched_registry(".tmp_test_runs/phase95_registry_id_stable.json"):
+        enqueue_result = enqueue_mission_work_item(
+            mission_id="mission-stable",
+            project_id="beta",
+            package_id="pkg-stable",
+            task_type="execute",
+            priority=1,
+            idempotency_key="beta:mission-stable",
+        )
+        enqueued_item = enqueue_result.get("queue_item") if isinstance(enqueue_result.get("queue_item"), dict) else {}
+        enqueued_id = str(enqueued_item.get("queue_item_id") or "")
+        assert enqueued_id, "enqueue must produce a queue_item_id"
+
+        claim_result = claim_next_work_item(worker_id="worker-stable", kill_switch_active=False)
+        assert claim_result["status"] == "ok", f"claim failed: {claim_result}"
+        claimed_item = claim_result.get("queue_item") if isinstance(claim_result.get("queue_item"), dict) else {}
+        claimed_id = str(claimed_item.get("queue_item_id") or "")
+        assert claimed_id, "claimed item must have a queue_item_id"
+        # The critical regression assertion: claimed ID must equal the enqueued ID.
+        assert claimed_id == enqueued_id, (
+            f"queue_item_id drifted: enqueued={enqueued_id!r} claimed={claimed_id!r}"
+        )
+
+        complete_result = complete_work_item_success(
+            queue_item_id=claimed_id,
+            worker_id="worker-stable",
+            execution_receipt_ref="receipt-stable",
+            verification_ref="verified",
+        )
+        assert complete_result["status"] == "ok", f"complete failed: {complete_result}"
+
+
 def main():
     tests = [
         test_queue_persistence,
@@ -259,6 +299,7 @@ def main():
         test_fairness_across_projects,
         test_kill_switch_blocks_claim,
         test_operator_visibility_commands,
+        test_queue_item_id_stable_enqueue_claim_complete,
     ]
     passed = sum(1 for t in tests if _run(t.__name__, t))
     print(f"\n{passed}/{len(tests)} passed")

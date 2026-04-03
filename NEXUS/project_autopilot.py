@@ -1507,6 +1507,7 @@ def _run_project_autopilot_loop(
             )
             queued = enqueue_result.get("queue_item") if isinstance(enqueue_result.get("queue_item"), dict) else {}
             queue_item_id = str(queued.get("queue_item_id") or "")
+            enqueued_queue_item_id = queue_item_id
             queue_pressure = mission_backpressure_status()
             claim_result = claim_next_work_item(
                 worker_id=worker_id,
@@ -1544,7 +1545,7 @@ def _run_project_autopilot_loop(
                 )
                 return {"status": "ok", "reason": session["autopilot_stop_reason"], "session": session}
             claimed_item = claim_result.get("queue_item") if isinstance(claim_result.get("queue_item"), dict) else {}
-            queue_item_id = str(claimed_item.get("queue_item_id") or queue_item_id)
+            queue_item_id = str(claimed_item.get("queue_item_id") or "")
             if queue_item_id:
                 renew_work_item_lease(queue_item_id=queue_item_id, worker_id=worker_id)
 
