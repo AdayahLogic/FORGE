@@ -57,6 +57,13 @@ from NEXUS.outcome_verifier_registry import (
     get_latest_outcome_verification,
 )
 from NEXUS.helix_outcome_inputs import build_helix_outcome_inputs
+from NEXUS.mission_queue_orchestrator import (
+    backpressure_status as mission_backpressure_status_snapshot,
+    mission_queue_status as mission_queue_status_snapshot,
+    recovery_status as mission_recovery_status_snapshot,
+    stuck_work_items as mission_stuck_work_items_snapshot,
+    worker_status as mission_worker_status_snapshot,
+)
 
 from NEXUS.logging_engine import log_system_event
 
@@ -129,6 +136,10 @@ SUPPORTED_COMMANDS = frozenset({
     "complete_review",
     "complete_approval",
     "recovery_status",
+    "mission_queue_status",
+    "worker_status",
+    "backpressure_status",
+    "stuck_work_items",
     "reexecution_status",
     "studio_driver",
     "launch_next_cycle",
@@ -3685,6 +3696,44 @@ def run_command(
                 summary=summary_line,
                 payload=payload,
             )
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "mission_queue_status":
+        try:
+            payload = mission_queue_status_snapshot()
+            summary_line = f"total_items={payload.get('total_items')}; active={len(payload.get('active_items') or [])}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "worker_status":
+        try:
+            payload = mission_worker_status_snapshot()
+            summary_line = f"active_worker_count={payload.get('active_worker_count')}; active_runs={len(payload.get('active_worker_runs') or [])}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "backpressure_status":
+        try:
+            payload = mission_backpressure_status_snapshot()
+            summary_line = f"overload_active={payload.get('overload_active')}; leased={payload.get('leased_count')}; queued={payload.get('queued_count')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd == "stuck_work_items":
+        try:
+            stuck_payload = mission_stuck_work_items_snapshot()
+            recovery_payload = mission_recovery_status_snapshot()
+            payload = {
+                "status": "ok",
+                "stuck": stuck_payload,
+                "recovery": recovery_payload,
+            }
+            summary_line = f"stuck_count={stuck_payload.get('stuck_count')}; recovery_waiting_count={recovery_payload.get('recovery_waiting_count')}"
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
         except Exception as e:
             return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
