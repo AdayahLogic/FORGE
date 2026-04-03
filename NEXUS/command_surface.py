@@ -134,6 +134,26 @@ SUPPORTED_COMMANDS = frozenset({
     "operator_snapshot",
     "forge_os_snapshot",
     "portfolio_status",
+    "mission_packet",
+    "execution_truth",
+    "execution_verification",
+    "revenue_follow_up",
+    "outcome_verification",
+    "strategy_performance",
+    "strategy_evolution",
+    "strategy_versions",
+    "optimization_status",
+    "self_optimization_cycle",
+    "strategy_promotion_cycle",
+    "strategy_promotion_status",
+    "strategy_experiments",
+    "strategy_comparison",
+    "rollout_status",
+    "rollback_history",
+    "active_strategy",
+    "autonomous_portfolio_tick",
+    "autonomous_portfolio_loop",
+    "portfolio_autonomy_kill_switch",
     "runtime_infrastructure",
     "execution_environment",
     "memory_status",
@@ -4329,29 +4349,348 @@ def run_command(
                 "active_projects": 0,
                 "blocked_projects": 0,
                 "priority_project": None,
+                "portfolio_priority_score": 0.0,
                 "portfolio_reason": "Forge portfolio summary unavailable.",
             }
             payload = dashboard_summary.get("portfolio_summary") if isinstance(dashboard_summary, dict) else None
             if not isinstance(payload, dict) or not payload:
                 payload = fallback
+            if "portfolio_priority_score" not in payload:
+                payload = {**payload, "portfolio_priority_score": 0.0}
             summary_line = f"portfolio_status={payload.get('portfolio_status')}; active={payload.get('active_projects')}; blocked={payload.get('blocked_projects')}; priority={payload.get('priority_project')}"
             return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
         except Exception as e:
             return _result(
                 command=cmd,
-                status="error",
+                status="ok",
                 project_name=None,
-                summary=str(e),
+                summary="portfolio_status=error_fallback; using safe fallback snapshot.",
                 payload={
                     "portfolio_status": "error_fallback",
                     "total_projects": 0,
                     "active_projects": 0,
                     "blocked_projects": 0,
                     "priority_project": None,
+                    "portfolio_priority_score": 0.0,
                     "portfolio_reason": "Forge portfolio summary failed.",
                     "error": str(e),
                 },
             )
+
+    if cmd in ("mission_packet", "execution_truth", "execution_verification", "revenue_follow_up", "outcome_verification"):
+        if not path:
+            return _result(
+                command=cmd,
+                status="error",
+                project_name=proj_name,
+                summary="Project path or project_name required.",
+                payload={},
+            )
+        try:
+            loaded = load_project_state(path)
+            if not isinstance(loaded, dict) or loaded.get("load_error"):
+                reason = str((loaded or {}).get("load_error") or "Failed to load project state.")
+                return _result(command=cmd, status="error", project_name=proj_name, summary=reason, payload={"error": reason})
+
+            if cmd == "mission_packet":
+                from NEXUS.mission_system import build_mission_packet
+                task_queue = loaded.get("task_queue_snapshot") or loaded.get("task_queue") or []
+                next_task = None
+                if isinstance(task_queue, list):
+                    for row in task_queue:
+                        if isinstance(row, dict) and str(row.get("status") or "").strip().lower() in ("", "pending", "queued", "ready"):
+                            next_task = row
+                            break
+                packet = build_mission_packet(
+                    mission_id=f"mission-{loaded.get('run_id') or 'manual'}",
+                    task=next_task if isinstance(next_task, dict) else None,
+                    objective=((loaded.get("architect_plan") or {}).get("objective") if isinstance(loaded.get("architect_plan"), dict) else None),
+                )
+                update_project_state_fields(path, mission_status=packet.get("mission_status"), mission_packet=packet)
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"mission_status={packet.get('mission_status')}", payload=packet)
+
+            if cmd == "execution_truth":
+                from NEXUS.execution_truth import build_execution_truth_snapshot
+                package = {}
+                package_id = str(loaded.get("execution_package_id") or "").strip()
+                if package_id:
+                    from NEXUS.execution_package_registry import read_execution_package
+
+                    package = read_execution_package(path, package_id) or {}
+                snapshot = build_execution_truth_snapshot(project_state=loaded, package=package)
+                update_project_state_fields(path, execution_truth_status=snapshot.get("execution_truth_status"), execution_truth_snapshot=snapshot)
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"execution_truth_status={snapshot.get('execution_truth_status')}", payload=snapshot)
+
+            if cmd == "execution_verification":
+                from NEXUS.execution_verification_registry import append_execution_verification_safe, read_execution_verification_journal_tail
+
+                record = {
+                    "execution_package_id": loaded.get("execution_package_id"),
+                    "verification_status": loaded.get("execution_truth_status") or "pending",
+                    "verification_summary": str(((loaded.get("execution_truth_snapshot") or {}).get("truth_reason")) if isinstance(loaded.get("execution_truth_snapshot"), dict) else ""),
+                }
+                write_res = append_execution_verification_safe(project_path=path, record=record)
+                rows = read_execution_verification_journal_tail(project_path=path, n=max(1, min(int(n or 20), 100)))
+                payload = {"write_result": write_res, "verification_rows": rows, "verification_count": len(rows)}
+                update_project_state_fields(path, execution_verification_summary=payload)
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"verification_count={len(rows)}", payload=payload)
+
+            if cmd == "revenue_follow_up":
+                from NEXUS.revenue_followup_scheduler import (
+                    build_follow_up_status_summary,
+                    build_reengagement_queue_summary,
+                    build_stalled_deals_summary,
+                )
+
+                follow_up = build_follow_up_status_summary(project_path=path, n=max(1, min(int(n or 80), 200)))
+                stalled = build_stalled_deals_summary(project_path=path, n=max(1, min(int(n or 80), 200)), stall_hours=72)
+                reengagement = build_reengagement_queue_summary(project_path=path, n=max(1, min(int(n or 80), 200)))
+                payload = {"follow_up": follow_up, "stalled": stalled, "reengagement": reengagement}
+                update_project_state_fields(
+                    path,
+                    revenue_follow_up_status=follow_up.get("follow_up_status"),
+                    revenue_follow_up_summary=payload,
+                )
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=f"follow_up_count={follow_up.get('follow_up_count')}", payload=payload)
+
+            from NEXUS.outcome_verifier_registry import (
+                append_outcome_verification_safe,
+                build_performance_summary,
+                read_outcome_verification_journal_tail,
+            )
+
+            out_record = {
+                "execution_package_id": loaded.get("execution_package_id"),
+                "verification_status": loaded.get("execution_truth_status") or "pending",
+                "expected_outcome": "successful_verified_execution",
+                "actual_outcome": "success" if str(loaded.get("execution_truth_status") or "").strip().lower() in ("verified", "completed", "succeeded") else "unverified",
+                "verification_reason": str(((loaded.get("execution_truth_snapshot") or {}).get("truth_reason")) if isinstance(loaded.get("execution_truth_snapshot"), dict) else ""),
+            }
+            write_out = append_outcome_verification_safe(project_path=path, record=out_record)
+            perf = build_performance_summary(project_path=path, n=200)
+            rows = read_outcome_verification_journal_tail(project_path=path, n=max(1, min(int(n or 20), 100)))
+            payload = {"write_result": write_out, "performance_summary": perf, "outcome_rows": rows, "outcome_count": len(rows)}
+            update_project_state_fields(
+                path,
+                outcome_verification_status=perf.get("performance_summary_status"),
+                outcome_verification_summary=payload,
+            )
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=f"outcome_count={len(rows)}", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in ("strategy_performance", "strategy_evolution", "strategy_versions", "optimization_status", "self_optimization_cycle"):
+        try:
+            from NEXUS.self_optimization_engine import (
+                analyze_strategy_performance_safe,
+                evolve_strategy_safe,
+                list_strategy_versions,
+                read_optimization_status_safe,
+                run_self_optimization_feedback_loop_safe,
+            )
+
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                project_meta = PROJECTS.get(key) or {}
+                p = project_meta.get("path")
+                if not p:
+                    continue
+                loaded = load_project_state(p)
+                if isinstance(loaded, dict) and "load_error" not in loaded:
+                    states_by_project[key] = loaded
+
+            if cmd == "strategy_performance":
+                payload = analyze_strategy_performance_safe(states_by_project=states_by_project)
+                summary_line = f"strategy_effectiveness_score={payload.get('strategy_effectiveness_score')}"
+                return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+
+            if cmd == "strategy_evolution":
+                performance = analyze_strategy_performance_safe(states_by_project=states_by_project)
+                payload = evolve_strategy_safe(performance_summary=performance)
+                summary_line = (
+                    f"strategy_evolution_status={payload.get('strategy_evolution_status')}; "
+                    f"evolution_mode={payload.get('evolution_mode')}"
+                )
+                return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+
+            if cmd == "strategy_versions":
+                limit = max(1, min(int(n or 20), 50))
+                payload = list_strategy_versions(n=limit)
+                summary_line = f"strategy_version_count={payload.get('strategy_version_count')}"
+                return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+
+            if cmd == "self_optimization_cycle":
+                payload = run_self_optimization_feedback_loop_safe(
+                    states_by_project=states_by_project,
+                    apply_changes=bool(kwargs.get("apply_changes", False)),
+                )
+                if path:
+                    update_project_state_fields(
+                        path,
+                        self_optimization_status=payload.get("optimization_status"),
+                        self_optimization_result=payload,
+                    )
+                summary_line = (
+                    f"optimization_status={payload.get('optimization_status')}; "
+                    f"priority_project={((payload.get('portfolio_intelligence') or {}).get('priority_project'))}"
+                )
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+
+            payload = read_optimization_status_safe()
+            summary_line = f"optimization_status={payload.get('optimization_status')}"
+            return _result(command=cmd, status="ok", project_name=None, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=None, summary=str(e), payload={"error": str(e)})
+
+    if cmd in ("strategy_promotion_cycle", "strategy_promotion_status", "strategy_experiments", "strategy_comparison", "rollout_status", "rollback_history", "active_strategy"):
+        try:
+            from NEXUS.strategy_promotion_engine import (
+                list_rollback_history_safe,
+                list_strategy_comparisons_safe,
+                list_strategy_experiments_safe,
+                read_active_strategy_with_lifecycle_safe,
+                read_rollout_status_safe,
+                read_strategy_promotion_status_safe,
+                run_strategy_promotion_cycle_safe,
+            )
+
+            if cmd == "strategy_promotion_cycle":
+                candidate_version_id = str(kwargs.get("candidate_version_id") or "strategy-v0-default")
+                baseline_version_id = str(kwargs.get("baseline_version_id") or "strategy-v0-default")
+                payload = run_strategy_promotion_cycle_safe(
+                    candidate_version_id=candidate_version_id,
+                    baseline_version_id=baseline_version_id,
+                    risk_level=str(kwargs.get("risk_level") or "medium"),
+                    approval_status=str(kwargs.get("approval_status") or "approved"),
+                    rollout_percentage=int(kwargs.get("rollout_percentage") or 10),
+                )
+                if path:
+                    update_project_state_fields(
+                        path,
+                        strategy_promotion_status=payload.get("strategy_promotion_status"),
+                        strategy_promotion_result=payload,
+                    )
+                summary_line = (
+                    f"strategy_promotion_status={payload.get('strategy_promotion_status')}; "
+                    f"promotion_decision={((payload.get('promotion') or {}).get('promotion_decision'))}"
+                )
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+
+            if cmd == "strategy_promotion_status":
+                payload = read_strategy_promotion_status_safe()
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=None,
+                    summary=f"strategy_promotion_status={payload.get('strategy_promotion_status')}",
+                    payload=payload,
+                )
+            if cmd == "strategy_experiments":
+                payload = list_strategy_experiments_safe(n=max(1, min(int(n or 20), 50)))
+                return _result(command=cmd, status="ok", project_name=None, summary=f"experiment_count={payload.get('experiment_count')}", payload=payload)
+            if cmd == "strategy_comparison":
+                payload = list_strategy_comparisons_safe(n=max(1, min(int(n or 20), 50)))
+                return _result(command=cmd, status="ok", project_name=None, summary=f"comparison_count={payload.get('comparison_count')}", payload=payload)
+            if cmd == "rollout_status":
+                payload = read_rollout_status_safe()
+                return _result(command=cmd, status="ok", project_name=None, summary=f"rollout_percentage={payload.get('rollout_percentage')}", payload=payload)
+            if cmd == "rollback_history":
+                payload = list_rollback_history_safe(n=max(1, min(int(n or 20), 50)))
+                return _result(command=cmd, status="ok", project_name=None, summary=f"rollback_count={payload.get('rollback_count')}", payload=payload)
+
+            payload = read_active_strategy_with_lifecycle_safe()
+            return _result(command=cmd, status="ok", project_name=None, summary=f"active_strategy_status={payload.get('active_strategy_status')}", payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
+
+    if cmd in ("autonomous_portfolio_tick", "autonomous_portfolio_loop", "portfolio_autonomy_kill_switch"):
+        try:
+            from NEXUS.autonomous_portfolio_operator import (
+                get_portfolio_kill_switch_status,
+                run_autonomous_portfolio_loop_safe,
+                run_autonomous_portfolio_tick_safe,
+                set_portfolio_kill_switch_safe,
+            )
+
+            if cmd == "portfolio_autonomy_kill_switch":
+                action = str(kwargs.get("action") or "").strip().lower()
+                if action in ("enable", "on", "set"):
+                    payload = set_portfolio_kill_switch_safe(
+                        enabled=True,
+                        reason=str(kwargs.get("reason") or "operator_requested_kill_switch"),
+                        source="command_surface",
+                    )
+                elif action in ("disable", "off", "clear"):
+                    payload = set_portfolio_kill_switch_safe(
+                        enabled=False,
+                        reason=str(kwargs.get("reason") or "operator_cleared_kill_switch"),
+                        source="command_surface",
+                    )
+                else:
+                    payload = get_portfolio_kill_switch_status()
+                return _result(
+                    command=cmd,
+                    status="ok",
+                    project_name=None,
+                    summary=f"kill_switch_enabled={payload.get('enabled')}",
+                    payload=payload,
+                )
+
+            states_by_project: dict[str, dict[str, Any]] = {}
+            for key in PROJECTS:
+                project_meta = PROJECTS.get(key) or {}
+                p = project_meta.get("path")
+                if not p:
+                    continue
+                loaded = load_project_state(p)
+                if isinstance(loaded, dict) and "load_error" not in loaded:
+                    states_by_project[key] = loaded
+
+            if cmd == "autonomous_portfolio_loop":
+                payload = run_autonomous_portfolio_loop_safe(
+                    states_by_project=states_by_project,
+                    max_ticks=max(1, min(int(kwargs.get("max_ticks") or 3), 25)),
+                    max_runtime_seconds=max(1, min(int(kwargs.get("max_runtime_seconds") or 300), 3600)),
+                    max_operations=max(1, min(int(kwargs.get("max_operations") or 250), 5000)),
+                    parallel_capacity=max(1, min(int(kwargs.get("parallel_capacity") or 2), 25)),
+                    execute_actions=bool(kwargs.get("execute_actions", False)),
+                    persist_trace=bool(kwargs.get("persist_trace", False)),
+                    trigger=str(kwargs.get("trigger") or "command_surface_loop"),
+                )
+                if path:
+                    update_project_state_fields(
+                        path,
+                        autonomous_portfolio_status=payload.get("loop_status"),
+                        autonomous_portfolio_result=payload,
+                    )
+                summary_line = (
+                    f"loop_status={payload.get('loop_status')}; "
+                    f"ticks_run={payload.get('ticks_run')}; "
+                    f"stop_reason={payload.get('stop_reason')}"
+                )
+                return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+
+            payload = run_autonomous_portfolio_tick_safe(
+                states_by_project=states_by_project,
+                parallel_capacity=max(1, min(int(kwargs.get("parallel_capacity") or 2), 25)),
+                execute_actions=bool(kwargs.get("execute_actions", False)),
+                persist_trace=bool(kwargs.get("persist_trace", False)),
+                trigger=str(kwargs.get("trigger") or "command_surface_tick"),
+            )
+            if path:
+                update_project_state_fields(
+                    path,
+                    autonomous_portfolio_status=payload.get("tick_status"),
+                    autonomous_portfolio_result=payload,
+                )
+            summary_line = (
+                f"tick_status={payload.get('tick_status')}; "
+                f"project_count={payload.get('project_count')}; "
+                f"missions={len(payload.get('missions_generated') or [])}"
+            )
+            return _result(command=cmd, status="ok", project_name=proj_name, summary=summary_line, payload=payload)
+        except Exception as e:
+            return _result(command=cmd, status="error", project_name=proj_name, summary=str(e), payload={"error": str(e)})
 
     if cmd == "runtime_infrastructure":
         try:
@@ -5812,11 +6151,11 @@ def run_command(
             from NEXUS.approval_registry import read_approval_journal_tail
             from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch, read_patch_proposal_resolution_tail
             from NEXUS.approval_staleness import evaluate_approval_staleness, evaluate_proposal_approval_staleness
-            from NEXUS.registry import PROJECTS
+            from NEXUS.registry import PROJECTS as _PROJECTS
             trace: dict[str, Any] = {"approval": None, "patch_proposal": None, "resolution": None, "linked_approvals": [], "is_stale": False, "hours_since": 0.0}
             if approval_id:
-                for proj_key in PROJECTS:
-                    p = PROJECTS[proj_key].get("path")
+                for proj_key in _PROJECTS:
+                    p = _PROJECTS[proj_key].get("path")
                     if p:
                         tail = read_approval_journal_tail(project_path=p, n=200)
                         for r in tail:
@@ -5858,8 +6197,8 @@ def run_command(
                             trace["lifecycle"] = {}
                     aid = trace["resolution"].get("approval_id") if trace["resolution"] else None
                     if aid:
-                        for proj_key in PROJECTS:
-                            p = PROJECTS[proj_key].get("path")
+                        for proj_key in _PROJECTS:
+                            p = _PROJECTS[proj_key].get("path")
                             if p:
                                 atail = read_approval_journal_tail(project_path=p, n=100)
                                 for ar in atail:
@@ -5881,12 +6220,12 @@ def run_command(
             from NEXUS.approval_summary import build_approval_summary_safe
             from NEXUS.approval_lifecycle import evaluate_approval_lifecycle, evaluate_resolution_lifecycle
             from NEXUS.patch_proposal_registry import find_proposal_and_project, get_proposal_effective_status, get_latest_resolution_for_patch
-            from NEXUS.registry import PROJECTS
+            from NEXUS.registry import PROJECTS as _PROJECTS
             summary = build_approval_summary_safe(n_recent=30, n_tail=100)
             lifecycle_items: list[dict[str, Any]] = []
             if approval_id:
-                for proj_key in PROJECTS:
-                    p = PROJECTS.get(proj_key, {}).get("path")
+                for proj_key in _PROJECTS:
+                    p = _PROJECTS.get(proj_key, {}).get("path")
                     if p:
                         from NEXUS.approval_registry import read_approval_journal_tail
                         tail = read_approval_journal_tail(project_path=p, n=100)
@@ -5924,12 +6263,12 @@ def run_command(
         try:
             from NEXUS.approval_summary import build_approval_summary_safe
             from NEXUS.approval_lifecycle import get_reapproval_required_count
-            from NEXUS.registry import PROJECTS
+            from NEXUS.registry import PROJECTS as _PROJECTS
             summary = build_approval_summary_safe(n_recent=20, n_tail=100)
             reapproval_count = summary.get("reapproval_required_count", 0)
             items: list[dict[str, Any]] = []
-            for proj_key in PROJECTS:
-                path = PROJECTS.get(proj_key, {}).get("path")
+            for proj_key in _PROJECTS:
+                path = _PROJECTS.get(proj_key, {}).get("path")
                 if not path:
                     continue
                 from NEXUS.patch_proposal_registry import read_patch_proposal_resolution_tail
@@ -6004,8 +6343,8 @@ def run_command(
     if cmd in ("runtime_isolation_status", "sandbox_posture"):
         try:
             from NEXUS.runtime_isolation import build_runtime_isolation_posture_safe
-            from NEXUS.registry_dashboard import build_registry_dashboard_summary
-            dash = build_registry_dashboard_summary()
+            from NEXUS.registry_dashboard import build_registry_dashboard_summary as _build_registry_dashboard_summary
+            dash = _build_registry_dashboard_summary()
             exec_env = dash.get("execution_environment_summary") or {}
             data = build_runtime_isolation_posture_safe(
                 execution_environment_summary=exec_env,

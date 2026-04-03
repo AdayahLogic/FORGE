@@ -154,3 +154,16 @@ class StudioState(BaseModel):
     executor_task_type: Optional[str] = None
     executor_task_packet: Dict[str, Any] = {}
     executor_fallback_route: Optional[str] = None
+    execution_truth_status: Optional[str] = None
+    execution_truth_snapshot: Dict[str, Any] = {}
+    execution_verification_summary: Dict[str, Any] = {}
+    revenue_follow_up_status: Optional[str] = None
+    revenue_follow_up_summary: Dict[str, Any] = {}
+    outcome_verification_status: Optional[str] = None
+    outcome_verification_summary: Dict[str, Any] = {}
+    self_optimization_status: Optional[str] = None
+    self_optimization_result: Dict[str, Any] = {}
+    strategy_promotion_status: Optional[str] = None
+    strategy_promotion_result: Dict[str, Any] = {}
+    autonomous_portfolio_status: Optional[str] = None
+    autonomous_portfolio_result: Dict[str, Any] = {}

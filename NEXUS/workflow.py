@@ -1,4 +1,5 @@
 from langgraph.graph import StateGraph, END
+from typing import Any
 from NEXUS.state import StudioState
 from NEXUS.router import detect_project
 from NEXUS.registry import PROJECTS
@@ -58,7 +59,21 @@ from NEXUS.heartbeat_loop import evaluate_heartbeat_safe
 from NEXUS.cycle_scheduler import evaluate_cycle_scheduler_safe
 from NEXUS.recovery_engine import evaluate_recovery_outcome_safe
 from NEXUS.reexecution_engine import evaluate_reexecution_outcome_safe
+from NEXUS.mission_system import build_mission_packet
 from NEXUS.execution_truth import build_execution_truth_snapshot
+from NEXUS.execution_verification_registry import append_execution_verification_safe
+from NEXUS.outcome_verifier_registry import (
+    append_outcome_verification_safe,
+    build_performance_summary as build_outcome_performance_summary,
+)
+from NEXUS.revenue_followup_scheduler import (
+    build_follow_up_status_summary,
+    build_reengagement_queue_summary,
+    build_stalled_deals_summary,
+)
+from NEXUS.self_optimization_engine import run_self_optimization_feedback_loop_safe
+from NEXUS.strategy_promotion_engine import run_strategy_promotion_cycle_safe
+from NEXUS.autonomous_portfolio_operator import run_autonomous_portfolio_tick_safe
 
 
 def route_project(state: StudioState):
@@ -100,8 +115,22 @@ def load_persistent_project_state(state: StudioState):
         state.autonomy_stop_rail_config = dict(loaded.get("autonomy_stop_rail_config") or {})
         state.autonomy_current_counts = dict(loaded.get("autonomy_current_counts") or {})
         state.autonomy_governance_trace = dict(loaded.get("autonomy_governance_trace") or {})
+        state.mission_status = loaded.get("mission_status")
+        state.mission_packet = dict(loaded.get("mission_packet") or {})
         state.execution_truth_status = loaded.get("execution_truth_status")
         state.verification_status = loaded.get("verification_status")
+        state.execution_truth_snapshot = dict(loaded.get("execution_truth_snapshot") or {})
+        state.execution_verification_summary = dict(loaded.get("execution_verification_summary") or {})
+        state.revenue_follow_up_status = loaded.get("revenue_follow_up_status")
+        state.revenue_follow_up_summary = dict(loaded.get("revenue_follow_up_summary") or {})
+        state.outcome_verification_status = loaded.get("outcome_verification_status")
+        state.outcome_verification_summary = dict(loaded.get("outcome_verification_summary") or {})
+        state.self_optimization_status = loaded.get("self_optimization_status")
+        state.self_optimization_result = dict(loaded.get("self_optimization_result") or {})
+        state.strategy_promotion_status = loaded.get("strategy_promotion_status")
+        state.strategy_promotion_result = dict(loaded.get("strategy_promotion_result") or {})
+        state.autonomous_portfolio_status = loaded.get("autonomous_portfolio_status")
+        state.autonomous_portfolio_result = dict(loaded.get("autonomous_portfolio_result") or {})
 
     if loaded:
         state.notes = "Previous project state loaded."
@@ -755,6 +784,160 @@ def reexecution_evaluation_node(state: StudioState):
     )
     state.reexecution_result = result
     state.reexecution_status = result.get("reexecution_status")
+    return state
+
+
+def mission_kernel_node(state: StudioState):
+    """Create a mission packet bound to the current workflow objective."""
+    next_task = None
+    queue = state.task_queue_snapshot or state.task_queue or []
+    if isinstance(queue, list):
+        for row in queue:
+            if isinstance(row, dict) and str(row.get("status") or "").strip().lower() in ("", "pending", "queued", "ready"):
+                next_task = row
+                break
+    mission_id = f"mission-{state.run_id or 'workflow'}"
+    packet = build_mission_packet(
+        mission_id=mission_id,
+        task=next_task if isinstance(next_task, dict) else None,
+        objective=(state.architect_plan or {}).get("objective") if isinstance(state.architect_plan, dict) else None,
+        mission_type=None,
+        risk_level="medium",
+    )
+    state.mission_packet = packet
+    state.mission_status = str(packet.get("mission_status") or "proposed")
+    return state
+
+
+def execution_truth_node(state: StudioState):
+    """Build execution-truth snapshot from dispatch and package context."""
+    package = {}
+    if state.project_path and state.execution_package_id:
+        try:
+            from NEXUS.execution_package_registry import read_execution_package
+
+            package = read_execution_package(state.project_path, state.execution_package_id) or {}
+        except Exception:
+            package = {}
+    snapshot = build_execution_truth_snapshot(
+        project_state={
+            "dispatch_status": state.dispatch_status,
+            "dispatch_result": state.dispatch_result or {},
+        },
+        package=package,
+    )
+    state.execution_truth_snapshot = snapshot if isinstance(snapshot, dict) else {}
+    state.execution_truth_status = str((snapshot or {}).get("execution_truth_status") or "unknown")
+    return state
+
+
+def verification_revenue_outcome_node(state: StudioState):
+    """Persist execution verification and synthesize revenue/outcome follow-up visibility."""
+    verification_record = {
+        "execution_package_id": state.execution_package_id,
+        "verification_status": state.execution_truth_status or "pending",
+        "verification_summary": str((state.execution_truth_snapshot or {}).get("truth_reason") or ""),
+        "verification_evidence": [state.execution_truth_snapshot] if isinstance(state.execution_truth_snapshot, dict) and state.execution_truth_snapshot else [],
+        "verified_at": "",
+    }
+    verification = append_execution_verification_safe(project_path=state.project_path, record=verification_record)
+    state.execution_verification_summary = verification if isinstance(verification, dict) else {}
+
+    follow_up = build_follow_up_status_summary(project_path=state.project_path, n=80)
+    stalled = build_stalled_deals_summary(project_path=state.project_path, n=80, stall_hours=72)
+    reengage = build_reengagement_queue_summary(project_path=state.project_path, n=80)
+    state.revenue_follow_up_summary = {
+        "follow_up": follow_up,
+        "stalled": stalled,
+        "reengagement": reengage,
+    }
+    state.revenue_follow_up_status = str((follow_up or {}).get("follow_up_status") or "idle")
+
+    outcome_record = {
+        "execution_package_id": state.execution_package_id,
+        "verification_status": state.execution_truth_status or "pending",
+        "actual_outcome": "success" if str(state.execution_truth_status or "").strip().lower() in ("verified", "succeeded", "completed") else "unverified",
+        "expected_outcome": "successful_verified_execution",
+        "verification_reason": str((state.execution_truth_snapshot or {}).get("truth_reason") or ""),
+        "evidence_source": [
+            "execution_truth_snapshot",
+            "revenue_follow_up_summary",
+        ],
+    }
+    out_record = append_outcome_verification_safe(project_path=state.project_path, record=outcome_record)
+    out_summary = build_outcome_performance_summary(project_path=state.project_path, n=200)
+    state.outcome_verification_summary = {
+        "last_record": out_record,
+        "performance_summary": out_summary,
+    }
+    state.outcome_verification_status = str((out_summary or {}).get("outcome_performance_status") or "unknown")
+    return state
+
+
+def self_optimization_node(state: StudioState):
+    """Run bounded strategy optimization as part of the real workflow path."""
+    states_by_project: dict[str, dict[str, Any]] = {}
+    for key, meta in PROJECTS.items():
+        project_path = meta.get("path")
+        if not project_path:
+            continue
+        loaded = load_project_state(project_path)
+        if isinstance(loaded, dict) and "load_error" not in loaded:
+            states_by_project[key] = loaded
+
+    result = run_self_optimization_feedback_loop_safe(
+        states_by_project=states_by_project,
+        apply_changes=False,
+    )
+    state.self_optimization_result = result if isinstance(result, dict) else {}
+    state.self_optimization_status = str((result or {}).get("optimization_status") or "error_fallback")
+    return state
+
+
+def strategy_promotion_node(state: StudioState):
+    """Run bounded promotion-cycle visibility without mutating runtime contracts."""
+    optimization = state.self_optimization_result if isinstance(state.self_optimization_result, dict) else {}
+    candidate_version_id = str(
+        (
+            (optimization.get("loop") or {}).get("apply") or {}
+        ).get("strategy_version_id")
+        or (optimization.get("active_weights") or {}).get("strategy_version_id")
+        or "strategy-v0-default"
+    )
+
+    result = run_strategy_promotion_cycle_safe(
+        candidate_version_id=candidate_version_id,
+        baseline_version_id="strategy-v0-default",
+        candidate_summary=optimization.get("strategy_performance") if isinstance(optimization, dict) else {},
+        baseline_summary=optimization.get("strategy_performance") if isinstance(optimization, dict) else {},
+        risk_level="medium",
+        approval_status="approved",
+        rollout_percentage=10,
+    )
+    state.strategy_promotion_result = result if isinstance(result, dict) else {}
+    state.strategy_promotion_status = str((result or {}).get("strategy_promotion_status") or "error_fallback")
+    return state
+
+
+def autonomous_portfolio_node(state: StudioState):
+    """Run a single bounded autonomous portfolio tick for runtime visibility."""
+    states_by_project: dict[str, dict[str, Any]] = {}
+    for key, meta in PROJECTS.items():
+        project_path = meta.get("path")
+        if not project_path:
+            continue
+        loaded = load_project_state(project_path)
+        if isinstance(loaded, dict) and "load_error" not in loaded:
+            states_by_project[key] = loaded
+
+    result = run_autonomous_portfolio_tick_safe(
+        states_by_project=states_by_project,
+        execute_actions=False,
+        persist_trace=False,
+        trigger="workflow_integration_tick",
+    )
+    state.autonomous_portfolio_result = result if isinstance(result, dict) else {}
+    state.autonomous_portfolio_status = str((result or {}).get("tick_status") or "error_fallback")
     return state
 
 
@@ -1434,6 +1617,21 @@ def save_persistent_project_state_node(state: StudioState):
             autonomy_stop_rail_config=state.autonomy_stop_rail_config,
             autonomy_current_counts=state.autonomy_current_counts,
             autonomy_governance_trace=state.autonomy_governance_trace,
+            mission_status=state.mission_status,
+            mission_packet=state.mission_packet,
+            execution_truth_status=state.execution_truth_status,
+            execution_truth_snapshot=state.execution_truth_snapshot,
+            execution_verification_summary=state.execution_verification_summary,
+            revenue_follow_up_status=state.revenue_follow_up_status,
+            revenue_follow_up_summary=state.revenue_follow_up_summary,
+            outcome_verification_status=state.outcome_verification_status,
+            outcome_verification_summary=state.outcome_verification_summary,
+            self_optimization_status=state.self_optimization_status,
+            self_optimization_result=state.self_optimization_result,
+            strategy_promotion_status=state.strategy_promotion_status,
+            strategy_promotion_result=state.strategy_promotion_result,
+            autonomous_portfolio_status=state.autonomous_portfolio_status,
+            autonomous_portfolio_result=state.autonomous_portfolio_result,
             guardrail_status=state.guardrail_status,
             guardrail_result=state.guardrail_result,
             autopilot_enabled=getattr(state, "autopilot_enabled", None),
@@ -1577,6 +1775,12 @@ def build_workflow():
     graph.add_node("scheduler_evaluation", scheduler_evaluation_node)
     graph.add_node("recovery_evaluation", recovery_evaluation_node)
     graph.add_node("reexecution_evaluation", reexecution_evaluation_node)
+    graph.add_node("mission_kernel", mission_kernel_node)
+    graph.add_node("execution_truth", execution_truth_node)
+    graph.add_node("verification_revenue_outcome", verification_revenue_outcome_node)
+    graph.add_node("self_optimization", self_optimization_node)
+    graph.add_node("strategy_promotion", strategy_promotion_node)
+    graph.add_node("autonomous_portfolio", autonomous_portfolio_node)
     graph.add_node("engine_registry", engine_registry_node)
     graph.add_node("capability_registry", capability_registry_node)
     graph.add_node("tool_registry", tool_registry_node)
@@ -1634,7 +1838,13 @@ def build_workflow():
     graph.add_edge("heartbeat_evaluation", "scheduler_evaluation")
     graph.add_edge("scheduler_evaluation", "recovery_evaluation")
     graph.add_edge("recovery_evaluation", "reexecution_evaluation")
-    graph.add_edge("reexecution_evaluation", "persistent_state_save")
+    graph.add_edge("reexecution_evaluation", "mission_kernel")
+    graph.add_edge("mission_kernel", "execution_truth")
+    graph.add_edge("execution_truth", "verification_revenue_outcome")
+    graph.add_edge("verification_revenue_outcome", "self_optimization")
+    graph.add_edge("self_optimization", "strategy_promotion")
+    graph.add_edge("strategy_promotion", "autonomous_portfolio")
+    graph.add_edge("autonomous_portfolio", "persistent_state_save")
     graph.add_edge("engine_registry", "capability_registry")
     graph.add_edge("capability_registry", "tool_registry")
     graph.add_edge("tool_registry", "workspace_boundary")
