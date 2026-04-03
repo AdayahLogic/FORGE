@@ -34,6 +34,7 @@ from NEXUS.mission_system import (
 )
 from NEXUS.project_routing import build_project_routing_decision, select_next_task
 from NEXUS.project_state import load_project_state, update_project_state_fields
+from NEXUS.global_control_state import evaluate_routing_enforcement
 
 
 AUTOPILOT_STATUSES = {
@@ -331,6 +332,25 @@ def _approval_queue_fields(*, mission: dict[str, Any], risk_class: str, reason: 
 
 def _autonomy_state_fields(mode: Any, reason: str | None = None) -> dict[str, Any]:
     return build_autonomy_mode_state(mode=normalize_autonomy_mode(mode), reason=reason)
+
+
+def _global_execution_gate(
+    *,
+    project_path: str,
+    project_name: str,
+    runtime_target_id: str = "local",
+    allocation_status: str = "selected",
+    operation_type: str = "autonomy_loop",
+) -> dict[str, Any]:
+    return evaluate_routing_enforcement(
+        project_path=project_path,
+        project_name=project_name,
+        runtime_target_id=runtime_target_id,
+        allocation_status=allocation_status,
+        mission_key=project_name,
+        strategy_key=project_name,
+        operation_type=operation_type,
+    )
 
 
 def _ensure_stop_rail_config(session: dict[str, Any], mode: Any) -> dict[str, Any]:
@@ -1036,6 +1056,23 @@ def start_project_autopilot(
     iteration_limit: int | None = None,
     autopilot_mode: str | None = None,
 ) -> dict[str, Any]:
+    enforcement = _global_execution_gate(
+        project_path=project_path,
+        project_name=project_name,
+        runtime_target_id="local",
+        allocation_status="selected",
+        operation_type="autonomy_loop",
+    )
+    if enforcement.get("routing_enforcement_status") == "denied":
+        deny_reason = "; ".join(
+            str(item.get("reason") or item.get("code") or "routing_denied")
+            for item in list(enforcement.get("denies") or [])[:5]
+        ) or "Global control routing enforcement denied autopilot start."
+        return {
+            "status": "error",
+            "reason": deny_reason,
+            "session": _normalize_session(project_name, {}),
+        }
     state = load_project_state(project_path)
     if not isinstance(state, dict) or state.get("load_error"):
         return {
@@ -1114,6 +1151,23 @@ def start_project_autopilot(
 
 
 def resume_project_autopilot(*, project_path: str, project_name: str) -> dict[str, Any]:
+    enforcement = _global_execution_gate(
+        project_path=project_path,
+        project_name=project_name,
+        runtime_target_id="local",
+        allocation_status="selected",
+        operation_type="autonomy_loop",
+    )
+    if enforcement.get("routing_enforcement_status") == "denied":
+        deny_reason = "; ".join(
+            str(item.get("reason") or item.get("code") or "routing_denied")
+            for item in list(enforcement.get("denies") or [])[:5]
+        ) or "Global control routing enforcement denied autopilot resume."
+        return {
+            "status": "error",
+            "reason": deny_reason,
+            "session": _normalize_session(project_name, {}),
+        }
     state = load_project_state(project_path)
     if not isinstance(state, dict) or state.get("load_error"):
         return {
@@ -1169,6 +1223,34 @@ def _run_project_autopilot_loop(
     session: dict[str, Any],
 ) -> dict[str, Any]:
     while True:
+        loop_enforcement = _global_execution_gate(
+            project_path=project_path,
+            project_name=project_name,
+            runtime_target_id="local",
+            allocation_status="selected",
+            operation_type="autonomy_loop",
+        )
+        if loop_enforcement.get("routing_enforcement_status") == "denied":
+            reason = "; ".join(
+                str(item.get("reason") or item.get("code") or "routing_denied")
+                for item in list(loop_enforcement.get("denies") or [])[:5]
+            ) or "Global control routing enforcement denied autonomous loop."
+            session["autopilot_status"] = "blocked"
+            session["autopilot_next_action"] = "operator_review"
+            session["autopilot_stop_reason"] = "global_control_denied"
+            session["autopilot_escalation_reason"] = "global_control_denied"
+            session["autopilot_updated_at"] = _now_iso()
+            session["autopilot_last_result"] = {
+                "status": "blocked",
+                "reason": reason,
+                "routing_enforcement": loop_enforcement,
+            }
+            _persist_session(
+                project_path,
+                session,
+                extra_fields=_routing_state_fields(project_name=project_name, state={}, session=session),
+            )
+            return {"status": "error", "reason": reason, "session": session}
         state = load_project_state(project_path)
         if not isinstance(state, dict) or state.get("load_error"):
             session["autopilot_enabled"] = False

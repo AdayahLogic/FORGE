@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from NEXUS.logging_engine import log_system_event
+from NEXUS.global_control_state import evaluate_routing_enforcement
 
 AUTONOMOUS_USER_INPUT_PREFIX = "Autonomous cycle (launch): "
 
@@ -171,6 +172,27 @@ def launch_project_cycle(
     Blocks if already inside an autonomous run.
     """
     global _in_autonomous_run
+    control_gate = evaluate_routing_enforcement(
+        project_path=project_path,
+        project_name=project_name,
+        runtime_target_id="local",
+        allocation_status="selected",
+        operation_type="autonomy_loop",
+    )
+    if control_gate.get("routing_enforcement_status") == "denied":
+        reason = "; ".join(
+            str(item.get("reason") or item.get("code") or "routing_denied")
+            for item in list(control_gate.get("denies") or [])[:5]
+        ) or "Global control denied autonomous launch."
+        return build_launch_result(
+            launch_status="blocked",
+            launch_action="stop",
+            launch_reason=reason,
+            target_project=project_name,
+            execution_started=False,
+            bounded_execution=True,
+            source="reexecution",
+        )
     if _in_autonomous_run:
         result = _blocked_nested_launch_result()
         log_system_event(
