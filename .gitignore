@@ -44,3 +44,11 @@ projects/rpg_project/Server/.console_history
 *.db
 *.sqlite
 *.sqlite3
+
+# Build artifacts and generated output
+projects/forge_console/.forge-console-build-dev/
+projects/forge_console/next-env.d.ts
+
+# Worktrees and temp directories
+.worktrees/
+.tmp_test_runs/

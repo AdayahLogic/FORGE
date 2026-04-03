@@ -11,7 +11,6 @@ Capabilities:
 from __future__ import annotations
 
 import os
-import shlex
 import time
 from pathlib import Path
 from typing import Any
@@ -34,37 +33,14 @@ _TELEGRAM_TIMEOUT_SECONDS = 25
 _LOOP_INTERVAL_SECONDS = 2
 _MAX_TEXT_LEN = 4000
 
-_SAFE_GENERAL_COMMANDS = {
-    "health",
-    "latest_session",
-    "project_summary",
-    "registry_status",
-    "dashboard_summary",
-    "dispatch_status",
-    "execution_package_queue",
-    "execution_package_details",
-    "execution_package_decision_status",
-    "execution_package_action_sequence_status",
-    "execution_package_eligibility_status",
-    "execution_package_release_status",
-    "execution_package_handoff_status",
-    "execution_package_execute_status",
-    "execution_package_evaluation_status",
-    "execution_package_local_analysis_status",
+_SAFE_COMMANDS = {
+    "help",
+    "status",
+    "approvals",
+    "missions",
+    "leads",
     "operator_snapshot",
-    "forge_os_snapshot",
-    "portfolio_status",
-    "pending_approvals",
-    "approval_details",
-    "approval_lifecycle_status",
-    "reapproval_status",
-    "retry_after_expiry_status",
-    "patch_proposals",
-    "patch_proposal_details",
-    "release_readiness",
-    "operator_release_summary",
-    "runtime_isolation_status",
-    "candidate_review_status",
+    "execution_package_queue",
 }
 
 
@@ -89,7 +65,7 @@ def _telegram_allowed_chats() -> set[str]:
 def _is_authorized_chat(chat_id: Any) -> bool:
     allow = _telegram_allowed_chats()
     if not allow:
-        return True
+        return False
     return str(chat_id) in allow
 
 
@@ -231,6 +207,86 @@ def _format_approvals_response() -> str:
     return "Pending approvals\n" + "\n".join(_pending_approval_lines())
 
 
+def _format_help_response() -> str:
+    return (
+        "Available commands\n"
+        "- status\n"
+        "- approvals\n"
+        "- missions\n"
+        "- leads\n"
+        "- approve <id>\n"
+        "- deny <id>"
+    )
+
+
+def _format_missions_response() -> str:
+    snapshot = run_command("operator_snapshot", tail=5)
+    payload = snapshot.get("payload") or {}
+    rows = [r for r in list(payload.get("projects_table") or []) if isinstance(r, dict)]
+    if not rows:
+        return "Missions\n- no mission rows available."
+    lines = ["Missions"]
+    for row in rows[:8]:
+        project = str(row.get("project") or "unknown")
+        lifecycle = str(row.get("lifecycle_status") or "unknown")
+        queue = str(row.get("queue_status") or "unknown")
+        lines.append(f"- {project}: lifecycle={lifecycle}, queue={queue}")
+    return "\n".join(lines)
+
+
+def _format_leads_response() -> str:
+    queue = get_execution_package_queue(limit=50)
+    if not queue:
+        return "Leads\n- no leads in execution package queue."
+    lines = ["Leads"]
+    for row in queue[:8]:
+        lines.append(
+            "- {project}/{package_id}: decision={decision_status}, execution={execution_status}".format(
+                project=str(row.get("project") or "unknown"),
+                package_id=str(row.get("package_id") or ""),
+                decision_status=str(row.get("decision_status") or "pending"),
+                execution_status=str(row.get("execution_status") or "pending"),
+            )
+        )
+    return "\n".join(lines)
+
+
+def _format_operator_snapshot_response() -> str:
+    snapshot = run_command("operator_snapshot", tail=5)
+    payload = snapshot.get("payload") or {}
+    coord = payload.get("studio_coordination_summary") or {}
+    driver = payload.get("studio_driver_summary") or {}
+    return (
+        "Operator snapshot\n"
+        f"- coordination: {coord.get('coordination_status', 'unknown')}\n"
+        f"- priority_project: {coord.get('priority_project', 'n/a')}\n"
+        f"- driver_status: {driver.get('driver_status', 'unknown')}\n"
+        f"- driver_action: {driver.get('driver_action', 'n/a')}"
+    )
+
+
+def _format_execution_package_queue_response() -> str:
+    queue = get_execution_package_queue(limit=50)
+    if not queue:
+        return "Execution package queue\n- empty."
+    pending = [r for r in queue if str(r.get("decision_status") or "").strip().lower() in {"", "pending", "review_pending"}]
+    lines = [
+        "Execution package queue",
+        f"- total: {len(queue)}",
+        f"- pending_decisions: {len(pending)}",
+    ]
+    for row in queue[:8]:
+        lines.append(
+            "- {project}/{package_id}: review={review_status}, decision={decision_status}".format(
+                project=str(row.get("project") or "unknown"),
+                package_id=str(row.get("package_id") or ""),
+                review_status=str(row.get("review_status") or "unknown"),
+                decision_status=str(row.get("decision_status") or "pending"),
+            )
+        )
+    return "\n".join(lines)
+
+
 def _find_package_project(package_id: str) -> tuple[str | None, str | None]:
     for key in sorted(PROJECTS.keys()):
         project_path = str((PROJECTS.get(key) or {}).get("path") or "")
@@ -289,57 +345,28 @@ def _handle_decision(identifier: str, *, approve: bool) -> str:
     )
 
 
-def _handle_general_command(text: str) -> str:
-    try:
-        parts = shlex.split(text)
-    except Exception:
-        parts = text.strip().split()
-    if not parts:
-        return "No command received."
-
-    command = str(parts[0] or "").strip().lower()
+def _route_safe_command(text: str) -> str:
+    command = str(text or "").strip().lower()
     if command.startswith("/"):
         command = command[1:]
+    if command not in _SAFE_COMMANDS:
+        return "Command not allowed"
 
-    if command not in _SAFE_GENERAL_COMMANDS:
-        return (
-            f"Command '{command}' is blocked for Telegram safety. "
-            "Allowed examples: status, approvals, operator_snapshot, execution_package_queue."
-        )
-
-    project_name: str | None = None
-    n_value = 20
-    tail_value: int | None = None
-    idx = 1
-    while idx < len(parts):
-        token = parts[idx]
-        if token == "--project" and idx + 1 < len(parts):
-            project_name = str(parts[idx + 1]).strip().lower()
-            idx += 2
-            continue
-        if token == "-n" and idx + 1 < len(parts):
-            try:
-                n_value = int(parts[idx + 1])
-            except Exception:
-                n_value = 20
-            idx += 2
-            continue
-        if token == "--tail" and idx + 1 < len(parts):
-            try:
-                tail_value = int(parts[idx + 1])
-            except Exception:
-                tail_value = None
-            idx += 2
-            continue
-        idx += 1
-
-    result = run_command(command, project_name=project_name, n=n_value, tail=tail_value)
-    return (
-        f"command={result.get('command')}\n"
-        f"status={result.get('status')}\n"
-        f"summary={result.get('summary')}\n"
-        f"project={result.get('project_name') or project_name or 'n/a'}"
-    )
+    if command == "help":
+        return _format_help_response()
+    if command == "status":
+        return _format_status_response()
+    if command == "approvals":
+        return _format_approvals_response()
+    if command == "missions":
+        return _format_missions_response()
+    if command == "leads":
+        return _format_leads_response()
+    if command == "operator_snapshot":
+        return _format_operator_snapshot_response()
+    if command == "execution_package_queue":
+        return _format_execution_package_queue_response()
+    return "Command not allowed"
 
 
 def handle_telegram_message(message: dict[str, Any]) -> str:
@@ -353,11 +380,15 @@ def handle_telegram_message(message: dict[str, Any]) -> str:
     if chat_id is None:
         return "Ignored: no chat_id."
     if not _is_authorized_chat(chat_id):
+        if not _telegram_allowed_chats():
+            return "Authorization error: TELEGRAM_ALLOWED_CHAT_IDS is not configured."
         return "Unauthorized chat_id. Access denied."
     if not text:
         return "Ignored: message has no text."
 
     lowered = text.lower().strip()
+    if lowered in {"help", "/help"}:
+        return _format_help_response()
     if lowered in {"status", "/status"}:
         return _format_status_response()
 
@@ -376,7 +407,7 @@ def handle_telegram_message(message: dict[str, Any]) -> str:
             return "Usage: deny <execution_package_id|patch_id|approval_id>"
         return _handle_decision(identifier, approve=False)
 
-    return _handle_general_command(text)
+    return _route_safe_command(text)
 
 
 def run_telegram_loop() -> None:

@@ -24,6 +24,7 @@ TARGET_PRIORITY = {
     "codex": 2,
     "windows_review_package": 3,
     "openclaw": 4,
+    "claude": 5,
 }
 
 
@@ -100,6 +101,10 @@ def _infer_selection_intent(
         ideal = "container_worker"
         reason = "Isolated execution was requested; container worker is the intended target."
         required_capability = "execute"
+    elif task in ("analysis", "review", "advisory") or action in ("analyze", "review", "advise"):
+        ideal = "claude"
+        reason = "Advisory or analysis task inferred; Claude is the governed target."
+        required_capability = "advisory"
     elif agent in ("tester", "docs", "executor", "workspace", "operator", "supervisor"):
         ideal = "local"
         reason = f"Agent '{agent}' defaults to governed local execution."
@@ -323,6 +328,7 @@ def get_selection_defaults_summary() -> dict[str, Any]:
             {"inputs": "code generation / refactor drafting (coder)", "target": "codex", "required_capability": "agent_routing"},
             {"inputs": "review-only execution package", "target": "windows_review_package", "required_capability": "review_package"},
             {"inputs": "isolated execution", "target": "container_worker", "required_capability": "execute"},
+            {"inputs": "analysis, review, advisory tasks", "target": "claude", "required_capability": "advisory"},
             {"inputs": "unknown", "target": "local", "required_capability": "execute"},
         ],
         "selection_policy": [

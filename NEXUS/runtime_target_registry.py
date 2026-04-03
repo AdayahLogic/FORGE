@@ -93,6 +93,21 @@ RUNTIME_TARGET_REGISTRY: dict[str, dict[str, Any]] = {
         "approval_level": "human_review",
         "description": "Cloud-hosted worker for scalable execution (planned).",
     },
+    "claude": {
+        "canonical_name": "claude",
+        "display_name": "Claude",
+        "status": "planned",
+        "runtime_type": "ai_assistant",
+        "active_or_planned": "planned",
+        "capabilities": ["advisory", "analysis", "planning"],
+        "approval_level": "human_review",
+        "description": (
+            "Claude AI assistant as review-only runtime target. "
+            "Produces advisory analysis and planning outputs only. "
+            "No repo mutation, no direct execution, no autonomous external actions. "
+            "Enable by setting active_or_planned to active."
+        ),
+    },
 }
 
 

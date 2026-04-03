@@ -430,6 +430,141 @@ def dispatch(dispatch_plan: dict[str, Any]) -> dict[str, Any]:
         if isinstance(dispatch_result, dict):
             dispatch_result["authority_trace"] = nexus_trace
             dispatch_result["runtime_target_selection"] = selection_snapshot
+        if runtime_target_id == "claude" and isinstance(dispatch_result, dict) and dispatch_result.get("status") != "blocked":
+            # Phase 9: consume Claude advisory runtime_artifact and apply routing policy.
+            # No execution is triggered here; routing decisions are advisory hints only.
+            # AEGIS and authority enforcement have already run before this point.
+            _artifact = dict(dispatch_result.get("runtime_artifact") or {})
+            _confidence = float(_artifact.get("confidence_score") or 0.0)
+            _risk = str(_artifact.get("risk_level") or "medium").strip().lower()
+            _rec_action = str(_artifact.get("recommended_action") or "require_human_review").strip().lower()
+
+            # Routing policy (order matters: risk and confidence gates take precedence).
+            if _risk == "high":
+                _routing_outcome = "human_review"
+                _routing_reason = "Claude advisory risk_level is high; operator review required before any next step."
+            elif _confidence < 0.55:
+                _routing_outcome = "human_review"
+                _routing_reason = (
+                    f"Claude advisory confidence_score={_confidence:.2f} is below threshold 0.55; "
+                    "operator review required before any next step."
+                )
+            elif _rec_action == "route_to_codex":
+                _routing_outcome = "route_to_codex"
+                _routing_reason = "Claude advisory recommends routing to Codex for code generation or refactor drafting."
+            elif _rec_action == "route_to_cursor_review":
+                _routing_outcome = "route_to_cursor_review"
+                _routing_reason = "Claude advisory recommends routing to Cursor for repo-aware review."
+            elif _rec_action == "no_action_required":
+                _routing_outcome = "no_action_required"
+                _routing_reason = "Claude advisory determined no further action is required."
+            else:
+                # require_human_review or any unrecognised value → safe default
+                _routing_outcome = "human_review"
+                _routing_reason = (
+                    f"Claude advisory recommended_action='{_rec_action}'; "
+                    "routing to human review as governed safe default."
+                )
+
+            # Attach the routing decision as a traceable, inert field.
+            dispatch_result["claude_routing_decision"] = {
+                "routing_outcome": _routing_outcome,
+                "routing_reason": _routing_reason,
+                "policy_inputs": {
+                    "risk_level": _risk,
+                    "confidence_score": _confidence,
+                    "recommended_action": _rec_action,
+                },
+                "policy_rules_applied": [
+                    "high_risk_requires_human_review",
+                    "low_confidence_requires_human_review",
+                    "follow_recommended_action_if_eligible",
+                ],
+                "requires_approval": bool(_artifact.get("requires_approval", True)),
+            }
+
+            # Propagate the routing outcome into the standard next_action field
+            # so existing consumers (governance_layer, automation_layer) receive it.
+            if _routing_outcome == "human_review":
+                dispatch_result["next_action"] = "human_review"
+                dispatch_result["requires_approval"] = True
+            elif _routing_outcome == "route_to_codex":
+                dispatch_result["next_action"] = "route_to_codex"
+                dispatch_result["suggested_runtime_target"] = "codex"
+            elif _routing_outcome == "route_to_cursor_review":
+                dispatch_result["next_action"] = "route_to_cursor_review"
+                dispatch_result["suggested_runtime_target"] = "cursor"
+            elif _routing_outcome == "no_action_required":
+                dispatch_result["next_action"] = "none"
+                dispatch_result["stop_reason"] = "claude_advisory_no_action_required"
+
+            # Phase 3: normalize and surface Claude proposed_actions.
+            # Proposals are advisory only — no packages are created, no routing
+            # is changed, no governance is bypassed. NEXUS governance and the
+            # operator remain the sole authority on what happens next.
+            _PHASE3_VALID_TYPES = frozenset({
+                "route_to_codex",
+                "route_to_cursor_review",
+                "create_followup_package",
+                "require_human_review",
+                "no_action_required",
+            })
+            _raw_proposals = _artifact.get("proposed_actions")
+            _raw_proposals = _raw_proposals if isinstance(_raw_proposals, (list, tuple)) else []
+            _normalized_proposals: list[dict] = []
+            _followup_package_requested = False
+            for _p in _raw_proposals:
+                if not isinstance(_p, dict):
+                    continue
+                _p_action = str(_p.get("action_type") or "").strip().lower()
+                if _p_action not in _PHASE3_VALID_TYPES:
+                    _p_action = "require_human_review"
+                _normalized_proposals.append({
+                    "action_type": _p_action,
+                    "target": str(_p.get("target") or "").strip()[:200],
+                    "justification": str(_p.get("justification") or "").strip()[:500],
+                    "required_approval": bool(_p.get("required_approval", True)),
+                })
+                if _p_action == "create_followup_package":
+                    _followup_package_requested = True
+                if len(_normalized_proposals) >= 20:
+                    break
+
+            # Attach normalized proposals as an inert traceable field.
+            dispatch_result["claude_proposed_actions"] = _normalized_proposals
+
+            # Raise the followup package flag if any proposal requested one.
+            # This is an advisory flag only — no package is created here.
+            if _followup_package_requested:
+                dispatch_result["followup_package_requested"] = True
+
+            # Phase 4: translate proposals into governed system objects via bridge.
+            # All governed objects are sealed, review-pending, require existing
+            # approval/review lifecycle. No execution is triggered here.
+            try:
+                from NEXUS.claude_proposal_bridge import translate_claude_proposals_safe
+                _translation_summary = translate_claude_proposals_safe(
+                    proposed_actions=_normalized_proposals,
+                    dispatch_plan=dispatch_plan,
+                    aegis_res=aegis_res,
+                    authority_trace=nexus_trace,
+                    runtime_artifact=_artifact,
+                )
+            except Exception:
+                _translation_summary = {
+                    "translation_count": 0,
+                    "source_runtime": "claude",
+                    "translations": [],
+                    "followup_package_ids": [],
+                    "approval_ids": [],
+                    "review_candidate_ids": [],
+                    "outcome": "error_fallback",
+                }
+            dispatch_result["claude_proposal_translations"] = _translation_summary
+            # Upgrade followup_package_requested to True if translation created packages.
+            if _translation_summary.get("followup_package_ids"):
+                dispatch_result["followup_package_requested"] = True
+
         if runtime_target_id == "cursor" and isinstance(dispatch_result, dict) and dispatch_result.get("status") != "blocked":
             cursor_bridge_summary = dict(dispatch_result.get("cursor_bridge_summary") or {})
             package_id, package_path = _create_review_only_execution_package(
