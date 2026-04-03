@@ -181,7 +181,8 @@ SUPPORTED_COMMANDS = frozenset({
 def _resolve_project_path(project_path: str | None = None, project_name: str | None = None) -> tuple[str | None, str | None]:
     """Return (project_path, project_name). Prefer project_path if given."""
     if project_path:
-        return project_path, project_name
+        normalized_name = str(project_name).strip().lower() if project_name else project_name
+        return project_path, normalized_name
     if project_name:
         key = str(project_name).strip().lower()
         if key in PROJECTS:

@@ -122,6 +122,7 @@ def normalize_global_control_state(value: Any) -> dict[str, Any]:
             "reason": str(kill.get("reason") or ""),
             "updated_at": str(kill.get("updated_at") or defaults["kill_switch"]["updated_at"]),
             "updated_by": str(kill.get("updated_by") or defaults["kill_switch"]["updated_by"]),
+            "prior_mode": str(kill.get("prior_mode") or ""),
         },
         "active_missions": dict(raw.get("active_missions") or {}),
         "active_strategy_versions": dict(raw.get("active_strategy_versions") or {}),
@@ -188,18 +189,30 @@ def update_global_control_state(*, updates: dict[str, Any], actor: str, reason: 
 def set_persistent_kill_switch(*, active: bool, actor: str, reason: str = "") -> dict[str, Any]:
     with _acquire_global_control_lock():
         state = _load_global_control_state_unlocked()
-        state["kill_switch"] = {
-            "active": bool(active),
-            "reason": str(reason or ""),
-            "updated_at": _utc_now_iso(),
-            "updated_by": str(actor or "system"),
-        }
+        current_mode = str(state.get("global_system_mode") or "normal")
+        existing_prior = str((state.get("kill_switch") or {}).get("prior_mode") or "")
         if active:
+            prior_mode = existing_prior or current_mode
+            state["kill_switch"] = {
+                "active": True,
+                "reason": str(reason or ""),
+                "updated_at": _utc_now_iso(),
+                "updated_by": str(actor or "system"),
+                "prior_mode": prior_mode,
+            }
             state["last_stop_reason"] = str(reason or "persistent_kill_switch_active")
-        if active:
             state["global_system_mode"] = "emergency_stop"
-        elif state.get("global_system_mode") == "emergency_stop":
-            state["global_system_mode"] = "normal"
+        else:
+            prior_mode = existing_prior or "normal"
+            state["kill_switch"] = {
+                "active": False,
+                "reason": "",
+                "updated_at": _utc_now_iso(),
+                "updated_by": str(actor or "system"),
+                "prior_mode": "",
+            }
+            if current_mode == "emergency_stop":
+                state["global_system_mode"] = prior_mode
         return _save_global_control_state_unlocked(state, actor=actor, reason="persistent_kill_switch_update")
 
 

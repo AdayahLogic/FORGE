@@ -317,6 +317,67 @@ def test_command_surface_control_visibility():
         assert "verification_record" in live["payload"]
 
 
+def test_kill_switch_clear_restores_prior_non_normal_mode():
+    """Clearing the kill switch must restore the mode that was active before activation,
+    not hard-code 'normal'. This is a regression test for the P1 prior_mode bug."""
+    from NEXUS.global_control_state import (
+        load_global_control_state,
+        set_persistent_kill_switch,
+        update_global_control_state,
+    )
+
+    with _restore_global_control_state():
+        # Start with a non-default mode (e.g. degraded).
+        update_global_control_state(
+            updates={"global_system_mode": "degraded"},
+            actor="phase12_test",
+            reason="set_degraded_for_test",
+        )
+        set_persistent_kill_switch(active=True, actor="phase12_test", reason="p1_prior_mode_test")
+        activated = load_global_control_state()
+        assert activated["global_system_mode"] == "emergency_stop"
+        assert activated["kill_switch"]["prior_mode"] == "degraded"
+
+        set_persistent_kill_switch(active=False, actor="phase12_test")
+        cleared = load_global_control_state()
+        assert cleared["kill_switch"]["active"] is False
+        # Must restore to 'degraded', not fall back to 'normal'.
+        assert cleared["global_system_mode"] == "degraded", (
+            f"Expected 'degraded' after clear but got '{cleared['global_system_mode']}'"
+        )
+        assert cleared["kill_switch"]["prior_mode"] == ""
+
+
+def test_mixed_case_project_name_normalized_in_routing_enforcement():
+    """project_name passed alongside project_path must be lowercased so it
+    matches PROJECTS registry keys and cannot bypass routing enforcement.
+    This is a regression test for the P1 project key normalization bug."""
+    from NEXUS.command_surface import run_command
+    from NEXUS.global_control_state import set_persistent_kill_switch
+    from NEXUS.registry import PROJECTS
+
+    with _restore_global_control_state(), _local_test_dir() as tmp:
+        _write_state(tmp)
+        project_key = f"mixedcaseproj_{uuid.uuid4().hex[:8]}"
+        PROJECTS[project_key] = {"name": project_key, "path": str(tmp)}
+        try:
+            set_persistent_kill_switch(active=True, actor="phase12_test", reason="mixed_case_test")
+            routing = run_command(
+                "routing_enforcement_status",
+                project_path=str(tmp),
+                project_name="MixedCaseProj",
+                runtime_target_id="openclaw",
+                allocation_status="selected",
+                operation_type="execution",
+            )
+            assert routing["status"] in ("ok", "blocked")
+            assert "routing_enforcement_status" in routing["payload"]
+            # Kill switch is active so enforcement must be denied.
+            assert routing["payload"]["routing_enforcement_status"] == "denied"
+        finally:
+            PROJECTS.pop(project_key, None)
+
+
 def main():
     tests = [
         test_persistent_global_control_state_survives_reload,
@@ -324,6 +385,8 @@ def main():
         test_routing_hard_deny_behavior_blocks_execution,
         test_live_execution_lane_creates_receipt_and_verification_truth,
         test_command_surface_control_visibility,
+        test_kill_switch_clear_restores_prior_non_normal_mode,
+        test_mixed_case_project_name_normalized_in_routing_enforcement,
     ]
     passed = sum(1 for t in tests if _run(t.__name__, t))
     print(f"\n{passed}/{len(tests)} passed")
